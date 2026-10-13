@@ -58,8 +58,10 @@ nothing is uploaded anywhere.
   and into untagged walls of the same thickness that run into it (nearest tag
   wins). Review lengths per type, choose which takeoff type each goes to (new
   types are built from the AI-read assembly legend when there is one), then add
-  them as linear measurements. Tags that point at no wall (walls drawn above or
-  below in light lines) are listed to measure by hand. **Score against bid
+  them as linear measurements. A tag whose leader lands on a wall drawn in
+  light lines (shown above or below, curtain walls) measures the line it points
+  at, up to the walls that meet it, flagged "check". Partitions can be measured
+  through door openings or not (exterior walls always run through openings). **Score against bid
   workbook…** compares lengths per type with the workbook's rows for that sheet.
 - Next: finish schedules into room types, sheet titles, scale verification.
 

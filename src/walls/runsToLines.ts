@@ -8,6 +8,8 @@ export interface TypeLines {
   /** Pieces whose type came from a tag pointing at them, and pieces it was carried to. */
   tagged: number;
   carried: number;
+  /** Pieces drawn in light lines (shown above or below the cut, curtain walls). */
+  light: number;
 }
 
 const key = (p: Pt) => `${Math.round(p[0] * 2)},${Math.round(p[1] * 2)}`;
@@ -61,6 +63,7 @@ export function runsToLines(runs: TypedRun[]): TypeLines[] {
       lines: lines.map(dropStraightJoins),
       tagged: mine.filter((r) => r.how === 'tag').length,
       carried: mine.filter((r) => r.how === 'carried').length,
+      light: mine.filter((r) => r.light).length,
     };
   });
 }

@@ -108,6 +108,37 @@ describe('wall takeoff', () => {
     expect(res.unmatched.map((u) => u.code)).toEqual(['EW3A']);
   });
 
+  it('measures a wall drawn in light lines when a tag points at it', () => {
+    // An exterior wall "below", drawn as two light lines 0.3 m apart with mullion ticks.
+    const light = [...poly(0.28, [0, 6], [8, 6]), ...poly(0.28, [0, 6.3], [8, 6.3])];
+    for (let x = 0.5; x < 8; x += 1) light.push(...poly(0.28, [x, 6], [x, 6.3]));
+    const t = tag('EW3A', 4, 4.5, [4, 6]);
+    const res = wallTakeoff(lShape(), [...lShape(), ...light, ...t.segs], [t.text], MPP);
+    expect(res.unmatched).toHaveLength(0);
+    const run = res.runs.find((r) => r.tags.includes('EW3A'))!;
+    expect(run.light).toBe(true);
+    expect(meters([run])).toBeCloseTo(8, 2);
+    expect(run.thickness * MPP).toBeCloseTo(0.3, 2);
+  });
+
+  it('can leave door openings out of partitions', () => {
+    const faces = [...wall([0, 0], [2, 0]), ...wall([2.9, 0], [5, 0]), ...wall([0, T], [2, T]), ...wall([2.9, T], [5, T])];
+    const lines = [...faces, ...bridgeGaps(faces, pt(3))];
+    const door = [
+      [pt(2), 0],
+      [pt(2.9), 0],
+      [pt(2.9), pt(T)],
+      [pt(2), pt(T)],
+    ] as [number, number][];
+    const t = tag('W1', 1, 1.5, [1, T]);
+    const all = [...lines, ...t.segs];
+    const through = wallTakeoff(lines, all, [t.text], MPP, { doors: [door] });
+    expect(lengthsByType(through.runs, MPP).get('W1')?.length).toBeCloseTo(5, 2);
+    const cut = wallTakeoff(lines, all, [t.text], MPP, { doors: [door], throughDoors: false });
+    expect(lengthsByType(cut.runs, MPP).get('W1')).toMatchObject({ runs: 2 });
+    expect(lengthsByType(cut.runs, MPP).get('W1')?.length).toBeCloseTo(4.1, 2);
+  });
+
   it('sorts tags into kinds that do not compete', () => {
     expect(tagKind('EW3A')).toBe('exterior');
     expect(tagKind('FR1')).toBe('furring');

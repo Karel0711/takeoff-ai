@@ -31,8 +31,12 @@ Where the project stands, for picking it up in a new session.
   takeoff (workbook rows per sheet): A2.1 total difference 11%; EW3A 42.76 vs
   42.76 m, FR1 96.9 vs 98.3, W1 66.9 vs 68.7, CB3 18.7 vs 19.0, W3 1.98 vs 2.05,
   EW1 41.2 vs 39.7; A2.2 W1 17.5 vs 19.1, W3 10.1 vs 9.9, W5 10.7 vs 10.7, W6B 7.8
-  vs 7.6, EW5A 41.7 vs 43.3. Known gaps: walls drawn "below/above" in light pens
-  (EW3A/EW1A on A2.2) are not found, so their tags are listed as unmatched; where
+  vs 7.6, EW5A 41.7 vs 43.3. Walls drawn "below/above" in light pens are measured
+  from the line the tag's leader lands on, up to the walls meeting it (A2.2:
+  FR1 11.7 vs 11.3, EW3A 9.2 vs 12.0, EW1A 8.2 vs 10.8). The estimator does not
+  measure partitions through doors; the option to cut partitions at doors gets W2
+  right (A2.1 26.0 vs 25.8, A2.2 78.8 vs 80.9) but takes W1 and CB2 well under the
+  workbook, so measuring through stays the default. Known gaps: where
   a tag's type stops on untagged walls is a guess (nearest tag along the walls),
   which over-counts W2 on both sheets and FR2 on A2.2; the workbook lists EW3B
   (11.9 m) and EW1B on A2.1 where the drawing tags less. How it works: rays from

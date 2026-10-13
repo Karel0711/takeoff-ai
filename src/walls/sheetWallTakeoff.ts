@@ -24,8 +24,8 @@ export async function wallTagTexts(page: PDFPageProxy): Promise<TagText[]> {
 }
 
 /** Runs the wall takeoff on a sheet with a known scale. */
-export async function sheetWallTakeoff(page: PDFPageProxy, sheet: Sheet, maxOpening: number): Promise<WallTakeoffResult> {
+export async function sheetWallTakeoff(page: PDFPageProxy, sheet: Sheet, maxOpening: number, throughDoors: boolean): Promise<WallTakeoffResult> {
   if (!sheet.metersPerPoint) throw new Error('Set the sheet scale first.');
   const [model, segments, texts] = await Promise.all([wallModelFor(page, sheet, maxOpening), segmentsOf(page), wallTagTexts(page)]);
-  return wallTakeoff(model.lines, segments, texts, sheet.metersPerPoint);
+  return wallTakeoff(model.lines, segments, texts, sheet.metersPerPoint, { doors: model.openings, throughDoors });
 }

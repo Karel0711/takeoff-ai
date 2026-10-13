@@ -1,6 +1,7 @@
 import type { Pt } from '../model';
 import type { Segment } from '../fill/vectors';
-import { findWallRuns, type WallRun } from './bands';
+import { findWallRuns, SegmentIndex, type WallRun } from './bands';
+import { lightWall } from './lightWalls';
 import { resolveTags, type TagText, type WallTag } from './tags';
 
 export interface TypedRun extends WallRun {
@@ -9,6 +10,8 @@ export interface TypedRun extends WallRun {
   tags: string[];
   /** How the types were found: a tag pointing at it, or carried along from a tagged wall it continues. */
   how: 'tag' | 'carried' | null;
+  /** Drawn in light lines (shown above or below, curtain wall), found only because a tag points at it. */
+  light?: boolean;
 }
 
 export interface WallTakeoffResult {
@@ -32,6 +35,12 @@ export interface WallTakeoffOptions {
    * along its own wall and round corners, or also into walls that run into it.
    */
   carry?: 'none' | 'wall' | 'wall+tees';
+  /**
+   * Door openings (the strip between the two wall faces), and whether partitions
+   * are measured through them. Exterior walls are always measured through openings.
+   */
+  doors?: Pt[][];
+  throughDoors?: boolean;
 }
 
 /** Kinds of wall tag. A wall has at most one of each; a tag's type spreads only within its kind. */
@@ -59,7 +68,7 @@ export function wallTakeoff(
   metersPerPoint: number,
   options: WallTakeoffOptions = {},
 ): WallTakeoffResult {
-  const { minThickness = 0.05, maxThickness = 0.65, tee = 'centre', carry = 'wall+tees' } = options;
+  const { minThickness = 0.05, maxThickness = 0.65, tee = 'centre', carry = 'wall+tees', doors = [], throughDoors = true } = options;
   const pt = (m: number) => m / metersPerPoint;
   const found = findWallRuns(wallLines, pt(minThickness), pt(maxThickness)).filter(
     (r) => runLength(r) >= Math.max(pt(0.1), r.thickness * 0.5),
@@ -174,7 +183,7 @@ export function wallTakeoff(
     let bestSteps = Infinity;
     const paths = tag.leader ? tag.paths : [[tag.target]];
     for (const path of paths) {
-      for (let k = 0; k < Math.min(path.length, bestSteps); k++) {
+      for (let k = tag.leader ? 1 : 0; k < Math.min(path.length, bestSteps); k++) {
         let hit = -1;
         let hitD = Infinity;
         drawn.forEach((r, ri) => {
@@ -265,7 +274,97 @@ export function wallTakeoff(
     p.tags = [...own, ...more];
     p.how = own.length ? 'tag' : more.length ? 'carried' : null;
   }
-  return { runs: pieces, tags, unmatched };
+  // An opening another wall passes through is a junction, not a door.
+  const doorways = throughDoors
+    ? []
+    : doors.filter((q) => {
+        const cx = q.reduce((n, v) => n + v[0], 0) / q.length;
+        const cy = q.reduce((n, v) => n + v[1], 0) / q.length;
+        return !drawn.some((r) => {
+          const L = runLength(r);
+          const t = ((cx - r.a[0]) * (r.b[0] - r.a[0]) + (cy - r.a[1]) * (r.b[1] - r.a[1])) / L;
+          if (t < 0 || t > L) return false;
+          const along = Math.abs((q[1][0] - q[0][0]) * (r.b[0] - r.a[0]) + (q[1][1] - q[0][1]) * (r.b[1] - r.a[1])) / (L * dist(q[0], q[1]) || 1);
+          return along < 0.5 && distToRun([cx, cy], r) <= r.thickness / 2;
+        });
+      });
+  const measured = throughDoors ? pieces : pieces.flatMap((p) => (isPartition(p.tags) ? cutAtDoors(p, doorways) : [p]));
+  measured.forEach((p, i) => (p.id = i));
+
+  // Tags pointing at walls not drawn with the wall pen ("BELOW", curtain walls): measure
+  // the line the leader lands on. Several tags on one such wall share it.
+  const stillUnmatched: WallTag[] = [];
+  const pieceCount = measured.length;
+  const lightIndex = new SegmentIndex(allSegments.filter((x) => !x.filled));
+  const light: TypedRun[] = [];
+  for (const tag of unmatched) {
+    let found: WallRun | null = null;
+    for (const path of tag.leader ? tag.paths : []) {
+      found = lightWall(path, lightIndex, pt(maxThickness), drawn);
+      if (found) {
+        tag.target = path[path.length - 1];
+        break;
+      }
+    }
+    if (!found) {
+      stillUnmatched.push(tag);
+      continue;
+    }
+    const same = light.find((r) => sameLine(r, found!));
+    if (same) {
+      if (!same.tags.includes(tag.code)) same.tags.push(tag.code);
+    } else {
+      light.push({ ...found, id: pieceCount + light.length, tags: [tag.code], how: 'tag', light: true });
+    }
+  }
+  return { runs: [...measured, ...light], tags, unmatched: stillUnmatched };
+}
+
+const isPartition = (tags: string[]) => tags.some((t) => tagKind(t) === 'partition') && !tags.some((t) => tagKind(t) === 'exterior');
+
+/** The piece without the door openings along it. */
+function cutAtDoors(p: TypedRun, doors: Pt[][]): TypedRun[] {
+  const L = runLength(p);
+  const ux = (p.b[0] - p.a[0]) / L;
+  const uy = (p.b[1] - p.a[1]) / L;
+  const gaps: [number, number][] = [];
+  for (const q of doors) {
+    // The strip runs along its first edge (the bridge across the opening).
+    const ex = q[1][0] - q[0][0];
+    const ey = q[1][1] - q[0][1];
+    const El = Math.hypot(ex, ey);
+    if (El < 1 || Math.abs(ux * ey - uy * ex) / El > 0.035) continue;
+    const cx = q.reduce((n, v) => n + v[0], 0) / q.length;
+    const cy = q.reduce((n, v) => n + v[1], 0) / q.length;
+    if (Math.abs((cx - p.a[0]) * -uy + (cy - p.a[1]) * ux) > p.thickness / 2 + 1) continue;
+    const t = q.map((v) => (v[0] - p.a[0]) * ux + (v[1] - p.a[1]) * uy);
+    const lo = Math.max(0, Math.min(...t));
+    const hi = Math.min(L, Math.max(...t));
+    if (hi > lo) gaps.push([lo, hi]);
+  }
+  if (!gaps.length) return [p];
+  gaps.sort((m, n) => m[0] - n[0]);
+  const out: TypedRun[] = [];
+  let from = 0;
+  const at = (t: number): Pt => [p.a[0] + ux * t, p.a[1] + uy * t];
+  for (const [lo, hi] of [...gaps, [L, L] as [number, number]]) {
+    if (lo - from > 1) out.push({ ...p, a: at(from), b: at(lo) });
+    from = Math.max(from, hi);
+  }
+  return out;
+}
+
+/** Two runs along the same line that overlap. */
+function sameLine(r: WallRun, q: WallRun): boolean {
+  const L = runLength(r);
+  const ux = (r.b[0] - r.a[0]) / L;
+  const uy = (r.b[1] - r.a[1]) / L;
+  const Lq = runLength(q);
+  if (Math.abs(ux * (q.b[1] - q.a[1]) - uy * (q.b[0] - q.a[0])) / Lq > 0.0175) return false;
+  if (Math.abs((q.a[0] - r.a[0]) * -uy + (q.a[1] - r.a[1]) * ux) > 1) return false;
+  const t1 = (q.a[0] - r.a[0]) * ux + (q.a[1] - r.a[1]) * uy;
+  const t2 = (q.b[0] - r.a[0]) * ux + (q.b[1] - r.a[1]) * uy;
+  return Math.min(L, Math.max(t1, t2)) - Math.max(0, Math.min(t1, t2)) > 0.5 * Math.min(L, Lq);
 }
 
 /** Where two wall centrelines cross, away from both walls' ends. */

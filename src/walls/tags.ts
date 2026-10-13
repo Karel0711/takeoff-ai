@@ -16,7 +16,8 @@ export interface WallTag extends TagText {
   /** Where the tag points: the far end of its leader, or the tag itself when it has none. */
   target: Pt;
   /**
-   * Each line leading off the symbol, as the points along it from the symbol out.
+   * Each line leading off the symbol, as the points along it: the symbol corner it
+   * starts from, then each bend out to its end.
    * Leaders can bend, and other linework drawn with the same pen (window frames)
    * can touch their ends, so the takeoff picks the first point that lands on a wall.
    */
@@ -59,7 +60,7 @@ export function resolveTags(texts: TagText[], segs: Segment[]): WallTag[] {
       if (paths.length) best = { paths, size: symbol.length };
     }
     if (!best) return { ...t, target: [t.cx, t.cy] as Pt, paths: [], leader: false };
-    return { ...t, target: best.paths[0][0], paths: best.paths, leader: true };
+    return { ...t, target: best.paths[0][1], paths: best.paths, leader: true };
   });
 }
 
@@ -117,7 +118,7 @@ function leadersFrom(symbol: Segment[], pen: Segment[], t: TagText, index: Segme
       if (!atCorner(ax, ay) || onSymbol(bx, by)) continue;
       if (Math.hypot(bx - t.cx, by - t.cy) <= Math.hypot(ax - t.cx, ay - t.cy)) continue;
       let end: Pt = [bx, by];
-      const path: Pt[] = [end];
+      const path: Pt[] = [[ax, ay], end];
       const used = new Set<Segment>([s]);
       for (let k = 0; k < 6; k++) {
         const next = index

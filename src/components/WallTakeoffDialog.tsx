@@ -50,18 +50,26 @@ export function WallTakeoffDialog({ page, sheet, units, types, earlier, palette,
     return out;
   }, [legend]);
 
+  const [throughDoors, setThroughDoors] = useState(true);
+
   useEffect(() => {
+    let live = true;
+    setState({ phase: 'running' });
     const started = performance.now();
-    sheetWallTakeoff(page, sheet, maxOpening)
+    sheetWallTakeoff(page, sheet, maxOpening, throughDoors)
       .then((result) => {
+        if (!live) return;
         const lines = runsToLines(result.runs);
         const linear = types.filter((t) => t.kind === 'linear');
-        setChoice(new Map(lines.map((l) => [l.code, linear.find((t) => codeOf(t.name) === l.code)?.id ?? NEW])));
+        setChoice((prev) => new Map(lines.map((l) => [l.code, prev.get(l.code) ?? linear.find((t) => codeOf(t.name) === l.code)?.id ?? NEW])));
         setState({ phase: 'done', result, lines, ms: Math.round(performance.now() - started) });
       })
-      .catch((e) => setState({ phase: 'error', message: e instanceof Error ? e.message : String(e) }));
+      .catch((e) => live && setState({ phase: 'error', message: e instanceof Error ? e.message : String(e) }));
+    return () => {
+      live = false;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [throughDoors]);
 
   const lengths = useMemo(() => {
     const out = new Map<string, number>();
@@ -144,9 +152,13 @@ export function WallTakeoffDialog({ page, sheet, units, types, earlier, palette,
           <>
             <p className="muted">
               Centreline lengths of every wall a type tag points at, carried along the same wall, round corners and into
-              untagged walls of the same thickness that run into it. Doors are measured through; wider openings without
-              glazing are not. Found in {(state.ms / 1000).toFixed(1)} s.
+              untagged walls of the same thickness that run into it. Exterior walls are measured through openings. Found in{' '}
+              {(state.ms / 1000).toFixed(1)} s.
             </p>
+            <label className="inline">
+              <input type="checkbox" checked={throughDoors} onChange={(e) => setThroughDoors(e.target.checked)} /> Measure partitions
+              through door openings
+            </label>
             {state.lines.length === 0 ? (
               <p className="warn">No tagged walls found. This works on vector PDFs whose plans have wall type tags (W1, EW3A…).</p>
             ) : (
@@ -170,6 +182,7 @@ export function WallTakeoffDialog({ page, sheet, units, types, earlier, palette,
                       <td className="num">{l.lines.length}</td>
                       <td className="muted">
                         {l.tagged} tagged{l.carried ? ` · ${l.carried} carried` : ''}
+                        {l.light ? ` · ${l.light} in light lines, check` : ''}
                       </td>
                       <td>
                         <select value={choice.get(l.code) ?? SKIP} onChange={(e) => setChoice((m) => new Map(m).set(l.code, e.target.value))}>
