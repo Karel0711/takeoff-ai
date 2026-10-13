@@ -122,7 +122,12 @@ Where the project stands, for picking it up in a new session.
   - Tried and dropped (made verified results worse): glass-partition pairs as
     room boundaries (A2.1 Staff Room 56.72 → 56.65 m², A2.2 unchanged); a
     grid-direction mix test for hatch matching (lost a real ACT area, kept the
-    false one).
+    false one). Also: retrying unclosed rooms with the next-lighter
+    partition pen (0.51 on A2.2) as walls. It closed 202, 203 and 204
+    correctly, but it merged 219 with 220 and cut 218 WR. Corr. down to a
+    door-swing triangle. Adding 0.37 as well splits 219/220 but carves the
+    Community Hall up around its furniture. Those rooms are left for drawing
+    by hand.
 - **Added in the second overnight session:**
   - **Marked-up PDF** (`src/markupPdf.ts`, Export → Marked-up PDF): pdf-lib
     copies each sheet with takeoffs from the original drawing (one
