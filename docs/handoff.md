@@ -156,6 +156,19 @@ Where the project stands, for picking it up in a new session.
     project units; imperial starter types are named in inches.
   - Scanned sheets (no text, almost no linework) get a notice that the
     automatic tools need CAD-exported PDFs.
+  - **Export styles** (each a `samplePlanPdf` option with a test): walls as
+    solid poché with no outline (filled shapes score as pen `fill`, used only
+    when no stroked pen pairs), walls exploded into short pieces (pens scored
+    again on joined collinear runs, only when none is found otherwise; joining
+    always would make RCP hatch rows look like walls), drawings without
+    lineweights (the room tag box is in the wall pen: the fill retries from
+    outside the box; door swings then come off rooms, a few percent), sheets
+    saved turned (scale check uses the text's angle), text written a
+    character at a time (pdf.js joins it already).
+  - **Count a text tag** from the search (exact matches, every current sheet),
+    **duplicate project** (drawings copied under new ids), an upload note
+    (scales read, sheets without text), quiet scale verification when a sheet
+    opens, build version in Quick start (`__BUILD__` from `vite.config.ts`).
 - **Interface (redesigned):** light, Mac-style (system font, segmented tools,
   source-list sidebar, inspector with Quantities / Takeoffs / History). State
   changes go through `commit()` in `App.tsx`, which keeps undo/redo stacks and
