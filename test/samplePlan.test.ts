@@ -1,6 +1,8 @@
 import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { describe, expect, it } from 'vitest';
+import { readLegend } from '../src/fill/legend';
 import { buildWallModel } from '../src/fill/roomFill';
+import { findSimilar } from '../src/fill/similar';
 import { fillRooms, findDoorTags, findRoomLabels } from '../src/fill/rooms';
 import { extractSegments } from '../src/fill/vectors';
 import { ringArea } from '../src/geometry';
@@ -71,5 +73,35 @@ describe('sample plan', () => {
     const walls = lengthsByType((await sheetWallTakeoff(page, sheet, 3, true)).runs, mpp);
     expect(walls.get('EW1')!.length / 0.3048).toBeCloseTo(193.3, 0);
     expect(walls.get('W1')!.length / 0.3048).toBeCloseTo(113.3, 0);
+  }, 60000);
+
+  it('reads the ceiling plan: its legend, every downlight, and the ACT rooms from one', async () => {
+    const doc = await getDocument({ data: await samplePlanPdf() }).promise;
+    const page = (await doc.getPage(2)) as unknown as PDFPageProxy;
+    expect((await inspectPage(page)).name).toBe('A2.01');
+    const mpp = parseScale('1:100')!;
+    const vp = page.getViewport({ scale: 1 });
+    const ops = await page.getOperatorList();
+    const segs = extractSegments(ops.fnArray, ops.argsArray, vp.transform as never);
+    const texts = await pageTexts(page);
+
+    const legend = readLegend(texts, segs, [730, 195, 905, 300]);
+    expect(legend.map((r) => [r.label, r.kind])).toEqual([
+      ['ACT-1 ACOUSTIC TILE, 2X4 GRID', 'area'],
+      ['GWB-1 PAINTED GYPSUM BOARD', 'area'],
+      ['DOWNLIGHT', 'count'],
+    ]);
+    expect(legend[2].found?.length).toBe(22);
+
+    const model = buildWallModel(segs, mpp);
+    const rooms = fillRooms(model, findRoomLabels(texts, segs), vp.width, vp.height);
+    const office = rooms.find((r) => r.labels[0].number === '102')!;
+    const act = findSimilar(segs, model, office.points!, vp.width, vp.height);
+    const m2 = act.areas.map((a) => +(a.area * mpp * mpp).toFixed(1)).sort();
+    // The other office and the meeting room (the sample's own room is already taken off).
+    expect(m2).toEqual([30.7, 30.7]);
+    const lobby = rooms.find((r) => r.labels[0].number === '101')!;
+    const gwb = findSimilar(segs, model, lobby.points!, vp.width, vp.height);
+    expect(gwb.areas.map((a) => +(a.area * mpp * mpp).toFixed(1))).toEqual([30.7]);
   }, 60000);
 });

@@ -1,4 +1,4 @@
-import { PDFDocument, StandardFonts, degrees, rgb, type PDFPage, type PDFFont } from 'pdf-lib';
+import { LineCapStyle, PDFDocument, StandardFonts, degrees, rgb, type PDFPage, type PDFFont } from 'pdf-lib';
 import type { Units } from './model';
 
 /**
@@ -6,14 +6,16 @@ import type { Units } from './model';
  * block with its scale), so a new user can try every tool before opening their own set.
  * Five rooms with tags, doors with tags, tagged walls and dimension strings: at 1:100 in
  * millimetres, or in imperial at 1/8" = 1'-0" in feet and inches (the same plan, 60' × 36'-8").
+ * A second sheet is its reflected ceiling plan: an ACT grid, a GWB stipple, downlights and
+ * a ceiling legend.
  */
 export async function samplePlanPdf(units: Units = 'metric'): Promise<Uint8Array> {
   const doc = await PDFDocument.create();
   doc.setTitle('Takeoff sample plan');
   const font = await doc.embedFont(StandardFonts.Helvetica);
   const bold = await doc.embedFont(StandardFonts.HelveticaBold);
-  const page = doc.addPage([1224, 792]);
-  drawPlan(page, font, bold, units);
+  drawPlan(doc.addPage([W, H]), font, bold, units, false);
+  drawPlan(doc.addPage([W, H]), font, bold, units, true);
   return doc.save();
 }
 
@@ -35,7 +37,7 @@ const ink = rgb(0, 0, 0);
 const WALL = 0.7;
 const THIN = 0.25;
 
-function drawPlan(page: PDFPage, font: PDFFont, bold: PDFFont, units: Units) {
+function drawPlan(page: PDFPage, font: PDFFont, bold: PDFFont, units: Units, ceiling: boolean) {
   const metric = units === 'metric';
   const K = metric ? 72 / 0.0254 / 100 : 9 * FT_PER_UNIT;
   const label = (len: number) => (metric ? String(Math.round(len * 1000)) : feetInches(len * FT_PER_UNIT));
@@ -113,13 +115,15 @@ function drawPlan(page: PDFPage, font: PDFFont, bold: PDFFont, units: Units) {
       borderWidth: THIN,
     });
   };
-  for (const [d0] of doorsAt) {
-    swing(6 + p, d0, 1);
-    swing(12 - p, d0, -1);
+  if (!ceiling) {
+    for (const [d0] of doorsAt) {
+      swing(6 + p, d0, 1);
+      swing(12 - p, d0, -1);
+    }
+    // Entry: a pair of leaves swinging out.
+    line(entry[0], 11 + t, entry[0], 11 + t + 0.9, THIN);
+    line(entry[1], 11 + t, entry[1], 11 + t + 0.9, THIN);
   }
-  // Entry: a pair of leaves swinging out.
-  line(entry[0], 11 + t, entry[0], 11 + t + 0.9, THIN);
-  line(entry[1], 11 + t, entry[1], 11 + t + 0.9, THIN);
 
   // Room tags: the name over its number in a box.
   const rooms: [string, string, number, number][] = [
@@ -143,7 +147,7 @@ function drawPlan(page: PDFPage, font: PDFFont, bold: PDFFont, units: Units) {
     ['105', 10.9, 8.9],
     ['101', 9, 12.1],
   ];
-  for (const [num, x, y] of doorTags) {
+  for (const [num, x, y] of ceiling ? [] : doorTags) {
     page.drawEllipse({ x: px(x), y: py(y), xScale: 11, yScale: 7, borderColor: ink, borderWidth: THIN });
     text(num, x, y, 6);
   }
@@ -167,12 +171,79 @@ function drawPlan(page: PDFPage, font: PDFFont, bold: PDFFont, units: Units) {
     page.drawLine({ start: { x: cx + side, y: cy }, end: { x: px(toX), y: cy }, thickness: THIN, color: ink });
     text(tag, x, y, 6);
   };
-  wallTag('W1', 4.3, 1.1, 6 - p);
-  wallTag('W1', 13.7, 9.9, 12 + p);
-  wallTag('W1', 3.2, 4.4, 1.2);
-  wallTag('EW1', -1.7, 3.2, -t);
-  // The leader for the third tag ends on the 5.5 m partition: turn it down to it.
-  page.drawLine({ start: { x: px(1.2), y: py(4.4) }, end: { x: px(1.2), y: py(5.5 - p) }, thickness: THIN, color: ink });
+  if (!ceiling) {
+    wallTag('W1', 4.3, 1.1, 6 - p);
+    wallTag('W1', 13.7, 9.9, 12 + p);
+    wallTag('W1', 3.2, 4.4, 1.2);
+    wallTag('EW1', -1.7, 3.2, -t);
+    // The leader for the third tag ends on the 5.5 m partition: turn it down to it.
+    page.drawLine({ start: { x: px(1.2), y: py(4.4) }, end: { x: px(1.2), y: py(5.5 - p) }, thickness: THIN, color: ink });
+  }
+
+  if (ceiling) {
+    const GRID = 0.18;
+    // ACT: a 2×4 grid (1.2 × 0.6) in the offices and the meeting room.
+    const act = (x0: number, y0: number, x1: number, y1: number) => {
+      for (let x = x0 + 0.5; x < x1; x += 1.2) line(x, y0, x, y1, GRID);
+      for (let y = y0 + 0.3; y < y1; y += 0.6) line(x0, y, x1, y, GRID);
+    };
+    act(t, t, 6 - p, 5.5 - p);
+    act(t, 5.5 + p, 6 - p, 11 - t);
+    act(12 + p, t, 18 - t, 5.5 - p);
+    // GWB: a stipple of dots in the lobby and storage, placed on a jittered grid.
+    const dot = (x: number, y: number) =>
+      page.drawLine({ start: { x, y }, end: { x, y }, thickness: 0.9, color: ink, lineCap: LineCapStyle.Round });
+    const stipple = (x0: number, y0: number, x1: number, y1: number) => {
+      let n = 0;
+      for (let y = y0 + 0.2; y < y1 - 0.1; y += 0.35)
+        for (let x = x0 + 0.2; x < x1 - 0.1; x += 0.35) {
+          n++;
+          // A fixed scatter: the same sample every time.
+          dot(px(x + 0.12 * Math.sin(n * 12.9898)), py(y + 0.12 * Math.cos(n * 78.233)));
+        }
+    };
+    stipple(6 + p, t, 12 - p, 11 - t);
+    stipple(12 + p, 5.5 + p, 18 - t, 11 - t);
+    // Downlights: a circle with a cross, one block repeated.
+    const light = (x: number, y: number) => {
+      page.drawCircle({ x, y, size: 4.5, borderColor: ink, borderWidth: THIN });
+      page.drawLine({ start: { x: x - 3, y }, end: { x: x + 3, y }, thickness: THIN, color: ink });
+      page.drawLine({ start: { x, y: y - 3 }, end: { x, y: y + 3 }, thickness: THIN, color: ink });
+    };
+    const lights: [number, number][] = [
+      [7.5, 1.5], [10.5, 1.5], [7.5, 6.5], [10.5, 6.5], [7.5, 9], [10.5, 9], [7.5, 3.4], [10.5, 3.4],
+      [1.7, 1.4], [4.1, 1.4], [1.7, 4.1], [4.1, 4.1],
+      [1.7, 6.9], [4.1, 6.9], [1.7, 9.6], [4.1, 9.6],
+      [13.7, 1.4], [16.1, 1.4], [13.7, 4.1], [16.1, 4.1],
+      [13.7, 8.2], [16.1, 8.2],
+    ];
+    for (const [x, y] of lights) light(px(x), py(y));
+
+    // Ceiling legend, between the plan and the title block (in sheet points).
+    const lx = 745;
+    let ly = H - 210;
+    page.drawText('CEILING LEGEND:', { x: lx, y: ly, size: 8, font: bold, color: ink });
+    const swatch = (fill: (x0: number, y0: number, x1: number, y1: number) => void) => {
+      const [x0, y0, x1, y1] = [lx, ly - 7, lx + 34, ly + 7];
+      page.drawRectangle({ x: x0, y: y0, width: x1 - x0, height: y1 - y0, borderColor: ink, borderWidth: THIN });
+      fill(x0, y0, x1, y1);
+    };
+    const row = (label: string) => page.drawText(label, { x: lx + 50, y: ly - 2.5, size: 6.5, font, color: ink });
+    ly -= 26;
+    swatch((x0, y0, x1, y1) => {
+      page.drawLine({ start: { x: (x0 + x1) / 2, y: y0 }, end: { x: (x0 + x1) / 2, y: y1 }, thickness: GRID, color: ink });
+      page.drawLine({ start: { x: x0, y: (y0 + y1) / 2 }, end: { x: x1, y: (y0 + y1) / 2 }, thickness: GRID, color: ink });
+    });
+    row('ACT-1 ACOUSTIC TILE, 2X4 GRID');
+    ly -= 26;
+    swatch((x0, y0, x1, y1) => {
+      for (let y = y0 + 2.5; y < y1 - 1; y += 3) for (let x = x0 + 2.5; x < x1 - 1; x += 3) dot(x + ((x * 7 + y * 3) % 2) - 0.5, y);
+    });
+    row('GWB-1 PAINTED GYPSUM BOARD');
+    ly -= 26;
+    light(lx + 17, ly);
+    row('DOWNLIGHT');
+  }
 
   // Dimension strings in millimetres: one line per dimension, ticks at the ends.
   const dim = (x1: number, x2: number, y: number, label: string) => {
@@ -201,7 +272,7 @@ function drawPlan(page: PDFPage, font: PDFFont, bold: PDFFont, units: Units) {
   vdim(0, 11, 20.4, label(11));
 
   // Plan title.
-  page.drawText('FLOOR PLAN', { x: px(0), y: py(15.4), size: 11, font: bold, color: ink });
+  page.drawText(ceiling ? 'REFLECTED CEILING PLAN' : 'FLOOR PLAN', { x: px(0), y: py(15.4), size: 11, font: bold, color: ink });
   page.drawText(scale, { x: px(0), y: py(15.4) - 13, size: 8, font, color: ink });
 
   // Title block along the right edge.
@@ -212,7 +283,7 @@ function drawPlan(page: PDFPage, font: PDFFont, bold: PDFFont, units: Units) {
   page.drawText('TAKEOFF SAMPLE PROJECT', { x: tx, y: H - 70, size: 12, font: bold, color: ink });
   page.drawText('A sample drawing for trying the app.', { x: tx, y: H - 88, size: 8, font, color: ink });
   page.drawText('Not a real building.', { x: tx, y: H - 100, size: 8, font, color: ink });
-  page.drawText('SAMPLE FLOOR PLAN', { x: tx, y: 150, size: 11, font: bold, color: ink });
+  page.drawText(ceiling ? 'SAMPLE CEILING PLAN' : 'SAMPLE FLOOR PLAN', { x: tx, y: 150, size: 11, font: bold, color: ink });
   page.drawText(`SCALE: ${scale}`, { x: tx, y: 132, size: 9, font, color: ink });
-  page.drawText('A1.01', { x: tx, y: 60, size: 30, font: bold, color: ink });
+  page.drawText(ceiling ? 'A2.01' : 'A1.01', { x: tx, y: 60, size: 30, font: bold, color: ink });
 }
