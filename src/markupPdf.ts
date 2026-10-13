@@ -136,6 +136,12 @@ function drawTakeoffs(project: Project, sheet: Sheet, page: PDFPage, transform: 
   const fs = 9;
   let cx = 18;
   let top = 16;
+  if (sheet.repeat && sheet.repeat > 1) {
+    const text = `Totals count this sheet ×${sheet.repeat}:`;
+    const [tx, ty] = user([cx, top + 2]);
+    page.drawText(text, { x: tx, y: ty, size: fs, font: bold, color: rgb(0.1, 0.1, 0.1), rotate });
+    cx += bold.widthOfTextAtSize(text, fs) + 10;
+  }
   for (const t of totals) {
     const text = safeText(font, `${t.type.name}  ${t.unscaled ? 'no scale' : `${formatQty(t.primary)} ${t.unit}`}`);
     const w = font.widthOfTextAtSize(text, fs) + 26;

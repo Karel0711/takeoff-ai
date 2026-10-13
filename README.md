@@ -234,6 +234,9 @@ right. Tools sit in the title bar.
     **marked-up PDF**: a summary page of each type's total, then every sheet with
     takeoffs, the original drawing kept in vector with the takeoffs drawn over it
     and a legend of that sheet's totals along the top. Attach it to a quote.
+12. **Typical floors:** More → *Count this sheet more than once…* makes a sheet's
+    takeoffs count ×N (one plan drawn for several floors). The sheet list shows
+    ×N, and the quantities, Excel and PDF legend include it.
 
 Editing: select a takeoff to show its points. Drag a corner to move it, drag
 the dot in the middle of an edge to add a point there, Option-click a corner

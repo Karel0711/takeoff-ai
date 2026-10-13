@@ -411,9 +411,11 @@ export function App() {
           // A scale set by hand on the old sheet wins over one read from the new sheet's text.
           const from = withTakeoffs.find((w) => w.n.id === x.id)?.old;
           const handSet = from?.metersPerPoint && (from.scaleSource === 'preset' || from.scaleSource === 'calibrated');
+          // So does the number of floors it stands for.
+          const y = from?.repeat ? { ...x, repeat: from.repeat } : x;
           return from && handSet && (!x.metersPerPoint || x.scaleSource === 'detected')
-            ? { ...x, metersPerPoint: from.metersPerPoint, scaleLabel: from.scaleLabel, scaleSource: from.scaleSource }
-            : x;
+            ? { ...y, metersPerPoint: from.metersPerPoint, scaleLabel: from.scaleLabel, scaleSource: from.scaleSource }
+            : y;
         }),
       }),
       'New revision',
@@ -583,6 +585,22 @@ export function App() {
     } finally {
       setBusy(null);
     }
+  }
+
+  /** Sets how many times a sheet's takeoffs count: a typical floor drawn once for several floors. */
+  async function setRepeat(s: Sheet) {
+    const answer = await askText(`How many floors does ${s.name} stand for?`, {
+      initial: String(s.repeat ?? 1),
+      hint: 'Its takeoffs count this many times in the quantities and the export. 1 counts it once.',
+    });
+    if (answer === null) return;
+    const n = Math.floor(Number(answer));
+    if (!Number.isFinite(n) || n < 1 || n > 999) {
+      setToast({ text: 'Enter a whole number from 1 to 999.', undo: false });
+      return;
+    }
+    if (n === (s.repeat ?? 1)) return;
+    updateSheet(s.id, { repeat: n > 1 ? n : undefined }, n > 1 ? `Count ${s.name} ×${n}` : `Count ${s.name} once`);
   }
 
   /** The drawings with takeoffs drawn over them, as one PDF with a summary page. */
@@ -1220,6 +1238,7 @@ export function App() {
                       <span className={`row-sub scale-${state}`}>
                         {state === 'check' && <span className="check-dot" title="Read from the sheet; check it against a dimension" />}
                         {s.metersPerPoint ? s.scaleLabel : 'No scale'}
+                        {s.repeat ? <span className="repeat-tag" title={`Takeoffs on this sheet count ${s.repeat} times`}> · ×{s.repeat}</span> : null}
                       </span>
                     </span>
                     {count > 0 && <span className="badge">{count}</span>}
@@ -1630,6 +1649,9 @@ export function App() {
               { label: 'Quick start', onSelect: () => setAiDialog('help') },
               { label: 'Keyboard shortcuts', onSelect: () => setAiDialog('shortcuts') },
               ...(page && sheet ? [{ label: 'Save sheet as image…', hint: 'With takeoffs', onSelect: () => void saveSheetImage() }] : []),
+              ...(sheet
+                ? [{ label: sheet.repeat ? `Counts ×${sheet.repeat}…` : 'Count this sheet more than once…', hint: 'Typical floors', onSelect: () => void setRepeat(sheet) }]
+                : []),
               ...(previousRevision ? [{ label: 'Compare with previous revision', onSelect: () => void compareRevision() }] : []),
               ...(sheet && project.measurements.some((m) => m.sheetId === sheet.id)
                 ? [{ label: 'Copy takeoffs to another sheet…', hint: 'Typical floors', onSelect: () => setTimeout(() => setPopover('copy'), 0) }]

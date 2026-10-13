@@ -147,3 +147,25 @@ describe('formula names', () => {
     expect(evaluate('Count', vars)).toEqual({ ok: true, value: 2 });
   });
 });
+
+describe('typical floors', () => {
+  it('counts a repeated sheet that many times', () => {
+    const mpp = parseScale('1:100')!;
+    const p = newProject('metric');
+    const sheet = { id: 's', docId: 'd', page: 1, name: 'A2.2', width: 1000, height: 1000, metersPerPoint: mpp, scaleLabel: '1:100', scaleSource: 'preset' as const, scaleHints: [] };
+    p.sheets = [sheet, { ...sheet, id: 't', name: 'A2.1' }];
+    const [w1, , floor, , doors] = p.types;
+    p.measurements = [
+      { id: 'a', sheetId: 's', typeId: w1.id, points: [[0, 0], [10 / mpp, 0]], holes: [] },
+      { id: 'b', sheetId: 's', typeId: doors.id, points: [[5, 5]], holes: [] },
+      { id: 'c', sheetId: 's', typeId: floor.id, points: [[0, 0], [5 / mpp, 0], [5 / mpp, 4 / mpp], [0, 4 / mpp]], holes: [] },
+      { id: 'd', sheetId: 't', typeId: doors.id, points: [[5, 5]], holes: [] },
+    ];
+    p.sheets[0].repeat = 3;
+    const t = new Map(typeTotals(p).map((x) => [x.type.id, x]));
+    expect(t.get(w1.id)!.vars.L).toBeCloseTo(30, 6);
+    expect(t.get(doors.id)!.vars.N).toBe(4);
+    expect(t.get(floor.id)!.vars.A).toBeCloseTo(60, 6);
+    expect(t.get(floor.id)!.vars.P).toBeCloseTo(54, 6);
+  });
+});

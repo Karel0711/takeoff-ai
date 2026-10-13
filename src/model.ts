@@ -39,6 +39,8 @@ export interface Sheet {
   scaleHints: string[];
   /** An older revision kept for reference after its takeoffs moved to a newer sheet. */
   superseded?: boolean;
+  /** How many times the sheet's takeoffs count, for a typical floor drawn once (unset is once). */
+  repeat?: number;
   /** The last AI reading of this sheet's assembly legend, kept so it can be reviewed again without re-running. */
   aiAssemblies?: SavedLegendRead;
 }

@@ -92,7 +92,12 @@ export interface Contribution {
   role?: FinishRole;
 }
 
-/** Every measurement's share of every type, in measurement order. */
+/** How many times a sheet counts: a typical floor drawn once for several. */
+export const sheetRepeat = (sheet: Sheet): number => (sheet.repeat && sheet.repeat > 1 ? Math.floor(sheet.repeat) : 1);
+
+const times = (v: Vars | null, k: number): Vars | null => (v && k !== 1 ? { ...v, L: v.L * k, A: v.A * k, P: v.P * k, N: v.N * k, I: v.I * k } : v);
+
+/** Every measurement's share of every type, in measurement order; a repeated sheet's shares are multiplied. */
 export function contributions(project: Project): Contribution[] {
   const sheets = new Map(project.sheets.map((s) => [s.id, s]));
   const types = new Map(project.types.map((t) => [t.id, t]));
@@ -101,12 +106,13 @@ export function contributions(project: Project): Contribution[] {
     const sheet = sheets.get(m.sheetId);
     if (!sheet) continue;
     const type = types.get(m.typeId);
-    if (type) out.push({ m, type, sheet, vars: measurementVars(m, type, sheet, project.units) });
+    const k = sheetRepeat(sheet);
+    if (type) out.push({ m, type, sheet, vars: times(measurementVars(m, type, sheet, project.units), k) });
     if (!m.finishes) continue;
     for (const { role } of FINISH_ROLES) {
       // A finish of the room's own type would count the room twice.
       const t = m.finishes[role] && m.finishes[role] !== m.typeId ? types.get(m.finishes[role]!) : undefined;
-      if (t) out.push({ m, type: t, sheet, vars: finishVars(m, t, sheet, project.units), role });
+      if (t) out.push({ m, type: t, sheet, vars: times(finishVars(m, t, sheet, project.units), k), role });
     }
   }
   return out;

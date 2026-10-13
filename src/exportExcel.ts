@@ -1,7 +1,7 @@
 import type { ActivityEvent } from './activity';
 import type { Workbook, Worksheet } from 'exceljs';
 import { FINISH_ROLES, type Project, type TakeoffType } from './model';
-import { contributions, measurementVars, primaryOf, primaryUnit, typeTotals } from './quantities';
+import { contributions, measurementVars, primaryOf, primaryUnit, sheetRepeat, typeTotals } from './quantities';
 
 /*
  * The workbook follows the estimator's bid workbook conventions: a Bid Summary
@@ -103,7 +103,8 @@ function measuredRows(project: Project): Map<string, Row[]> {
         if (c.vars) qty += primaryOf(type.kind, c.vars);
         else unscaled++;
       }
-      const row = { type, sheetName: sheet.name, inst: cs.length, qty, unscaled };
+      const k = sheetRepeat(sheet);
+      const row = { type, sheetName: k > 1 ? `${sheet.name} ×${k}` : sheet.name, inst: cs.length * k, qty, unscaled };
       const list = byType.get(type.id);
       if (list) list.push(row);
       else byType.set(type.id, [row]);
@@ -319,7 +320,7 @@ export async function buildWorkbook(project: Project, activity: ActivityEvent[] 
         qty: v ? primaryOf(type.kind, v) : 'not scaled',
         unit: primaryUnit(type.kind, project.units),
         perim: type.kind === 'area' && v ? v.P : null,
-        scale: s.scaleLabel ?? '',
+        scale: [s.scaleLabel ?? '', sheetRepeat(s) > 1 ? `counts ×${sheetRepeat(s)}` : ''].filter(Boolean).join(' · '),
       });
     }
   }
