@@ -22,6 +22,7 @@ import { describeAiError } from './ai/readLegend';
 import { findPatternOn, findSimilar, pointInRing, type Pattern } from './fill/similar';
 import { buildWallModel } from './fill/roomFill';
 import { findDoorTags } from './fill/rooms';
+import type { Segment } from './fill/vectors';
 import { matchSymbol, sampleSymbol, type SymbolSample } from './fill/symbols';
 import { traceLine } from './fill/trace';
 import { checkScale, type ScaleCheck } from './scaleCheck';
@@ -684,6 +685,18 @@ export function App() {
     setToast({ text: `Named ${names.size} sheet${names.size === 1 ? '' : 's'}: ${[...names.values()].join(', ')}`, undo: true });
   }
 
+  /**
+   * Whether another sheet is drawn at the source sheet's scale: by its own scale when
+   * set, else by what its dimension strings read as (a sheet they can't read counts).
+   */
+  async function sameScale(other: Sheet, source: Sheet, pg: PDFPageProxy, segs: Segment[]): Promise<boolean> {
+    const want = source.metersPerPoint;
+    if (!want) return true;
+    if (other.metersPerPoint) return Math.abs(other.metersPerPoint / want - 1) <= 0.01;
+    const read = checkScale(await pageTexts(pg), segs, project!.units);
+    return !read || read.agree < 5 || Math.abs(read.metersPerPoint / want - 1) <= 0.02;
+  }
+
   /** Adds the areas carrying a sampled hatch on every other sheet drawn at that scale, as one change. */
   async function findEverywhere(pattern: Pattern, typeId: string, fromSheet: string) {
     const p = projectRef.current!;
@@ -704,6 +717,7 @@ export function App() {
         const pg = await pdfs.get(other.docId)?.getPage(other.page);
         if (!pg) continue;
         const segs = await segmentsOnce(pg);
+        if (!(await sameScale(other, source, pg, segs))) continue;
         const model = () => buildWallModel(segs, other.metersPerPoint ?? source.metersPerPoint, { maxOpening });
         const own = p.measurements.filter((x) => x.sheetId === other.id && x.typeId === typeId);
         const fresh = findPatternOn(segs, model, pattern, other.width, other.height).areas.filter(
@@ -745,8 +759,10 @@ export function App() {
         await new Promise((r) => setTimeout(r, 0));
         const pg = await pdfs.get(other.docId)?.getPage(other.page);
         if (!pg) continue;
+        const segs = await segmentsOnce(pg);
+        if (source && !(await sameScale(other, source, pg, segs))) continue;
         const counted = p.measurements.filter((m) => m.sheetId === other.id && m.typeId === typeId).map((m) => m.points[0]);
-        const fresh = matchSymbol(sample, await segmentsOnce(pg)).filter(
+        const fresh = matchSymbol(sample, segs).filter(
           (f) => !counted.some((q) => Math.hypot(q[0] - f.at[0], q[1] - f.at[1]) < sample.span / 2),
         );
         if (!fresh.length) continue;
