@@ -1986,3 +1986,21 @@ button.link-button:hover {
 .handles .handle:hover {
   fill: var(--accent-soft);
 }
+/* Scale check in the scale picker */
+.scale-verify {
+  margin: 4px 0 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--fill);
+  font-size: 12px;
+  line-height: 1.4;
+}
+.scale-verify .check-ok {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--good, #248a3d);
+}
+.scale-verify .check-warn {
+  color: var(--warn, #b25000);
+}

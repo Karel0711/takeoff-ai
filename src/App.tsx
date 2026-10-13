@@ -22,6 +22,8 @@ import { findPatternOn, findSimilar, pointInRing, type Pattern } from './fill/si
 import { buildWallModel } from './fill/roomFill';
 import { matchSymbol, sampleSymbol, type SymbolSample } from './fill/symbols';
 import { traceLine } from './fill/trace';
+import { checkScale, type ScaleCheck } from './scaleCheck';
+import { pageTexts } from './pageText';
 import { isHosted, saveFile } from './host';
 import { defaultTypes, newId, newProject, type Project, type Pt, type Sheet, type TakeoffType, type Units } from './model';
 import { inspectPage, openPdf, type PDFDocumentProxy, type PDFPageProxy } from './pdf';
@@ -147,6 +149,29 @@ export function App() {
   }, [project]);
 
   const sheet = project?.sheets.find((s) => s.id === sheetId) ?? null;
+
+  // The scale picker checks the sheet's scale against its dimension strings, once per sheet.
+  const [scaleCheck, setScaleCheck] = useState<{ sheetId: string; result: ScaleCheck | null } | null>(null);
+  useEffect(() => {
+    if (popover !== 'scale' || !page || !sheet || scaleCheck?.sheetId === sheet.id) return;
+    let live = true;
+    const units: Units = sheet.scaleLabel ? (/^\s*1\s*:/.test(sheet.scaleLabel) ? 'metric' : 'imperial') : project!.units;
+    void Promise.all([pageTexts(page), segmentsOf(page)])
+      .then(([texts, segs]) => {
+        if (!live) return;
+        const result = checkScale(texts, segs, units);
+        setScaleCheck({ sheetId: sheet.id, result });
+        // A scale read from the title block that the dimensions confirm needs no checking.
+        if (result && result.agree >= 5 && sheet.scaleSource === 'detected' && sheet.metersPerPoint && Math.abs(result.metersPerPoint / sheet.metersPerPoint - 1) < 0.02) {
+          updateSheet(sheet.id, { scaleSource: 'verified' }, 'Scale check');
+        }
+      })
+      .catch(() => live && setScaleCheck({ sheetId: sheet.id, result: null }));
+    return () => {
+      live = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [popover, page, sheet?.id]);
 
   // Load the current sheet's page.
   useEffect(() => {
@@ -1123,6 +1148,7 @@ export function App() {
               updateSheet(sheet.id, { metersPerPoint: null, scaleLabel: null, scaleSource: null }, 'Scale');
               setPopover(null);
             }}
+            check={scaleCheck?.sheetId === sheet.id ? scaleCheck.result : 'reading'}
           />
         </Popover>
       )}

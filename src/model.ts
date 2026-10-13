@@ -20,7 +20,8 @@ export interface Doc {
   name: string;
 }
 
-export type ScaleSource = 'detected' | 'preset' | 'calibrated';
+/** Where a sheet's scale came from; 'verified' is a detected scale its dimension strings confirmed. */
+export type ScaleSource = 'detected' | 'verified' | 'preset' | 'calibrated';
 
 export interface Sheet {
   id: string;

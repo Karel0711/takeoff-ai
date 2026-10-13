@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { Sheet, Units } from '../model';
 import { parseScale, SCALE_PRESETS } from '../units';
+import type { ScaleCheck } from '../scaleCheck';
 import { Icon } from './Icons';
 
 interface Props {
@@ -10,6 +11,8 @@ interface Props {
   onPick: (label: string, metersPerPoint: number) => void;
   onCalibrate: () => void;
   onClear: () => void;
+  /** The sheet's dimension strings read against its linework: 'reading' while that runs. */
+  check: ScaleCheck | null | 'reading';
 }
 
 const systemOf = (label: string): Units => (/^\s*1\s*:/.test(label) ? 'metric' : 'imperial');
@@ -19,7 +22,7 @@ const systemOf = (label: string): Units => (/^\s*1\s*:/.test(label) ? 'metric' :
  * engineering scales, the scales printed on the sheet, any other scale typed in,
  * or calibration from a known dimension.
  */
-export function ScalePicker({ sheet, units, onPick, onCalibrate, onClear }: Props) {
+export function ScalePicker({ sheet, units, onPick, onCalibrate, onClear, check }: Props) {
   const [system, setSystem] = useState<Units>(sheet.scaleLabel && parseScale(sheet.scaleLabel) ? systemOf(sheet.scaleLabel) : units);
   const [custom, setCustom] = useState('');
   const customMpp = custom.trim() ? parseScale(custom) : null;
@@ -43,11 +46,36 @@ export function ScalePicker({ sheet, units, onPick, onCalibrate, onClear }: Prop
               ? 'not set'
               : sheet.scaleSource === 'detected'
                 ? `${current}, read from the sheet. Check it against a dimension.`
+                : sheet.scaleSource === 'verified'
+                  ? `${current}, read from the sheet and checked against its dimensions`
                 : sheet.scaleSource === 'calibrated'
                   ? `calibrated (${current})`
                   : current}
           </div>
         </div>
+      </div>
+
+      <div className="scale-verify">
+        {check === 'reading' ? (
+          <span className="muted">Checking the scale against the sheet’s dimensions…</span>
+        ) : !check ? (
+          <span className="muted">Not enough dimension strings on this sheet to check the scale.</span>
+        ) : sheet.metersPerPoint && Math.abs(check.metersPerPoint / sheet.metersPerPoint - 1) < 0.02 ? (
+          <span className="check-ok">
+            <Icon name="check" size={14} /> Matches {check.agree} dimensions on the sheet.
+          </span>
+        ) : check.agree >= 5 ? (
+          <span className="check-warn">
+            {sheet.metersPerPoint ? 'Dimensions on this sheet read as' : 'Dimensions read as'} <b>{check.label}</b> ({check.agree} of {check.read}).{' '}
+            <button className="link-button" onClick={() => onPick(check.label, check.metersPerPoint)}>
+              Use {check.label}
+            </button>
+          </span>
+        ) : (
+          <span className="muted">
+            A few dimensions read as {check.label}; too few to be sure.
+          </span>
+        )}
       </div>
 
       {sheet.scaleHints.length > 0 && (

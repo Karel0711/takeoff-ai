@@ -102,7 +102,12 @@ undo/redo, and an activity log of every change.
   outlines (no text layer), so they come in as "Page 34". **More › Name sheets
   with Claude…** reads each one's title block (the right and bottom strips) and
   names it with its sheet number. Double-click a sheet to rename it by hand.
-- Next: scale verification.
+- **Scale check (done):** the scale picker reads the sheet's dimension strings
+  (5300, 12'-6") against the dimension lines they sit on and reports the scale
+  most of them agree on: "Matches 12 dimensions on the sheet" (A2.1), or a
+  warning with a one-click fix when they read differently. A scale read from
+  the title block that the dimensions confirm loses its amber Check mark.
+  Elevations and sections with few dimensions say so rather than guess.
 
 **Phase 3 — AI takeoff:** walls by type from the plan tags and PDF vector lines,
 rooms with finishes, all as suggestions you accept or correct.
