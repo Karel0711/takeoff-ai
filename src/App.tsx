@@ -44,7 +44,7 @@ import {
   saveProject,
   saveStarterTypes,
 } from './storage';
-import { readProjectFile, writeProjectFile } from './projectFile';
+import { readProjectFiles, writeBackup, writeProjectFile } from './projectFile';
 import { canUseServiceWorker, isInstalled, onLaunchFiles, promptInstall, registerServiceWorker } from './pwa';
 import { formatQty, parseScale } from './units';
 
@@ -401,18 +401,45 @@ export function App() {
   async function openProjectFile(file: File) {
     setBusy(`Opening ${file.name}…`);
     try {
-      const opened = await readProjectFile(await file.arrayBuffer());
-      // Opening a file always makes a new project; say so when the name is already taken.
+      const all = await readProjectFiles(await file.arrayBuffer());
+      // Opening a file always makes new projects; say so when a name is already taken.
       const names = new Set((await listProjects()).map((p) => p.name));
-      if (names.has(opened.project.name)) opened.project = { ...opened.project, name: `${opened.project.name} (copy)` };
       await flush();
-      for (const [id, data] of opened.pdfs) await savePdf(id, data);
-      await saveProject(opened.project);
-      if (opened.project.id) await saveActivity(opened.project.id, opened.activity);
-      await openProjectState(opened.project);
-      setToast({ text: `Opened ${opened.project.name}`, undo: false });
+      let last: Project | null = null;
+      for (const opened of all) {
+        if (names.has(opened.project.name)) opened.project = { ...opened.project, name: `${opened.project.name} (copy)` };
+        names.add(opened.project.name);
+        for (const [id, data] of opened.pdfs) await savePdf(id, data);
+        await saveProject(opened.project);
+        if (opened.project.id) await saveActivity(opened.project.id, opened.activity);
+        last = opened.project;
+      }
+      if (last) await openProjectState(last);
+      setToast({ text: all.length === 1 ? `Opened ${last?.name}` : `Restored ${all.length} projects from the backup`, undo: false });
     } catch (e) {
       await notify(e instanceof Error ? e.message : 'That file could not be opened.');
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  /** Saves every project, with its history and drawings, in one backup file. */
+  async function backupAll() {
+    setBusy('Backing up every project…');
+    try {
+      await flush();
+      const list = await listProjects();
+      const entries: { project: Project; activity: ActivityEvent[] }[] = [];
+      for (const summary of list) {
+        const p = await loadProjectById(summary.id);
+        if (p) entries.push({ project: p, activity: await loadActivity(summary.id) });
+      }
+      const blob = await writeBackup(entries, loadPdf);
+      const date = new Date().toISOString().slice(0, 10);
+      if ((await saveFile(`Takeoff AI backup ${date}.zip`, blob)) === 'failed') setToast({ text: 'The backup could not be saved.', undo: false });
+      else setToast({ text: `Backed up ${entries.length} project${entries.length === 1 ? '' : 's'}`, undo: false });
+    } catch (e) {
+      setToast({ text: `Something went wrong: ${e instanceof Error ? e.message : String(e)}`, undo: false });
     } finally {
       setBusy(null);
     }
@@ -1189,6 +1216,10 @@ export function App() {
             onOpenFile={() => {
               setPopover(null);
               projectFileInput.current?.click();
+            }}
+            onBackupAll={() => {
+              setPopover(null);
+              void backupAll();
             }}
           />
         </Popover>

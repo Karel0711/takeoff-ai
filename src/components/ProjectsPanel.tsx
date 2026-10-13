@@ -11,6 +11,7 @@ interface Props {
   onDelete: (id: string) => void;
   onSaveFile: () => void;
   onOpenFile: () => void;
+  onBackupAll: () => void;
 }
 
 const when = (iso: string) => {
@@ -25,7 +26,7 @@ const size = (bytes: number) =>
   bytes > 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : bytes > 1e6 ? `${Math.round(bytes / 1e6)} MB` : `${Math.max(1, Math.round(bytes / 1e3))} KB`;
 
 /** Every project saved in this browser, with new, open, delete and project files. */
-export function ProjectsPanel({ currentId, persisted, onOpen, onNew, onDelete, onSaveFile, onOpenFile }: Props) {
+export function ProjectsPanel({ currentId, persisted, onOpen, onNew, onDelete, onSaveFile, onOpenFile, onBackupAll }: Props) {
   const [projects, setProjects] = useState<ProjectSummary[] | null>(null);
   const [space, setSpace] = useState<{ usage: number; quota: number } | null>(null);
   useEffect(() => {
@@ -81,6 +82,12 @@ export function ProjectsPanel({ currentId, persisted, onOpen, onNew, onDelete, o
           </button>
         </div>
         <p className="field-hint">A .takeoff file holds the whole project with its drawings: use it for backups or to move a takeoff to another computer.</p>
+        <div className="button-row">
+          <button onClick={onBackupAll} title="Every project, with its history and drawings, in one file">
+            <Icon name="download" size={14} /> Back up all projects…
+          </button>
+        </div>
+        <p className="field-hint">Open a backup with Open file… to restore every project in it.</p>
       </div>
       {space && (
         <div className="pop-actions storage-line">

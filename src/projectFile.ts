@@ -66,3 +66,44 @@ export async function readProjectFile(data: ArrayBuffer): Promise<OpenedProject>
   };
   return { project, activity: parsed.activity ?? [], pdfs };
 }
+
+const BACKUP = 'takeoff-ai-backup';
+
+/**
+ * A backup of every project: one zip holding each project's .takeoff file, so it can
+ * be restored whole or any one project opened from it on its own.
+ *
+ *   backup.json                 { format, version, savedAt, projects: names }
+ *   projects/<n> <name>.takeoff
+ */
+export async function writeBackup(
+  projects: { project: Project; activity: ActivityEvent[] }[],
+  loadPdf: (docId: string) => Promise<ArrayBuffer | undefined>,
+): Promise<Blob> {
+  const { default: JSZip } = await import('jszip');
+  const zip = new JSZip();
+  zip.file('backup.json', JSON.stringify({ format: BACKUP, version: 1, savedAt: new Date().toISOString(), projects: projects.map((p) => p.project.name) }));
+  for (const [i, { project, activity }] of projects.entries()) {
+    const { blob } = await writeProjectFile(project, activity, loadPdf);
+    const safe = project.name.replace(/[^\w\- ]+/g, '').trim() || 'project';
+    zip.file(`projects/${String(i + 1).padStart(2, '0')} ${safe}.takeoff`, await blob.arrayBuffer());
+  }
+  return zip.generateAsync({ type: 'blob', compression: 'STORE', mimeType: 'application/zip' });
+}
+
+/** Reads a project file or a backup of several, each as a new project. */
+export async function readProjectFiles(data: ArrayBuffer): Promise<OpenedProject[]> {
+  const { default: JSZip } = await import('jszip');
+  let zip;
+  try {
+    zip = await JSZip.loadAsync(data);
+  } catch {
+    throw new Error('That file is not a Takeoff AI project file.');
+  }
+  if (!zip.file('backup.json')) return [await readProjectFile(data)];
+  const entries = zip.file(/^projects\/.+\.takeoff$/).sort((a, b) => a.name.localeCompare(b.name));
+  const out: OpenedProject[] = [];
+  for (const e of entries) out.push(await readProjectFile(await e.async('arraybuffer')));
+  if (!out.length) throw new Error('That backup has no projects in it.');
+  return out;
+}

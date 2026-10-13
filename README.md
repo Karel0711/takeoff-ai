@@ -153,6 +153,10 @@ sheet takes one to three minutes.
   `.takeoff` files and PDFs from Finder (Chrome), and updates itself: when a new
   version is published it shows **Restart** to switch.
 
+Back up everything: **Projects › Back up all projects…** saves every project,
+with its history and drawings, in one zip. Open it with **Open file…** to
+restore them all (on this computer or another one).
+
 Your own takeoff types: set up the types you use (assemblies, divisions,
 packages, heights), then **More › Use these types for new projects**. New
 projects in the same units start with them instead of the built-in set;

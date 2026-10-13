@@ -29,3 +29,24 @@ describe('project files', () => {
     await expect(readProjectFile(new Uint8Array([1, 2, 3]).buffer)).rejects.toThrow(/not a Takeoff AI project file/);
   });
 });
+
+describe('backups', () => {
+  it('holds every project and restores each as a new project', async () => {
+    const { writeBackup, readProjectFiles } = await import('../src/projectFile');
+    const a = { ...newProject('metric'), name: 'Lodge' };
+    const b = { ...newProject('imperial'), name: 'Garage' };
+    const blob = await writeBackup(
+      [
+        { project: a, activity: [] },
+        { project: b, activity: [] },
+      ],
+      async () => undefined,
+    );
+    const opened = await readProjectFiles(await blob.arrayBuffer());
+    expect(opened.map((o) => [o.project.name, o.project.units])).toEqual([
+      ['Lodge', 'metric'],
+      ['Garage', 'imperial'],
+    ]);
+    expect(opened.every((o) => o.project.id !== a.id && o.project.id !== b.id)).toBe(true);
+  });
+});
