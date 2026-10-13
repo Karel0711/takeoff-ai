@@ -46,8 +46,9 @@ undo/redo, and an activity log of every change.
   printed on the sheet that the AI did not return are flagged, so nothing is
   silently missed. A type whose tag already exists is updated in place and keeps
   its measurements.
-- **Score the AI (done):** after reading a legend, **Score against bid
-  workbook…** compares the result with an estimator's transcription (any
+- **Score the AI (done):** with **More › Show bid workbook scoring** turned on
+  (off by default, so subs don't see it), after reading a legend **Score against
+  bid workbook…** compares the result with an estimator's transcription (any
   workbook with a `Type | Design / assembly name | Construction | Notes` table,
   sections headed with their sheet number). It reports types found, layers read
   exactly (sizes and spacings must match), framing spacings, overall thickness
@@ -240,7 +241,7 @@ right. Tools sit in the title bar.
     **marked-up PDF**: a summary page of each type's total, then every sheet with
     takeoffs, the original drawing kept in vector with the takeoffs drawn over it
     and a legend of that sheet's totals along the top. Attach it to a quote.
-12. **Typical floors:** More → *Count this sheet more than once…* makes a sheet's
+12. **Typical floors:** More → *Count this sheet ×N…* makes a sheet's
     takeoffs count ×N (one plan drawn for several floors). The sheet list shows
     ×N, and the quantities, Excel and PDF legend include it.
 13. **Search sheets and text:** the sheet search also finds text drawn on the

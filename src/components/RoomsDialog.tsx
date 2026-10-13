@@ -6,6 +6,7 @@ import { segmentsOf, wallModelFor } from '../fill/sheetWalls';
 import { newId, type Measurement, type Pt, type Sheet, type TakeoffType, type Units } from '../model';
 import { pageTexts } from '../pageText';
 import type { PDFPageProxy } from '../pdf';
+import { useEscape } from './Dialogs';
 import { areaUnit, formatQty, toArea } from '../units';
 
 interface Props {
@@ -146,6 +147,8 @@ export function RoomsDialog({ page, sheet, units, types, earlier, palette, maxOp
   const chosen = state.phase === 'done' ? state.rooms.filter((r, i) => r.points && picked.has(i)) : [];
   const total = chosen.reduce((n, r) => n + r.area, 0);
 
+  useEscape(onClose);
+
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal wide" role="dialog" aria-label="Room takeoff" onClick={(e) => e.stopPropagation()}>
@@ -173,7 +176,7 @@ export function RoomsDialog({ page, sheet, units, types, earlier, palette, maxOp
           <>
             <p className="muted">
               Every room tag on the sheet (a number in a box with the name above), filled to the inside face of its walls. Tags in one open
-              space share it. Found in {(state.ms / 1000).toFixed(1)} s.
+              space share it.
             </p>
             {state.rooms.length === 0 ? (
               <p className="warn">No room tags found on this sheet. A room tag is a room number, in a box or on its own, under the room name.</p>

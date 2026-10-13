@@ -586,7 +586,8 @@ export function Viewer(props: Props) {
                     vectorEffect="non-scaling-stroke"
                     opacity={0.85}
                   />
-                  {isSel && <Label at={mid} z={z} text={label} />}
+                  {/* Above the point, clear of its handle. */}
+                  {isSel && <Label at={[mid[0], mid[1] - 16 / z]} z={z} text={label} />}
                 </g>
               );
             }

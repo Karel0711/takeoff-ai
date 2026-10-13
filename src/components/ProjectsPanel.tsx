@@ -55,7 +55,13 @@ export function ProjectsPanel({ currentId, persisted, onOpen, onNew, onDelete, o
                   {p.units === 'metric' ? 'metric' : 'imperial'}
                 </span>
               </span>
-              {p.id === currentId && <span className="open-badge">Open</span>}
+              {p.id === currentId ? (
+                <span className="open-badge">
+                  <Icon name="check" size={13} /> Current
+                </span>
+              ) : (
+                <span className="open-hint">Open</span>
+              )}
             </button>
             <button className="icon-button small danger" title="Delete project" aria-label={`Delete ${p.name}`} onClick={() => onDelete(p.id)}>
               <Icon name="trash" size={14} />

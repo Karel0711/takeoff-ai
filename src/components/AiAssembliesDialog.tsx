@@ -8,6 +8,7 @@ import { scoreExtraction, type ScoreReport } from '../eval/score';
 import { saveFile } from '../host';
 import type { PDFPageProxy } from '../pdf';
 import { ScorePanel } from './ScorePanel';
+import { scoringOn } from '../scoring';
 import { lengthUnit } from '../units';
 
 interface Props {
@@ -265,9 +266,11 @@ export function AiAssembliesDialog({ page, sheet, units, existingTypes, onApply,
                 e.target.value = '';
               }}
             />
-            <button onClick={() => keyInput.current?.click()}>
-              {score ? 'Score against another workbook…' : 'Score against bid workbook…'}
-            </button>
+            {scoringOn() && (
+              <button onClick={() => keyInput.current?.click()}>
+                {score ? 'Score against another workbook…' : 'Score against bid workbook…'}
+              </button>
+            )}
             <button onClick={() => void run()} title="Ask Claude to read this sheet again">
               Read again
             </button>

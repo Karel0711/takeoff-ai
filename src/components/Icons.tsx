@@ -33,6 +33,7 @@ const PATHS = {
   count: 'M10 10m-3.5 0a3.5 3.5 0 107 0 3.5 3.5 0 10-7 0',
   gear: 'M10 10m-2.5 0a2.5 2.5 0 105 0 2.5 2.5 0 10-5 0M10 2.5v2M10 15.5v2M2.5 10h2M15.5 10h2M4.7 4.7l1.4 1.4M13.9 13.9l1.4 1.4M4.7 15.3l1.4-1.4M13.9 6.1l1.4-1.4',
   doc: 'M5 2.5h10v15H5zM7.5 6.5h5M7.5 9.5h5M7.5 12.5h3',
+  door: 'M3.5 16.5h13M6 16.5V3.5h8v13M11.5 10.5h.01',
 } as const;
 
 export type IconName = keyof typeof PATHS;

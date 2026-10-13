@@ -5,7 +5,7 @@ import { pageTexts } from '../pageText';
 import type { PDFPageProxy } from '../pdf';
 import { measurementVars } from '../quantities';
 import { areaUnit, formatQty } from '../units';
-import { askText } from './Dialogs';
+import { askText, useEscape } from './Dialogs';
 
 type Finishes = Partial<Record<FinishRole, string>>;
 
@@ -15,6 +15,8 @@ interface Props {
   /** The page of a sheet, for reading a finish schedule. */
   getPage: (sheet: Sheet) => Promise<PDFPageProxy | null>;
   onApply: (result: { types: TakeoffType[]; finishes: Map<string, Finishes> }) => void;
+  /** Runs Rooms on the open sheet, when it can (a plan with a scale). */
+  onFindRooms?: () => void;
   onClose: () => void;
 }
 
@@ -28,7 +30,7 @@ const codeOf = (name: string) => name.split(' – ')[0].trim().toUpperCase();
  * takeoff type; the room's area counts toward floor and ceiling, its perimeter
  * toward base and walls (walls × the type's height).
  */
-export function RoomFinishesDialog({ project, palette, getPage, onApply, onClose }: Props) {
+export function RoomFinishesDialog({ project, palette, getPage, onApply, onFindRooms, onClose }: Props) {
   const areaTypeIds = new Set(project.types.filter((t) => t.kind === 'area').map((t) => t.id));
   const rooms = useMemo(
     () =>
@@ -163,13 +165,18 @@ export function RoomFinishesDialog({ project, palette, getPage, onApply, onClose
   };
 
   const allPicked = rooms.length > 0 && rooms.every((m) => picked.has(m.id));
+  // A stray click outside or Esc closes only while nothing is unsaved; Cancel always does.
+  const dismiss = () => {
+    if (!changed) onClose();
+  };
+  useEscape(dismiss);
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
+    <div className="modal-backdrop" onClick={dismiss}>
       <div className="modal wide finishes" role="dialog" aria-label="Room finishes" onClick={(e) => e.stopPropagation()}>
         <div className="panel-head">
           <h3>Room finishes</h3>
-          <button onClick={onClose}>Close</button>
+          <button onClick={onClose}>{changed ? 'Cancel' : 'Close'}</button>
         </div>
         <p className="muted">
           Each room’s floor and ceiling count as its area, its base and walls as its perimeter (walls × the wall type’s height). Pick types per
@@ -177,7 +184,16 @@ export function RoomFinishesDialog({ project, palette, getPage, onApply, onClose
         </p>
 
         {rooms.length === 0 ? (
-          <p className="warn">No rooms yet. Run Automate › Rooms on a plan, or fill rooms by hand and name them, then come back here.</p>
+          <>
+            <p className="warn">No rooms yet. Finishes go on rooms: find them on a plan, or fill rooms by hand and name them, then come back here.</p>
+            {onFindRooms && (
+              <div className="row-actions">
+                <button className="primary" onClick={onFindRooms}>
+                  Find rooms on this sheet
+                </button>
+              </div>
+            )}
+          </>
         ) : (
           <>
             <div className="row-actions">
@@ -297,9 +313,8 @@ export function RoomFinishesDialog({ project, palette, getPage, onApply, onClose
 
         <div className="row-actions sticky">
           <div className="spacer" />
-          <button onClick={onClose}>Cancel</button>
           <button className="primary" disabled={!changed} onClick={save}>
-            {changed ? `Save finishes for ${changed} room${changed === 1 ? '' : 's'}` : 'No changes'}
+            {changed ? `Save finishes for ${changed} room${changed === 1 ? '' : 's'}` : 'Save finishes'}
           </button>
         </div>
       </div>

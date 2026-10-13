@@ -20,6 +20,7 @@ const SHORTCUTS: [string, string][] = [
   ['[ and ]', 'Previous and next sheet'],
   ['Scroll', 'Zoom'],
   ['Drag, or Space-drag', 'Move around the sheet'],
+  ['?', 'Show these shortcuts'],
 ];
 
 export function ShortcutsDialog({ onClose }: { onClose: () => void }) {

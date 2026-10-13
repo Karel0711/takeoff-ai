@@ -200,6 +200,25 @@ Where the project stands, for picking it up in a new session.
     **duplicate project** (drawings copied under new ids), an upload note
     (scales read, sheets without text), quiet scale verification when a sheet
     opens, build version in Quick start (`__BUILD__` from `vite.config.ts`).
+  - **First-time-sub pass** (a walkthrough audit at 1280 and 1440 px):
+    - A toast's Undo shows only while the project is still as that change left it
+      (`Toast.after`); before, Undo after ⌘Z undid an older change.
+    - Tools are never greyed out for want of a type: `chooseTool()` takes the
+      first type of the kind the tool needs and says so.
+    - Select, Measure, Fill and Symbols keep their labels down to 1260 px; Trace
+      and Cutout go icon-only first.
+    - Bid workbook scoring is behind **More › Show bid workbook scoring**
+      (`src/scoring.ts`, per browser).
+    - Esc closes Rooms, Wall takeoff and Room finishes (`useEscape` in
+      `Dialogs.tsx`). Room finishes ignores a stray click or Esc while edits are
+      unsaved, and offers **Find rooms on this sheet** when there are none.
+    - Other fixes: the Automate menu says when reading assemblies needs an API key,
+      Door tags has its own icon, "?" opens the shortcuts, the More menu is wider,
+      the selected line's label sits above its handle, and the Projects panel
+      marks the open project "Current".
+    - Not done: the sample's starter types (W1/FR1, Floor finish, Ceiling) sit
+      unused beside the types read from the sample. Wall finishes still lead with
+      length, with m² as an item.
 - **Interface (redesigned):** light, Mac-style (system font, segmented tools,
   source-list sidebar, inspector with Quantities / Takeoffs / History). State
   changes go through `commit()` in `App.tsx`, which keeps undo/redo stacks and
@@ -232,7 +251,8 @@ the `downloads` capability).
 ## Next
 
 1. Run the AI legend reading on A0.2/A0.3 for real and tune it. The scorer
-   (`src/eval/`, **Score against bid workbook…** in the review screen) grades it
+   (`src/eval/`, **Score against bid workbook…** in the review screen, shown once
+   **More › Show bid workbook scoring** is on; `src/scoring.ts`) grades it
    against the estimator's "Schedules A0.2 A0.3" tab: 25 entries on A0.2 and 23 on
    A0.3. A perfect answer scores 100% and deliberately damaged ones lose exactly
    the expected points (checked on the real workbook).

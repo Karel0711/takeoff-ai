@@ -9,6 +9,8 @@ import { readWallKey, scoreWalls, type WallKeyEntry } from '../eval/wallKey';
 import { formatQty, lengthUnit, toLength } from '../units';
 import { runsToLines, type TypeLines } from '../walls/runsToLines';
 import { sheetWallTakeoff } from '../walls/sheetWallTakeoff';
+import { scoringOn } from '../scoring';
+import { useEscape } from './Dialogs';
 import { tagKind, type WallTakeoffResult } from '../walls/wallTakeoff';
 
 interface Props {
@@ -148,6 +150,8 @@ export function WallTakeoffDialog({ page, sheet, units, types, earlier, palette,
 
   const picked = state.phase === 'done' ? state.lines.filter((l) => (choice.get(l.code) ?? SKIP) !== SKIP) : [];
 
+  useEscape(onClose);
+
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal wide" role="dialog" aria-label="Wall takeoff" onClick={(e) => e.stopPropagation()}>
@@ -169,8 +173,7 @@ export function WallTakeoffDialog({ page, sheet, units, types, earlier, palette,
           <>
             <p className="muted">
               Centreline lengths of every wall a type tag points at, carried along the same wall, round corners and into
-              untagged walls of the same thickness that run into it. Exterior walls are measured through openings. Found in{' '}
-              {(state.ms / 1000).toFixed(1)} s.
+              untagged walls of the same thickness that run into it. Exterior walls are measured through openings.
             </p>
             <label className="inline">
               <input type="checkbox" checked={throughDoors} onChange={(e) => setThroughDoors(e.target.checked)} /> Measure partitions
@@ -251,7 +254,7 @@ export function WallTakeoffDialog({ page, sheet, units, types, earlier, palette,
             </p>
 
             <div className="row-actions">
-              <button onClick={() => keyInput.current?.click()}>{key ? 'Score against another workbook…' : 'Score against bid workbook…'}</button>
+              {scoringOn() && <button onClick={() => keyInput.current?.click()}>{key ? 'Score against another workbook…' : 'Score against bid workbook…'}</button>}
               <input
                 ref={keyInput}
                 type="file"

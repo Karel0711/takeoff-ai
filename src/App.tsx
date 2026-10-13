@@ -35,7 +35,7 @@ import { sheetImage } from './sheetImage';
 import { compareSheets } from './compareSheets';
 import { pageTexts, type PageText } from './pageText';
 import { isHosted, saveFile } from './host';
-import { defaultTypes, newId, newProject, type Project, type Pt, type Sheet, type TakeoffType, type Units } from './model';
+import { defaultTypes, newId, newProject, type Kind, type Project, type Pt, type Sheet, type TakeoffType, type Units } from './model';
 import { inspectPage, openPdf, type PDFDocumentProxy, type PDFPageProxy } from './pdf';
 import { typeTotals } from './quantities';
 import {
@@ -58,6 +58,8 @@ import {
 import { readProjectFiles, writeBackup, writeProjectFile } from './projectFile';
 import { canUseServiceWorker, isInstalled, onLaunchFiles, promptInstall, registerServiceWorker } from './pwa';
 import { ringArea } from './geometry';
+import { scoringOn, setScoringOn } from './scoring';
+import { getApiKey } from './ai/claude';
 import { formatQty, parseScale } from './units';
 
 const PALETTE = ['#0a84ff', '#ff9f0a', '#30d158', '#bf5af2', '#ff375f', '#64d2ff', '#ffd60a', '#ac8e68', '#5e5ce6', '#ff6961'];
@@ -70,6 +72,8 @@ interface Toast {
   action?: { label: string; run: () => void };
   /** Stay until dismissed. */
   sticky?: boolean;
+  /** For Undo: the project as the change left it. Once anything else changes it, Undo would undo that instead. */
+  after?: Project;
 }
 
 const TOOLS: { id: Tool; label: string; icon: IconName; key: string; help: string }[] = [
@@ -114,7 +118,11 @@ export function App() {
   const [comparison, setComparison] = useState<{ url: string; blob: Blob; name: string } | null>(null);
   const [tool, setTool] = useState<Tool>('select');
   const [busy, setBusy] = useState<string | null>(null);
-  const [toast, setToast] = useState<Toast | null>(null);
+  const [toast, setToastState] = useState<Toast | null>(null);
+  /** The latest chooseTool, for the keyboard handler. */
+  const chooseToolRef = useRef<(id: Tool) => void>(() => {});
+  // A toast's Undo belongs to the change just made, which is the project as it is now.
+  const setToast = useCallback((t: Toast | null) => setToastState(t?.undo ? { ...t, after: projectRef.current ?? undefined } : t), []);
   const [sheetFilter, setSheetFilter] = useState('');
   const [aiDialog, setAiDialog] = useState<'assemblies' | 'settings' | 'walls' | 'rooms' | 'finishes' | 'shortcuts' | 'help' | 'library' | 'legend' | null>(null);
   /** Reading a legend: the next box dragged is the legend; then its rows, for the dialog. */
@@ -411,6 +419,10 @@ export function App() {
         setTool('select');
         return;
       }
+      if (e.key === '?') {
+        setAiDialog('shortcuts');
+        return;
+      }
       if (e.key === '[' || e.key === ']') {
         // Previous / next sheet.
         const sheets = projectRef.current?.sheets ?? [];
@@ -423,7 +435,7 @@ export function App() {
         return;
       }
       const found = TOOLS.find((x) => x.key.toLowerCase() === e.key.toLowerCase());
-      if (found) setTool(found.id);
+      if (found) chooseToolRef.current(found.id);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -441,6 +453,27 @@ export function App() {
   }, [popover]);
 
   if (!project) return <div className="loading">Opening your project…</div>;
+
+  /**
+   * Picks a tool. One that measures a kind of type the active one isn't (Fill needs an area
+   * type) takes the first type of that kind, and says so, rather than doing nothing.
+   */
+  function chooseTool(id: Tool) {
+    const need: Kind | null = id === 'fill' ? 'area' : id === 'symbol' ? 'count' : id === 'trace' ? 'linear' : null;
+    const current = projectRef.current?.types.find((t) => t.id === activeTypeId);
+    if ((need && current?.kind !== need) || (id === 'measure' && !current)) {
+      const pick = projectRef.current?.types.find((t) => !need || t.kind === need);
+      if (!pick) {
+        const what = need === 'area' ? 'an area' : need === 'count' ? 'a count' : need === 'linear' ? 'a length' : 'a';
+        setToast({ text: `Add ${what} type first, with + next to Takeoff types.`, undo: false });
+        return;
+      }
+      setActiveTypeId(pick.id);
+      setToast({ text: `Taking off as ${pick.name}. Pick another type on the left to change it.`, undo: false });
+    }
+    setTool(id);
+  }
+  chooseToolRef.current = chooseTool;
 
   const updateSheet = (id: string, patch: Partial<Sheet>, source: string) =>
     commit((p) => ({ ...p, sheets: p.sheets.map((s) => (s.id === id ? { ...s, ...patch } : s)) }), source);
@@ -1414,17 +1447,8 @@ export function App() {
   const exactTags = exactHits.length;
   const totalFor = (typeId: string) => totals.find((t) => t.type.id === typeId);
   const scaleState = !sheet ? 'none' : !sheet.metersPerPoint ? 'unset' : sheet.scaleSource === 'detected' ? 'check' : 'set';
-  const toolDisabled = (id: Tool) =>
-    !page ||
-    (id === 'measure' && !activeType) ||
-    (id === 'fill' && activeType?.kind !== 'area') ||
-    (id === 'symbol' && activeType?.kind !== 'count') ||
-    (id === 'trace' && activeType?.kind !== 'linear') ||
-    (id === 'cutout' && selectedType?.kind !== 'area');
-  const toolTitle = (t: (typeof TOOLS)[number]) =>
-    `${t.help} (${t.key})${
-      t.id === 'measure' && !activeType ? ' — choose a takeoff type first' : t.id === 'fill' && activeType?.kind !== 'area' ? ' — choose an area type first' : t.id === 'symbol' && activeType?.kind !== 'count' ? ' — choose a count type first' : t.id === 'trace' && activeType?.kind !== 'linear' ? ' — choose a length type first' : t.id === 'cutout' && selectedType?.kind !== 'area' ? ' — select an area first' : ''
-    }`;
+  const toolDisabled = (id: Tool) => !page || (id === 'cutout' && selectedType?.kind !== 'area');
+  const toolTitle = (t: (typeof TOOLS)[number]) => `${t.help} (${t.key})${t.id === 'cutout' && selectedType?.kind !== 'area' ? ' — select an area first' : ''}`;
 
   return (
     <div className="app">
@@ -1479,11 +1503,11 @@ export function App() {
                 className={tool === t.id ? 'on' : ''}
                 aria-pressed={tool === t.id}
                 disabled={toolDisabled(t.id)}
-                onClick={() => setTool(t.id)}
+                onClick={() => chooseTool(t.id)}
                 title={toolTitle(t)}
               >
                 <Icon name={t.icon} size={16} />
-                <span className="tool-label">{t.label}</span>
+                <span className={t.id === 'trace' || t.id === 'cutout' ? 'tool-label minor' : 'tool-label'}>{t.label}</span>
               </button>
             ))}
           </div>
@@ -1536,7 +1560,9 @@ export function App() {
           />
           <button className="secondary" onClick={() => fileInput.current?.click()} title="Add PDF drawings">
             <Icon name="upload" size={16} />
-            <span className="hide-narrow">Add drawings</span>
+            <span className="hide-narrow">
+              Add<span className="hide-medium"> drawings</span>
+            </span>
           </button>
           <button
             ref={exportButton}
@@ -1821,7 +1847,7 @@ export function App() {
                 Later
               </button>
             )}
-            {toast.undo && (
+            {toast.undo && toast.after === project && (
               <button
                 onClick={() => {
                   undo();
@@ -1954,7 +1980,10 @@ export function App() {
                 id: 'assemblies' as const,
                 icon: 'sparkle' as const,
                 title: sheet.aiAssemblies ? 'Assembly types (saved)' : 'Read assembly types',
-                text: 'On a legend sheet: Claude reads every wall, floor, roof and ceiling type into takeoff types with their materials.',
+                text:
+                  isHosted || getApiKey()
+                    ? 'On a legend sheet: Claude reads every wall, floor, roof and ceiling type into takeoff types with their materials.'
+                    : 'On a legend sheet: Claude reads every wall, floor and ceiling type. Needs a Claude API key (More › AI settings).',
                 ready: !!page,
               },
               {
@@ -1973,7 +2002,7 @@ export function App() {
               },
               {
                 id: 'doors' as const,
-                icon: 'count' as const,
+                icon: 'door' as const,
                 title: 'Door tags',
                 text: 'On a plan: counts every door tag (a number in an oval or hexagon), named by its number.',
                 ready: !!page,
@@ -2080,7 +2109,7 @@ export function App() {
                       hint: 'Track progress',
                       onSelect: () => updateSheet(sheet.id, { done: sheet.done ? undefined : true }, sheet.done ? `Reopen ${sheet.name}` : `${sheet.name} done`),
                     },
-                    { label: sheet.repeat ? `Counts ×${sheet.repeat}…` : 'Count this sheet more than once…', hint: 'Typical floors', onSelect: () => void setRepeat(sheet) },
+                    { label: sheet.repeat ? `Counts ×${sheet.repeat}…` : 'Count this sheet ×N…', hint: 'Typical floors', onSelect: () => void setRepeat(sheet) },
                   ]
                 : []),
               ...(previousRevision ? [{ label: 'Compare with previous revision', onSelect: () => void compareRevision() }] : []),
@@ -2115,6 +2144,15 @@ export function App() {
               { label: 'Projects…', onSelect: () => setPopover('projects') },
               { label: 'Save project to file…', onSelect: () => void saveProjectFile() },
               { label: 'Open project file…', onSelect: () => projectFileInput.current?.click() },
+              {
+                label: scoringOn() ? 'Hide bid workbook scoring' : 'Show bid workbook scoring',
+                hint: 'Estimators',
+                onSelect: () => {
+                  const on = !scoringOn();
+                  setScoringOn(on);
+                  setToast({ text: on ? 'Wall takeoff and assembly reading can now be scored against a bid workbook.' : 'Bid workbook scoring hidden.', undo: false });
+                },
+              },
             ],
           ].filter((g) => g.length)}
         />
@@ -2223,6 +2261,7 @@ export function App() {
               'Room finishes',
             )
           }
+          onFindRooms={page && sheet?.metersPerPoint ? () => setAiDialog('rooms') : undefined}
           onClose={() => setAiDialog(null)}
         />
       )}
@@ -2286,7 +2325,7 @@ function toolHint(tool: Tool, type: TakeoffType | null, sheet: Sheet | null): st
   if (sheet && !sheet.metersPerPoint && tool !== 'calibrate') return 'Set this sheet’s scale before measuring';
   switch (tool) {
     case 'select':
-      return 'Click a takeoff to select it · Delete removes it · Drag to pan · Scroll to zoom · F fits the sheet';
+      return 'Click a takeoff to select it · Delete removes it';
     case 'measure':
       if (!type) return 'Choose a takeoff type on the left';
       if (type.kind === 'count') return `Click each ${type.name.split(' – ')[0]} to count it`;

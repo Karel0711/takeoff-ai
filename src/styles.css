@@ -1342,6 +1342,7 @@ input.unit {
 }
 .menu-item {
   justify-content: space-between;
+  gap: 12px;
   width: 100%;
   min-height: 28px;
   padding: 0 10px;
@@ -1368,7 +1369,9 @@ input.unit {
   color: var(--on-accent);
 }
 .menu-hint {
+  flex-shrink: 0;
   font-size: 11px;
+  white-space: nowrap;
   opacity: 0.6;
 }
 
@@ -1672,8 +1675,19 @@ table.items th {
 
 /* ---------- Narrow windows ---------- */
 
-/* Six tools with labels need about 1400 px; below that the tools show icons only. */
+/* Six tools with labels need about 1400 px. Below that the two used least (Trace, Cutout)
+   show icons only, so the main tools keep their names on a laptop-sized window. */
 @media (max-width: 1400px) {
+  .tool-label.minor,
+  .hide-medium {
+    display: none;
+  }
+  .tb-left {
+    width: 200px;
+  }
+}
+/* The main tools with labels fit down to about 1260 px. */
+@media (max-width: 1260px) {
   .tool-label {
     display: none;
   }
@@ -1910,9 +1924,23 @@ progress.progress {
   white-space: normal;
 }
 .open-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-2);
+}
+/* Other projects say they open on click, once the pointer is on them. */
+.open-hint {
   font-size: 11px;
   font-weight: 600;
   color: var(--accent);
+  opacity: 0;
+}
+.project-row:hover .open-hint,
+.project-row:focus-visible .open-hint {
+  opacity: 1;
 }
 .project-empty {
   padding: 8px;

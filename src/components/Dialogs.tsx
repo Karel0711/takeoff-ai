@@ -9,6 +9,20 @@ type Request =
   | { kind: 'confirm'; title: string; confirmLabel: string; danger: boolean; resolve: (v: boolean) => void }
   | { kind: 'notice'; title: string; resolve: () => void };
 
+/** Closes a dialog with Esc, as every Mac sheet does. */
+export function useEscape(onEscape: () => void) {
+  const latest = useRef(onEscape);
+  latest.current = onEscape;
+  useEffect(() => {
+    const key = (e: KeyboardEvent) => {
+      // A prompt open over the dialog takes its own Esc.
+      if (e.key === 'Escape' && document.querySelectorAll('.modal-backdrop').length <= 1) latest.current();
+    };
+    window.addEventListener('keydown', key);
+    return () => window.removeEventListener('keydown', key);
+  }, []);
+}
+
 let current: Request | null = null;
 const listeners = new Set<() => void>();
 const emit = () => listeners.forEach((l) => l());

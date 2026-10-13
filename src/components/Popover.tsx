@@ -75,7 +75,7 @@ export interface MenuItem {
 /** A dropdown menu of commands, separated into groups. */
 export function Menu({ anchor, onClose, groups, label }: { anchor: RefObject<HTMLElement | null>; onClose: () => void; groups: MenuItem[][]; label: string }) {
   return (
-    <Popover anchor={anchor} onClose={onClose} align="end" width={260} label={label}>
+    <Popover anchor={anchor} onClose={onClose} align="end" width={320} label={label}>
       <div className="menu" role="menu">
         {groups.map((g, i) => (
           <div className="menu-group" key={i}>
