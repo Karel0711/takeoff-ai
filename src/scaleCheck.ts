@@ -32,8 +32,16 @@ export function dimensionMeters(str: string, units: Units): number | null {
  * Reads the sheet's scale from its dimension strings: each dimension figure is paired
  * with the line it sits on (a stroke passing just beside the text, longer than the
  * text, running the way the text reads), and the scale most of them agree on wins.
+ * Dimensions are read both as millimetres and as feet and inches, since a drawing's
+ * units need not be the project's; `units` only breaks a tie.
  */
 export function checkScale(texts: PageText[], segs: Segment[], units: Units): ScaleCheck | null {
+  const other: Units = units === 'metric' ? 'imperial' : 'metric';
+  const [a, b] = [checkScaleAs(texts, segs, units), checkScaleAs(texts, segs, other)];
+  return a && b ? (b.agree > a.agree ? b : a) : (a ?? b);
+}
+
+function checkScaleAs(texts: PageText[], segs: Segment[], units: Units): ScaleCheck | null {
   const lines = segs.filter((s) => !s.filled && Math.hypot(s.x2 - s.x1, s.y2 - s.y1) > 8);
   // Lines bucketed by midpoint.
   const cell = 64;

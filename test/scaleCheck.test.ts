@@ -32,4 +32,24 @@ describe('scale check from dimension strings', () => {
     expect(r.agree).toBe(5);
     expect(r.read).toBe(6);
   });
+
+  it('reads feet and inches on a project set to metric', () => {
+    const mpp = (48 * 0.0254) / 72; // 1/4" = 1'-0"
+    const texts: PageText[] = [];
+    const segs: Segment[] = [];
+    [
+      ["12'-6\"", 3.81],
+      ["8'-0\"", 2.4384],
+      ["15'-3\"", 4.6482],
+      ["10'-0\"", 3.048],
+    ].forEach(([str, m], i) => {
+      const y = 100 + i * 40;
+      const len = (m as number) / mpp;
+      segs.push(seg(100, y, 100 + len, y));
+      texts.push({ str: str as string, cx: 100 + len / 2, cy: y - 4, w: 18, h: 5 });
+    });
+    const r = checkScale(texts, segs, 'metric')!;
+    expect(r.metersPerPoint).toBeCloseTo(mpp, 8);
+    expect(r.agree).toBe(4);
+  });
 });
