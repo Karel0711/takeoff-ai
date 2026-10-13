@@ -700,6 +700,21 @@ input[type='checkbox'] {
   width: 60px;
 }
 .busy,
+/* Desktop app, first launch: where projects live. */
+.modal.folder-setup {
+  max-width: 460px;
+  text-align: center;
+}
+.folder-setup .welcome-icon {
+  margin: 0 auto 8px;
+}
+.folder-setup-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 18px 0 6px;
+}
+
 /* Box select: what is picked, and what to do with it, over the top of the drawing. */
 .selection-bar {
   position: absolute;
