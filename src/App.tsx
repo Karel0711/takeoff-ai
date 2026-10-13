@@ -348,8 +348,53 @@ export function App() {
       setPdfs((m) => new Map(m).set(docId, pdf));
       commit((p) => ({ ...p, docs: [...p.docs, { id: docId, name: file.name }], sheets: [...p.sheets, ...sheets] }), 'Add drawings');
       setSheetId((cur) => cur ?? sheets[0]?.id ?? null);
+      setBusy(null);
+      await offerRevision(sheets);
     }
     setBusy(null);
+  }
+
+  /**
+   * New sheets with the numbers of sheets already in the project (an addendum, a
+   * re-issue): offer to move the old sheets' takeoffs onto them. Takeoffs keep their
+   * place on the page, so only sheets of the same size are matched.
+   */
+  async function offerRevision(added: Sheet[]) {
+    const p = projectRef.current!;
+    const addedIds = new Set(added.map((x) => x.id));
+    const pairs = added.flatMap((n) => {
+      if (/^Page \d+$/.test(n.name)) return [];
+      const old = p.sheets.find(
+        (o) => !addedIds.has(o.id) && o.name === n.name && Math.abs(o.width - n.width) < 1 && Math.abs(o.height - n.height) < 1,
+      );
+      return old ? [{ old, n }] : [];
+    });
+    const withTakeoffs = pairs.filter(({ old }) => p.measurements.some((m) => m.sheetId === old.id));
+    if (!withTakeoffs.length) return;
+    const list = withTakeoffs.map(({ n }) => n.name);
+    const yes = await askConfirm(
+      `${list.length === 1 ? 'A new sheet has the number of a sheet' : `${list.length} new sheets have the numbers of sheets`} you've taken off (${list.slice(0, 6).join(', ')}${list.length > 6 ? '…' : ''}). Move those takeoffs onto the new revision? The old sheets stay, marked superseded.`,
+      { confirmLabel: 'Move takeoffs' },
+    );
+    if (!yes) return;
+    const move = new Map(withTakeoffs.map(({ old, n }) => [old.id, n]));
+    commit(
+      (q) => ({
+        ...q,
+        measurements: q.measurements.map((m) => (move.has(m.sheetId) ? { ...m, sheetId: move.get(m.sheetId)!.id } : m)),
+        sheets: q.sheets.map((x) => {
+          // The old sheet is kept for reference; the new one keeps a scale set by hand on the old.
+          if (move.has(x.id)) return { ...x, name: `${x.name} (superseded)` };
+          const from = withTakeoffs.find((w) => w.n.id === x.id)?.old;
+          return from && from.metersPerPoint && from.scaleSource !== 'detected' && !x.metersPerPoint
+            ? { ...x, metersPerPoint: from.metersPerPoint, scaleLabel: from.scaleLabel, scaleSource: from.scaleSource }
+            : x;
+        }),
+      }),
+      'New revision',
+    );
+    setSheetId(withTakeoffs[0].n.id);
+    setToast({ text: `Moved takeoffs onto ${list.length} new sheet${list.length === 1 ? '' : 's'}`, undo: true });
   }
 
   /** Saves the open project now (rather than on the autosave timer), before switching away. */

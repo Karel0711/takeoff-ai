@@ -228,6 +228,11 @@ Editing: select a takeoff to show its points. Drag a corner to move it, drag
 the dot in the middle of an edge to add a point there, Option-click a corner
 to remove it (a count's single point drags to move it). Each drag is one undo.
 
+Revisions: add the new drawings (an addendum or re-issue) as usual. When new
+sheets have the numbers of sheets you've taken off, and the same page size, the
+app offers to move those takeoffs onto the new revision; the old sheets stay,
+renamed "(superseded)", and a scale you set by hand carries over.
+
 Deleting: select a takeoff and press Delete, use **Delete takeoff** on the
 selection card, or open **Takeoffs** in the inspector to delete one row, a whole
 type or everything on the sheet. Every delete shows an **Undo** button;
