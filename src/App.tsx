@@ -15,7 +15,8 @@ import { TypeEditor } from './components/TypeEditor';
 import { Viewer, type Tool } from './components/Viewer';
 import { WallTakeoffDialog } from './components/WallTakeoffDialog';
 import { exportWorkbook } from './exportExcel';
-import { wallModelFor } from './fill/sheetWalls';
+import { segmentsOf, wallModelFor } from './fill/sheetWalls';
+import { findSimilar, pointInRing } from './fill/similar';
 import { isHosted, saveFile } from './host';
 import { newId, newProject, type Project, type Pt, type Sheet, type TakeoffType, type Units } from './model';
 import { inspectPage, openPdf, type PDFDocumentProxy, type PDFPageProxy } from './pdf';
@@ -453,6 +454,36 @@ export function App() {
     setToast({ text: `Deleted ${type?.name.split(' – ')[0] ?? 'type'}${count ? ` and ${count} takeoff${count === 1 ? '' : 's'}` : ''}`, undo: true });
   }
 
+  /** Adds every area on the sheet hatched like the given one, as the same type. */
+  async function addSimilar(id: string) {
+    const m = project!.measurements.find((x) => x.id === id);
+    if (!m || !page || !sheet || m.sheetId !== sheet.id) return;
+    setBusy('Looking for areas hatched like this one…');
+    try {
+      // Let the busy note paint before the sheet-wide search.
+      await new Promise((r) => setTimeout(r, 30));
+      const [segs, model] = await Promise.all([segmentsOf(page), wallModelFor(page, sheet, maxOpening)]);
+      const { pattern, areas } = findSimilar(segs, model, m.points, sheet.width, sheet.height);
+      if (!pattern) {
+        setToast({ text: 'This area has no hatch pattern to match. Pick an area drawn with a hatch (dots, tile grid, lines).', undo: false });
+        return;
+      }
+      // Skip areas already taken off as this type.
+      const own = project!.measurements.filter((x) => x.sheetId === sheet.id && x.typeId === m.typeId);
+      const centroid = (pts: Pt[]): Pt => [pts.reduce((n, p) => n + p[0], 0) / pts.length, pts.reduce((n, p) => n + p[1], 0) / pts.length];
+      const fresh = areas.filter((a) => !own.some((x) => pointInRing(centroid(a.points), x.points)));
+      if (!fresh.length) {
+        setToast({ text: 'No other areas hatched like this one on this sheet.', undo: false });
+        return;
+      }
+      const added = fresh.map((a) => ({ id: newId(), sheetId: sheet.id, typeId: m.typeId, points: a.points, holes: [] }));
+      commit((p) => ({ ...p, measurements: [...p.measurements, ...added] }), 'Find similar');
+      setToast({ text: `Added ${added.length} area${added.length === 1 ? '' : 's'} hatched like this one`, undo: true });
+    } finally {
+      setBusy(null);
+    }
+  }
+
   function deleteMeasurements(ids: string[]) {
     if (!ids.length) return;
     const gone = new Set(ids);
@@ -824,6 +855,8 @@ export function App() {
             onRetype={(id, typeId) => commit((p) => ({ ...p, measurements: p.measurements.map((m) => (m.id === id ? { ...m, typeId } : m)) }), 'Change type')}
             onEditType={setEditingTypeId}
             onEditFinishes={() => setAiDialog('finishes')}
+            onFindSimilar={(id) => void addSimilar(id)}
+            canFindSimilar={!!page && !!sheet?.metersPerPoint && !busy}
           />
         )}
       </aside>

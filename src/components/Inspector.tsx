@@ -21,6 +21,8 @@ interface Props {
   onRetype: (id: string, typeId: string) => void;
   onEditType: (typeId: string) => void;
   onEditFinishes: () => void;
+  onFindSimilar: (id: string) => void;
+  canFindSimilar: boolean;
 }
 
 const TABS: { id: InspectorTab; label: string }[] = [
@@ -60,7 +62,7 @@ function qtyOf(m: Measurement, type: TakeoffType | undefined, project: Project):
   return v ? `${formatQty(primaryOf(type.kind, v))} ${primaryUnit(type.kind, project.units)}` : 'no scale';
 }
 
-function SelectionCard({ m, project, onDelete, onRetype, onSelect, onEditFinishes }: Props & { m: Measurement }) {
+function SelectionCard({ m, project, sheet: current, onDelete, onRetype, onSelect, onEditFinishes, onFindSimilar, canFindSimilar }: Props & { m: Measurement }) {
   const type = project.types.find((t) => t.id === m.typeId);
   const sheet = project.sheets.find((s) => s.id === m.sheetId);
   return (
@@ -104,6 +106,11 @@ function SelectionCard({ m, project, onDelete, onRetype, onSelect, onEditFinishe
             </button>
           </div>
         </div>
+      )}
+      {type?.kind === 'area' && m.sheetId === current?.id && (
+        <button className="wide" disabled={!canFindSimilar} onClick={() => onFindSimilar(m.id)} title="Adds every other area on this sheet drawn with the same hatch, as this type">
+          <Icon name="sparkle" size={16} /> Find areas hatched like this
+        </button>
       )}
       <button className="destructive wide" onClick={() => onDelete([m.id])}>
         <Icon name="trash" size={16} /> Delete takeoff

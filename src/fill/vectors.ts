@@ -10,6 +10,8 @@ export interface Segment {
   width: number;
   /** Outline of a filled shape rather than a stroked line. */
   filled: boolean;
+  /** Which subpath (drawn shape) the segment belongs to; segments of one shape share it. */
+  sub?: number;
 }
 
 type Matrix = [number, number, number, number, number, number];
@@ -42,6 +44,7 @@ const FILLS = new Set<number>([OPS.fill, OPS.eoFill]);
  */
 export function extractSegments(fnArray: ArrayLike<number>, argsArray: ArrayLike<unknown>, base: Matrix): Segment[] {
   const out: Segment[] = [];
+  const counter = { sub: 0 };
   let ctm: Matrix = base;
   let lineWidth = 1;
   const stack: { ctm: Matrix; lineWidth: number }[] = [];
@@ -84,7 +87,7 @@ export function extractSegments(fnArray: ArrayLike<number>, argsArray: ArrayLike
         const data = (args[1] as unknown[])?.[0];
         if (!data || typeof (data as ArrayLike<number>).length !== 'number') break;
         const width = stroked ? lineWidth * Math.sqrt(Math.abs(ctm[0] * ctm[3] - ctm[1] * ctm[2])) : 0;
-        addPath(data as ArrayLike<number>, ctm, width, filled, out);
+        addPath(data as ArrayLike<number>, ctm, width, filled, out, counter);
         break;
       }
     }
@@ -92,7 +95,7 @@ export function extractSegments(fnArray: ArrayLike<number>, argsArray: ArrayLike
   return out;
 }
 
-function addPath(d: ArrayLike<number>, m: Matrix, width: number, filled: boolean, out: Segment[]) {
+function addPath(d: ArrayLike<number>, m: Matrix, width: number, filled: boolean, out: Segment[], counter: { sub: number }) {
   let cx = 0;
   let cy = 0;
   let sx = 0;
@@ -100,13 +103,15 @@ function addPath(d: ArrayLike<number>, m: Matrix, width: number, filled: boolean
   const push = (x: number, y: number) => {
     const [a, b] = apply(m, cx, cy);
     const [c, e] = apply(m, x, y);
-    if (a !== c || b !== e) out.push({ x1: a, y1: b, x2: c, y2: e, width, filled });
+    // A zero-length stroke is a dot (round caps): kept as a point so stipple patterns count.
+    if (a !== c || b !== e || (!filled && width > 0)) out.push({ x1: a, y1: b, x2: c, y2: e, width, filled, sub: counter.sub });
     cx = x;
     cy = y;
   };
   for (let i = 0; i < d.length; ) {
     switch (d[i]) {
       case MOVE:
+        counter.sub++;
         cx = sx = d[i + 1];
         cy = sy = d[i + 2];
         i += 3;

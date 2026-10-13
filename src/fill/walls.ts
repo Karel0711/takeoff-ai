@@ -106,10 +106,16 @@ export function penStats(segs: Segment[], minGap: number, maxGap: number): PenSt
 export function detectWallPens(stats: PenStats[]): string[] {
   const most = Math.max(0, ...stats.map((s) => s.paired));
   if (most === 0) return [];
-  const candidates = stats.filter((s) => s.key !== 'fill' && s.paired >= most * 0.1 && s.paired / s.length >= 0.5);
-  if (!candidates.length) return [];
-  const heaviest = candidates.reduce((a, b) => (Number(b.key) > Number(a.key) ? b : a));
-  return candidates.filter((s) => Number(s.key) >= Number(heaviest.key) * 0.95).map((s) => s.key);
+  // Wall pens draw mostly in parallel pairs. A sheet border or title block in the same pen
+  // can pull its share down, so a looser share is accepted when no pen passes.
+  for (const share of [0.5, 0.4]) {
+    const candidates = stats.filter((s) => s.key !== 'fill' && s.paired >= most * 0.1 && s.paired / s.length >= share);
+    if (!candidates.length) continue;
+    const heaviest = candidates.reduce((a, b) => (Number(b.key) > Number(a.key) ? b : a));
+    // Exterior walls are often drawn heavier than partitions: both count.
+    return candidates.filter((s) => Number(s.key) >= Number(heaviest.key) * 0.55).map((s) => s.key);
+  }
+  return [];
 }
 
 /** Window openings: longer gaps are closed when other linework (glazing, frames) runs along them. */
