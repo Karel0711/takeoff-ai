@@ -45,4 +45,31 @@ describe('sample plan', () => {
     expect(Math.round(walls.get('EW1')!.length)).toBe(58);
     expect(Math.round(walls.get('W1')!.length)).toBe(34);
   }, 60000);
+
+  it('reads the imperial version at 1/8" = 1\'-0" from its feet-and-inch dimensions', async () => {
+    const doc = await getDocument({ data: await samplePlanPdf('imperial') }).promise;
+    const page = (await doc.getPage(1)) as unknown as PDFPageProxy;
+    const info = await inspectPage(page);
+    expect(info.scaleHints).toEqual(['1/8" = 1\'-0"']);
+    const mpp = parseScale(info.scaleHints[0])!;
+    const vp = page.getViewport({ scale: 1 });
+    const ops = await page.getOperatorList();
+    const segs = extractSegments(ops.fnArray, ops.argsArray, vp.transform as never);
+    const texts = await pageTexts(page);
+    const scale = checkScale(texts, segs, 'imperial')!;
+    expect(scale.label).toBe('1/8" = 1\'-0"');
+    expect(scale.agree).toBeGreaterThanOrEqual(5);
+    // Read with a metric project too: the dimensions decide, not the project's units.
+    expect(checkScale(texts, segs, 'metric')!.label).toBe('1/8" = 1\'-0"');
+
+    const sf = (pts: number) => +((pts * mpp * mpp) / 0.09290304).toFixed(1);
+    const rooms = fillRooms(buildWallModel(segs, mpp), findRoomLabels(texts, segs), vp.width, vp.height);
+    const areas = Object.fromEntries(rooms.map((r) => [r.labels[0].number, sf(ringArea(r.points ?? []))]));
+    expect(areas).toEqual({ '101': 698.8, '102': 341.6, '103': 341.6, '104': 341.6, '105': 341.6 });
+
+    const sheet = { id: 's', docId: 'd', page: 1, name: 'A1.01', width: vp.width, height: vp.height, metersPerPoint: mpp, scaleLabel: info.scaleHints[0], scaleSource: 'preset', scaleHints: [] } as Sheet;
+    const walls = lengthsByType((await sheetWallTakeoff(page, sheet, 3, true)).runs, mpp);
+    expect(walls.get('EW1')!.length / 0.3048).toBeCloseTo(193.3, 0);
+    expect(walls.get('W1')!.length / 0.3048).toBeCloseTo(113.3, 0);
+  }, 60000);
 });

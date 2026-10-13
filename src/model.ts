@@ -161,11 +161,17 @@ export function defaultTypes(units: Units): TakeoffType[] {
   const s406 = m ? 0.406 : 1.333;
   const sheet = m ? 2.973 : 32;
   const h = m ? 3.0 : 10;
+  // Sizes as the trade names them in each system.
+  const stud = m ? '92mm' : '3-5/8"';
+  const furring = m ? '64mm' : '2-1/2"';
+  const gwb = m ? '16mm' : '5/8"';
+  const at610 = m ? '@ 610' : '@ 24" o.c.';
+  const at406 = m ? '@ 406' : '@ 16" o.c.';
 
   return [
     {
       id: newId(),
-      name: 'W1 – Interior wall (92mm steel stud @ 610, 16mm GWB both sides)',
+      name: `W1 – Interior wall (${stud} steel stud ${at610}, ${gwb} GWB both sides)`,
       color: '#e4572e',
       kind: 'linear',
       height: h,
@@ -173,16 +179,16 @@ export function defaultTypes(units: Units): TakeoffType[] {
       package: 'Drywall & framing sub',
       items: [
         item('Wall area', area, 'A'),
-        item('92mm steel studs', 'ea', `ceil(L / ${s610}) + N`),
-        item('92mm track (top + bottom)', len, '2 * L'),
-        item('16mm GWB, 2 sides + 10% waste', area, '2 * A * 1.1'),
+        item(`${stud} steel studs`, 'ea', `ceil(L / ${s610}) + N`),
+        item(`${stud} track (top + bottom)`, len, '2 * L'),
+        item(`${gwb} GWB, 2 sides + 10% waste`, area, '2 * A * 1.1'),
         item('GWB sheets 4×8', 'ea', `ceil(2 * A * 1.1 / ${sheet})`),
         item('Tape & finish', area, '2 * A'),
       ],
     },
     {
       id: newId(),
-      name: 'FR1 – Exterior wall furring (64mm stud @ 406, 16mm GWB)',
+      name: `FR1 – Exterior wall furring (${furring} stud ${at406}, ${gwb} GWB)`,
       color: '#17bebb',
       kind: 'linear',
       height: h,
@@ -190,9 +196,9 @@ export function defaultTypes(units: Units): TakeoffType[] {
       package: 'Drywall & framing sub',
       items: [
         item('Furring area', area, 'A'),
-        item('64mm steel studs', 'ea', `ceil(L / ${s406}) + N`),
-        item('64mm track', len, '2 * L'),
-        item('16mm GWB, 1 side + 10% waste', area, 'A * 1.1'),
+        item(`${furring} steel studs`, 'ea', `ceil(L / ${s406}) + N`),
+        item(`${furring} track`, len, '2 * L'),
+        item(`${gwb} GWB, 1 side + 10% waste`, area, 'A * 1.1'),
       ],
     },
     {

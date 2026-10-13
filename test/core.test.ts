@@ -169,3 +169,13 @@ describe('typical floors', () => {
     expect(t.get(floor.id)!.vars.P).toBeCloseTo(54, 6);
   });
 });
+
+describe('imperial scale notes', () => {
+  it('finds them in title block text', () => {
+    expect(findScaleHints('FLOOR PLAN SCALE: 1/8" = 1\'-0"')).toEqual(['1/8" = 1\'-0"']);
+    expect(findScaleHints('DETAIL 1 1/2"=1\'-0" ALSO 1/4″ = 1′-0″')).toEqual(['1/4" = 1\'-0"', '1 1/2" = 1\'-0"']);
+    expect(findScaleHints('SITE PLAN 1" = 20\' and 1:100')).toEqual(['1:100', '1" = 20\'']);
+    expect(findScaleHints('3/8" = 1\'-0"')).toEqual(['3/8" = 1\'-0"']);
+    expect(findScaleHints('WALL 5/8" GYP. BD. = 2\'')).toEqual([]);
+  });
+});

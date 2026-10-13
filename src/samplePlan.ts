@@ -1,31 +1,45 @@
 import { PDFDocument, StandardFonts, degrees, rgb, type PDFPage, type PDFFont } from 'pdf-lib';
+import type { Units } from './model';
 
 /**
  * A small floor plan drawn the way CAD exports are (vector linework, real text, a title
  * block with its scale), so a new user can try every tool before opening their own set.
- * Five rooms with tags, doors with tags, tagged walls and dimension strings at 1:100.
+ * Five rooms with tags, doors with tags, tagged walls and dimension strings: at 1:100 in
+ * millimetres, or in imperial at 1/8" = 1'-0" in feet and inches (the same plan, 60' × 36'-8").
  */
-export async function samplePlanPdf(): Promise<Uint8Array> {
+export async function samplePlanPdf(units: Units = 'metric'): Promise<Uint8Array> {
   const doc = await PDFDocument.create();
   doc.setTitle('Takeoff sample plan');
   const font = await doc.embedFont(StandardFonts.Helvetica);
   const bold = await doc.embedFont(StandardFonts.HelveticaBold);
   const page = doc.addPage([1224, 792]);
-  drawPlan(page, font, bold);
+  drawPlan(page, font, bold, units);
   return doc.save();
 }
 
 const W = 1224;
 const H = 792;
-/** Points per metre at 1:100. */
-const K = 72 / 0.0254 / 100;
+/**
+ * The plan is laid out in units of one metre (metric) or 3'-4" (imperial, so walls come out
+ * 10" and 6", doors 3'-0"). Points per unit: 1 m at 1:100, or 3.333' at 1/8" = 1'-0" (9 pt a foot).
+ */
+const FT_PER_UNIT = 10 / 3;
+/** A length in feet as written on drawings: 18'-4". */
+const feetInches = (ft: number) => {
+  const inches = Math.round(ft * 12);
+  return `${Math.floor(inches / 12)}'-${inches % 12}"`;
+};
 const OX = 110;
 const OY = 150;
 const ink = rgb(0, 0, 0);
 const WALL = 0.7;
 const THIN = 0.25;
 
-function drawPlan(page: PDFPage, font: PDFFont, bold: PDFFont) {
+function drawPlan(page: PDFPage, font: PDFFont, bold: PDFFont, units: Units) {
+  const metric = units === 'metric';
+  const K = metric ? 72 / 0.0254 / 100 : 9 * FT_PER_UNIT;
+  const label = (len: number) => (metric ? String(Math.round(len * 1000)) : feetInches(len * FT_PER_UNIT));
+  const scale = metric ? '1:100' : '1/8" = 1\'-0"';
   // Plan metres to PDF points (PDF y runs up from the bottom).
   const px = (x: number) => OX + x * K;
   const py = (y: number) => H - (OY + y * K);
@@ -170,25 +184,25 @@ function drawPlan(page: PDFPage, font: PDFFont, bold: PDFFont) {
     text(label, (x1 + x2) / 2, y - 0.22, 6);
   };
   for (const y of [-1.2, 12.9]) {
-    dim(0, 6, y, '6000');
-    dim(6, 12, y, '6000');
-    dim(12, 18, y, '6000');
+    dim(0, 6, y, label(6));
+    dim(6, 12, y, label(6));
+    dim(12, 18, y, label(6));
   }
-  dim(0, 18, -2.2, '18000');
-  dim(0, 18, 13.9, '18000');
+  dim(0, 18, -2.2, label(18));
+  dim(0, 18, 13.9, label(18));
   // Vertical dimensions on the right.
   const vdim = (y1: number, y2: number, x: number, label: string) => {
     line(x, y1, x, y2, THIN);
     for (const y of [y1, y2]) line(x - 0.25, y, x + 0.25, y, THIN);
     text(label, x - 0.22, (y1 + y2) / 2, 6, font, 90);
   };
-  vdim(0, 5.5, 19.4, '5500');
-  vdim(5.5, 11, 19.4, '5500');
-  vdim(0, 11, 20.4, '11000');
+  vdim(0, 5.5, 19.4, label(5.5));
+  vdim(5.5, 11, 19.4, label(5.5));
+  vdim(0, 11, 20.4, label(11));
 
   // Plan title.
   page.drawText('FLOOR PLAN', { x: px(0), y: py(15.4), size: 11, font: bold, color: ink });
-  page.drawText('1:100', { x: px(0), y: py(15.4) - 13, size: 8, font, color: ink });
+  page.drawText(scale, { x: px(0), y: py(15.4) - 13, size: 8, font, color: ink });
 
   // Title block along the right edge.
   const tb = 0.74 * W;
@@ -199,6 +213,6 @@ function drawPlan(page: PDFPage, font: PDFFont, bold: PDFFont) {
   page.drawText('A sample drawing for trying the app.', { x: tx, y: H - 88, size: 8, font, color: ink });
   page.drawText('Not a real building.', { x: tx, y: H - 100, size: 8, font, color: ink });
   page.drawText('SAMPLE FLOOR PLAN', { x: tx, y: 150, size: 11, font: bold, color: ink });
-  page.drawText('SCALE: 1:100', { x: tx, y: 132, size: 9, font, color: ink });
+  page.drawText(`SCALE: ${scale}`, { x: tx, y: 132, size: 9, font, color: ink });
   page.drawText('A1.01', { x: tx, y: 60, size: 30, font: bold, color: ink });
 }

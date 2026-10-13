@@ -661,7 +661,7 @@ export function App() {
     setBusy('Drawing the sample plan…');
     try {
       const { samplePlanPdf } = await import('./samplePlan');
-      const bytes = await samplePlanPdf();
+      const bytes = await samplePlanPdf(project!.units);
       if (project!.name === 'Untitled project' && !project!.sheets.length) commit((p) => ({ ...p, name: 'Sample project' }), 'Rename project');
       await upload([new File([bytes as BlobPart], 'Sample floor plan.pdf', { type: 'application/pdf' })]);
     } catch (e) {

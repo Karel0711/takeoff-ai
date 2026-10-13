@@ -253,10 +253,13 @@ right. Tools sit in the title bar.
     Site plans often draw plan symbols differently from the legend; those rows
     say so and are counted with Symbols.
 16. **Sample plan:** the welcome screen's *Try a sample plan* draws a small 1:100
-    floor plan (`src/samplePlan.ts`: five tagged rooms, door tags, W1/EW1 wall
+    floor plan (in imperial projects, the same plan at 1/8" = 1'-0" with
+    feet-and-inch dimensions) (`src/samplePlan.ts`: five tagged rooms, door tags, W1/EW1 wall
     tags, dimension strings, title block) so anyone can try every tool without a
     drawing set. `test/samplePlan.test.ts` runs the sheet name, scale check,
-    rooms, door tags and wall takeoff on it and checks the exact quantities.
+    rooms, door tags and wall takeoff on both versions and checks the exact
+    quantities. Imperial scale notes in title blocks (1/8" = 1'-0", 1" = 20')
+    are detected like metric ratios.
 
 Editing: select a takeoff to show its points. Drag a corner to move it, drag
 the dot in the middle of an edge to add a point there, Option-click a corner

@@ -76,7 +76,20 @@ export function findScaleHints(text: string): string[] {
     const n = Number(match[1]);
     if (STANDARD_RATIOS.has(n)) found.add(`1:${n}`);
   }
-  return [...found].sort((a, b) => Number(a.slice(2)) - Number(b.slice(2)));
+  const metric = [...found].sort((a, b) => Number(a.slice(2)) - Number(b.slice(2)));
+  // Imperial notes: 1/8" = 1'-0", 1 1/2"=1'-0", 1" = 20' (straight or curly quotes, any spacing).
+  const imperial = new Set<string>();
+  const inch = `(?:"|''|\u2033|\u201d)`;
+  const foot = `(?:'|\u2032|\u2019)`;
+  const re = new RegExp(`(?<![\\d/])(\\d+(?:\\s+\\d+\\/\\d+)?(?:\\/\\d+)?)\\s*${inch}\\s*=\\s*(\\d+)\\s*${foot}(?:\\s*-?\\s*0\\s*${inch})?`, 'g');
+  for (const match of text.matchAll(re)) {
+    const paper = parseFraction(match[1]);
+    if (!paper) continue;
+    const mpp = (Number(match[2]) * M_PER_FT) / (paper * 72);
+    const preset = SCALE_PRESETS.imperial.find((l) => Math.abs(parseScale(l)! / mpp - 1) < 0.005);
+    if (preset) imperial.add(preset);
+  }
+  return [...metric, ...SCALE_PRESETS.imperial.filter((l) => imperial.has(l))];
 }
 
 /**
