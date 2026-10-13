@@ -504,6 +504,12 @@ export function Viewer(props: Props) {
 
   const z = view.zoom;
   const shapesInteractive = tool === 'select';
+  // Named takeoffs (rooms) show their number with the quantity.
+  const labelOf = (m: Measurement, type: TakeoffType, sheet: Sheet) => {
+    const v = measurementVars(m, type, sheet, units);
+    const qty = v ? `${formatQty(primaryOf(type.kind, v))} ${primaryUnit(type.kind, units)}` : 'no scale';
+    return m.label ? `${m.label.split(' ')[0]} · ${qty}` : qty;
+  };
   const cursor = pan.current ? 'grabbing' : filling ? 'progress' : tool === 'select' ? 'default' : tool === 'fill' ? 'cell' : 'crosshair';
 
   return (
@@ -550,10 +556,7 @@ export function Viewer(props: Props) {
                 props.onSelect(m.id);
               },
             };
-            const v = measurementVars(m, type, sheet, units);
-            const qty = v ? `${formatQty(primaryOf(type.kind, v))} ${primaryUnit(type.kind, units)}` : 'no scale';
-            // Named takeoffs (rooms) show their number with the quantity.
-            const label = m.label ? `${m.label.split(' ')[0]} · ${qty}` : qty;
+            const label = labelOf(m, type, sheet);
             if (type.kind === 'count') {
               const [x, y] = m.points[0];
               return (
@@ -598,10 +601,19 @@ export function Viewer(props: Props) {
                   strokeWidth={isSel ? 3 : 1.5}
                   vectorEffect="non-scaling-stroke"
                 />
-                {/* Labels only where the room is big enough on screen to hold one, or when selected. */}
-                {(isSel || bboxWidth(m.points) * z > label.length * 7 + 12) && <Label at={centroid(m.points)} z={z} text={label} />}
               </g>
             );
+          })}
+
+          {/* Area labels on top of every takeoff, so count dots don't cover them; only where the
+              room is big enough on screen to hold one, or when selected. */}
+          {sheet && measurements.map((m) => {
+            const type = typeById.get(m.typeId);
+            if (!type || type.kind !== 'area') return null;
+            const points = edit && edit.id === m.id ? edit.points : m.points;
+            const label = labelOf({ ...m, points }, type, sheet);
+            if (m.id !== selectedId && bboxWidth(points) * z <= label.length * 7 + 12) return null;
+            return <Label key={`l${m.id}`} at={centroid(points)} z={z} text={label} />;
           })}
 
           {tool === 'select' && selected && sheet && (() => {
