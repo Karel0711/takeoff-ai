@@ -95,7 +95,23 @@ function countRow(r: LegendRow, segs: Segment[], box: Box) {
   const sample = sampleSymbol(segs, [r.graphic[0] - pad, r.graphic[1] - pad, r.graphic[2] + pad, r.graphic[3] + pad]);
   if (!sample) return;
   r.sample = sample;
-  r.found = matchSymbol(sample, segs).filter((f) => !(f.at[0] >= x0 && f.at[0] <= x1 && f.at[1] >= y0 && f.at[1] <= y1));
+  const outside = (f: SymbolMatch) => !(f.at[0] >= x0 && f.at[0] <= x1 && f.at[1] >= y0 && f.at[1] <= y1);
+  r.found = matchSymbol(sample, segs).filter(outside);
+  if (r.found.length) return;
+  // A legend drawn in another lineweight than the plan's blocks: the same lines in any pen.
+  const penless = { ...sample, lines: sample.lines.map((l) => ({ ...l, width: 0 })) };
+  r.found = matchSymbol(penless, anyPen(segs)).filter(outside);
+}
+
+const penlessCache = new WeakMap<Segment[], Segment[]>();
+/** The sheet's lines with their pens ignored (each sheet's copy made once). */
+function anyPen(segs: Segment[]): Segment[] {
+  let out = penlessCache.get(segs);
+  if (!out) {
+    out = segs.map((x) => ({ ...x, width: 0 }));
+    penlessCache.set(segs, out);
+  }
+  return out;
 }
 
 function legendRows(texts: PageText[], segs: Segment[], box: Box): LegendRow[] {

@@ -95,3 +95,20 @@ describe('legend reading, awkward layouts', () => {
     expect(rows[1].tagged?.length).toBe(1);
   });
 });
+
+describe('legend symbols in another lineweight', () => {
+  it('still finds the plan copies drawn in a lighter pen', () => {
+    const box = (x: number, y: number, width: number): Segment[] => [
+      seg(x - 4, y - 4, x + 4, y - 4, width),
+      seg(x + 4, y - 4, x + 4, y + 4, width),
+      seg(x + 4, y + 4, x - 4, y + 4, width),
+      seg(x - 4, y + 4, x - 4, y - 4, width),
+      seg(x - 4, y - 4, x + 4, y + 4, width),
+    ];
+    const segs = [...box(120, 120, 0.7), seg(115, 150, 165, 150), ...box(600, 400, 0.25), ...box(800, 300, 0.25)];
+    const texts = [text('CLEANOUT', 200, 120), text('SLEEVE LINE', 200, 150)];
+    const rows = readLegend(texts, segs, [90, 100, 400, 165]);
+    expect(rows[0].label).toBe('CLEANOUT');
+    expect(rows[0].found?.length).toBe(2);
+  });
+});
