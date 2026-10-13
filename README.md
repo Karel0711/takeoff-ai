@@ -253,6 +253,9 @@ right. Tools sit in the title bar.
     On a scaled sheet, a swatch whose hatch is dense enough to sample (a stipple)
     also finds the areas hatched like it. Symbols can be counted on every other
     sheet too.
+17. **Duplicate a project** (Projects → Duplicate this project) for a bid
+    alternate: the copy gets its own copy of the drawings, so deleting either
+    project never breaks the other.
     Site plans often draw plan symbols differently from the legend; those rows
     say so and are counted with Symbols.
 16. **Sample plan:** the welcome screen's *Try a sample plan* draws a small 1:100

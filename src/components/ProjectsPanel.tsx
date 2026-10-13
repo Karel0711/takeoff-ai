@@ -9,6 +9,8 @@ interface Props {
   onOpen: (id: string) => void;
   onNew: (units: Units) => void;
   onDelete: (id: string) => void;
+  /** Copies the open project, drawings included, and opens the copy. */
+  onDuplicate: () => void;
   onSaveFile: () => void;
   onOpenFile: () => void;
   onBackupAll: () => void;
@@ -26,7 +28,7 @@ const size = (bytes: number) =>
   bytes > 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : bytes > 1e6 ? `${Math.round(bytes / 1e6)} MB` : `${Math.max(1, Math.round(bytes / 1e3))} KB`;
 
 /** Every project saved in this browser, with new, open, delete and project files. */
-export function ProjectsPanel({ currentId, persisted, onOpen, onNew, onDelete, onSaveFile, onOpenFile, onBackupAll }: Props) {
+export function ProjectsPanel({ currentId, persisted, onOpen, onNew, onDelete, onDuplicate, onSaveFile, onOpenFile, onBackupAll }: Props) {
   const [projects, setProjects] = useState<ProjectSummary[] | null>(null);
   const [space, setSpace] = useState<{ usage: number; quota: number } | null>(null);
   useEffect(() => {
@@ -68,6 +70,11 @@ export function ProjectsPanel({ currentId, persisted, onOpen, onNew, onDelete, o
           </button>
           <button onClick={() => onNew('imperial')}>
             <Icon name="plus" size={14} /> New imperial
+          </button>
+        </div>
+        <div className="button-row">
+          <button onClick={onDuplicate} title="A copy of this project, with its drawings, to change separately (an alternate or option)">
+            <Icon name="plus" size={14} /> Duplicate this project
           </button>
         </div>
       </div>

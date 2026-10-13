@@ -559,6 +559,41 @@ export function App() {
     await openProjectState(p);
   }
 
+  /**
+   * A copy of the open project to change separately (a bid alternate, another option):
+   * its drawings are copied too, so deleting one project never takes the other's.
+   */
+  async function duplicateProject() {
+    setBusy('Duplicating the project…');
+    try {
+      await flush();
+      const p = projectRef.current!;
+      const names = new Set((await listProjects()).map((x) => x.name));
+      let name = `${p.name} (copy)`;
+      for (let n = 2; names.has(name); n++) name = `${p.name} (copy ${n})`;
+      const docIds = new Map(p.docs.map((d) => [d.id, newId()]));
+      for (const [from, to] of docIds) {
+        const data = await loadPdf(from);
+        if (data) await savePdf(to, data);
+      }
+      const copy: Project = {
+        ...p,
+        id: newId(),
+        name,
+        docs: p.docs.map((d) => ({ ...d, id: docIds.get(d.id)! })),
+        sheets: p.sheets.map((x) => ({ ...x, docId: docIds.get(x.docId) ?? x.docId })),
+      };
+      await saveProject(copy);
+      await saveActivity(copy.id!, activityRef.current);
+      await openProjectState(copy);
+      setToast({ text: `Opened ${name}. The original is unchanged.`, undo: false });
+    } catch (e) {
+      setToast({ text: `Something went wrong: ${e instanceof Error ? e.message : String(e)}`, undo: false });
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function removeProject(id: string) {
     const target = id === project!.id ? project! : await loadProjectById(id);
     if (!target) return;
@@ -1772,6 +1807,10 @@ export function App() {
               void startNewProject(units);
             }}
             onDelete={(id) => void removeProject(id)}
+            onDuplicate={() => {
+              setPopover(null);
+              void duplicateProject();
+            }}
             onSaveFile={() => {
               setPopover(null);
               void saveProjectFile();
