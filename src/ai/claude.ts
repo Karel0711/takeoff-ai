@@ -46,6 +46,7 @@ export async function readAssemblyLegend(
   lines: string[],
   sheetName: string,
   signal?: AbortSignal,
+  printedTags: string[] = [],
 ): Promise<ReadResult> {
   const content: Anthropic.Beta.BetaContentBlockParam[] = [
     ...tiles.map(
@@ -56,7 +57,7 @@ export async function readAssemblyLegend(
     ),
     {
       type: 'text',
-      text: legendRequest(sheetName, lines),
+      text: legendRequest(sheetName, lines, printedTags),
     },
   ];
 

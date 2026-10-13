@@ -3,6 +3,7 @@ import { getSample, isSampleError } from '../host';
 import { pageTextRuns, renderTiles, type PDFPageProxy } from '../pdf';
 import { textLines } from '../sheetInfo';
 import { describeError, getApiKey, readAssemblyLegend } from './claude';
+import { findAssemblyCodes } from '../assemblyBuilder';
 import { LEGEND_INSTRUCTIONS, legendRequest } from './prompt';
 import { ExtractionSchema, type Extraction } from './schema';
 
@@ -53,6 +54,7 @@ export async function readLegend(page: PDFPageProxy, sheetName: string, signal: 
   const runs = await pageTextRuns(page);
   const lines = textLines(runs);
   const runsText = runs.map((r) => r.str);
+  const printedTags = findAssemblyCodes(runsText);
 
   const sample = await getSample();
   if (sample) {
@@ -62,7 +64,7 @@ export async function readLegend(page: PDFPageProxy, sheetName: string, signal: 
     const blobs = tiles.map((b64) => new Blob([Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))], { type: 'image/png' }));
     const prompt = [
       LEGEND_INSTRUCTIONS,
-      legendRequest(sheetName, lines),
+      legendRequest(sheetName, lines, printedTags),
       `Reply with only one JSON object matching this JSON Schema:\n${JSON.stringify(z.toJSONSchema(ExtractionSchema))}`,
     ].join('\n\n');
     const raw = await sample.json(prompt, {
@@ -76,6 +78,6 @@ export async function readLegend(page: PDFPageProxy, sheetName: string, signal: 
   }
 
   const tiles = await renderTiles(page, 2, 2, 2576);
-  const { extraction, model } = await readAssemblyLegend(tiles, lines, sheetName, signal);
+  const { extraction, model } = await readAssemblyLegend(tiles, lines, sheetName, signal, printedTags);
   return { extraction, runsText, answeredBy: model };
 }

@@ -49,7 +49,17 @@ the `downloads` capability).
      categories. The estimator also checked it against the drawing. Two fixes came
      out of it: the scorer accepts a layer split at "W/" (W7B/W7C framing with
      insulation), and "2 LAYERS" of board now doubles the board quantity (W1B).
-   - A0.2 not yet run.
+   - **First real run, A0.2:** 23 of 25 types. Missed EW1C (retaining wall) and
+     R1 option 2 (two alternatives under one tag). 15/15 framing spacings; every
+     overall thickness the AI gave matches the dimension printed on the drawing.
+     The workbook differs from the drawing on wood siding (Addendum 7: 17.5mm
+     siding replaced the 10mm veneer on EW3B/EW4B/EW5B/EW6A/EW6C) and on five
+     "Overall" notes (EW3A, EW3C, EW4A, EW4B, EW6A), where the drawing agrees with
+     the AI. Fix: the request now lists the tags found in the sheet text as a
+     checklist and asks for one entry per option; the review screen handles
+     repeated tags. Re-run A0.2 to confirm.
+   - Addenda are not read: the AI reads the drawing as issued. Supporting
+     addendum documents is a future feature.
 2. ~~Match the Excel export to the estimator's bid workbook layout~~ (done;
    formulas verified by recalculating an export in LibreOffice).
 3. Finish schedules into room types; then automatic wall and room takeoff

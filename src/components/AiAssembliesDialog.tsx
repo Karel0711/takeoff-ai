@@ -46,7 +46,8 @@ let answerKey: { name: string; key: ExpectedAssembly[] } | null = null;
 export function AiAssembliesDialog({ page, sheet, units, existingTypes, onApply, onSaveResult, onClose, onOpenSettings }: Props) {
   const saved = sheet.aiAssemblies;
   const [state, setState] = useState<State>(saved ? { phase: 'done', ...saved } : { phase: 'idle' });
-  const [selected, setSelected] = useState<Set<string>>(() => new Set(saved?.assemblies.map((a) => a.code) ?? []));
+  // Selection is by position: one tag can have several entries (R1 option 1 and option 2).
+  const [selected, setSelected] = useState<Set<number>>(() => new Set(saved?.assemblies.map((_, i) => i) ?? []));
   const [height, setHeight] = useState(units === 'metric' ? 3 : 10);
   const [, tick] = useState(0);
   const abort = useRef<AbortController | null>(null);
@@ -84,8 +85,12 @@ export function AiAssembliesDialog({ page, sheet, units, existingTypes, onApply,
   const kindOf = (a: ExtractedAssembly) =>
     a.category === 'interior_wall' || a.category === 'exterior_wall' ? 'linear' : 'area';
   /** An existing type of the same code and kind is updated in place, keeping its measurements and colour. */
-  const replaces = (a: ExtractedAssembly) => {
-    const t = existingByCode.get(a.code);
+  const replaces = (a: ExtractedAssembly, all: ExtractedAssembly[]) => {
+    // A repeated tag is matched by its full name, so each option updates its own type.
+    const t =
+      all.filter((x) => x.code === a.code).length > 1
+        ? existingTypes.find((x) => x.name === `${a.code} – ${a.title}`.replace(/\s+/g, ' ').trim())
+        : existingByCode.get(a.code);
     return t && t.kind === kindOf(a) ? t : undefined;
   };
 
@@ -105,7 +110,7 @@ export function AiAssembliesDialog({ page, sheet, units, existingTypes, onApply,
       const { extraction, runsText, answeredBy } = await readLegend(page, sheet.name, abort.current.signal);
       const printed = findAssemblyCodes(runsText);
       const assemblies = extraction.assemblies;
-      setSelected(new Set(assemblies.map((a) => a.code)));
+      setSelected(new Set(assemblies.map((_, i) => i)));
       if (answerKey) scoreWith(answerKey, assemblies);
       const result: SavedLegendRead = {
         assemblies,
@@ -127,11 +132,11 @@ export function AiAssembliesDialog({ page, sheet, units, existingTypes, onApply,
 
   function add() {
     if (state.phase !== 'done') return;
-    const chosen = state.assemblies.filter((a) => selected.has(a.code));
+    const chosen = state.assemblies.filter((_, i) => selected.has(i));
     onApply(
       chosen.map((a, i) => {
         const built = buildTakeoffType(a, units, existingTypes.length + i, height);
-        const old = replaces(a);
+        const old = replaces(a, state.assemblies);
         return old
           ? { ...built, id: old.id, color: old.color, division: old.division ?? built.division, package: old.package }
           : built;
@@ -140,7 +145,7 @@ export function AiAssembliesDialog({ page, sheet, units, existingTypes, onApply,
     onClose();
   }
 
-  const toggle = (code: string) =>
+  const toggle = (code: number) =>
     setSelected((s) => {
       const next = new Set(s);
       if (next.has(code)) next.delete(code);
@@ -283,15 +288,15 @@ export function AiAssembliesDialog({ page, sheet, units, existingTypes, onApply,
         </div>
 
         <div className="assembly-list">
-          {state.assemblies.map((a) => (
-            <label key={a.code} className={`assembly ${selected.has(a.code) ? 'picked' : ''}`}>
-              <input type="checkbox" checked={selected.has(a.code)} onChange={() => toggle(a.code)} />
+          {state.assemblies.map((a, i) => (
+            <label key={i} className={`assembly ${selected.has(i) ? 'picked' : ''}`}>
+              <input type="checkbox" checked={selected.has(i)} onChange={() => toggle(i)} />
               <div className="assembly-body">
                 <div className="assembly-head">
                   <strong>{a.code}</strong> {a.title}
                   <span className="tag">{CATEGORY_LABEL[a.category]}</span>
                   {a.total_thickness_mm !== null && <span className="tag">{a.total_thickness_mm} mm</span>}
-                  {replaces(a) ? (
+                  {replaces(a, state.assemblies) ? (
                     <span className="tag warn-tag">replaces existing {a.code}</span>
                   ) : (
                     existingByCode.has(a.code) && <span className="tag warn-tag">{a.code} exists; added as new type</span>
@@ -323,7 +328,7 @@ export function AiAssembliesDialog({ page, sheet, units, existingTypes, onApply,
             />
           </label>
           <div className="spacer" />
-          <button onClick={() => setSelected(new Set(state.assemblies.map((a) => a.code)))}>Select all</button>
+          <button onClick={() => setSelected(new Set(state.assemblies.map((_, i) => i)))}>Select all</button>
           <button onClick={() => setSelected(new Set())}>Select none</button>
           <button className="on" disabled={selected.size === 0} onClick={add}>
             Add {selected.size} type{selected.size === 1 ? '' : 's'}

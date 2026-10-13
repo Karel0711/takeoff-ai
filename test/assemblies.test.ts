@@ -123,3 +123,13 @@ describe('multi-layer board', () => {
   });
 });
 
+
+describe('legend request', () => {
+  it('lists the printed tags as a checklist', async () => {
+    const { legendRequest } = await import('../src/ai/prompt');
+    const text = legendRequest('A0.2', ['y10: [x5] EW1C'], ['EW1C', 'R1']);
+    expect(text).toContain('These type tags appear in the sheet');
+    expect(text).toContain('EW1C, R1');
+    expect(legendRequest('A0.2', [])).not.toContain('These type tags');
+  });
+});
