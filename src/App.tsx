@@ -672,20 +672,19 @@ export function App() {
         const segs = x.id === sheet.id ? await segmentsOf(pg) : await segmentsOnce(pg);
         const texts = await pageTexts(pg);
         let tags = findDoorTags(texts, segs);
-        if (x.id !== sheet.id) {
-          // Elevations and sections carry level markers (4000, 8570) in ovals that look
-          // like door tags. Door numbers follow the room numbers (door 113A by room 113),
-          // so on other sheets only tags in the sheet's room-number range count, and only
-          // on sheets with a plan's worth of them.
-          const rooms = findRoomLabels(texts, segs).map((r) => parseInt(r.number.replace(/^\D/, ''), 10));
-          if (!rooms.length) continue;
+        // Elevations and sections carry level markers (4000, 8570) in ovals that look like
+        // door tags. Door numbers follow the room numbers (door 113A by room 113), so only
+        // tags in the sheet's room-number range count; other sheets also need a plan's
+        // worth of them.
+        const rooms = findRoomLabels(texts, segs).map((r) => parseInt(r.number.replace(/^\D/, ''), 10));
+        if (rooms.length) {
           const [lo, hi] = [Math.min(...rooms) - 20, Math.max(...rooms) + 20];
           tags = tags.filter((d) => {
             const n = parseInt(d.number.replace(/^\D/, ''), 10);
             return n >= lo && n <= hi;
           });
-          if (tags.length < 4) continue;
         }
+        if (x.id !== sheet.id && (!rooms.length || tags.length < 4)) continue;
         found.push({ sheetId: x.id, tags });
       }
       const total = found.reduce((n, f) => n + f.tags.length, 0);
