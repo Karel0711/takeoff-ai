@@ -25,7 +25,9 @@ undo/redo, and an activity log of every change.
   per division with the columns Mark … Notes, blue GROUP rows per subtrade
   package, imperial pricing formulas, yellow input cells for rates, Height and
   Incl?, and a subtotal that skips GROUP rows; plus assembly materials and every
-  measurement. Each takeoff type has an estimate division and subtrade package.
+  measurement, and a Room Finishes sheet (each named room with its area,
+  perimeter and floor, base, walls and ceiling types). Each takeoff type has an
+  estimate division and subtrade package.
 - Metric (m, m²) or imperial (ft, SF) projects.
 
 **Phase 2 — AI setup (in progress)**

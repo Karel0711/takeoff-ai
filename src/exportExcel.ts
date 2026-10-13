@@ -1,7 +1,7 @@
 import type { ActivityEvent } from './activity';
 import type { Workbook, Worksheet } from 'exceljs';
 import { FINISH_ROLES, type Project, type TakeoffType } from './model';
-import { contributions, primaryOf, primaryUnit, typeTotals } from './quantities';
+import { contributions, measurementVars, primaryOf, primaryUnit, typeTotals } from './quantities';
 
 /*
  * The workbook follows the estimator's bid workbook conventions: a Bid Summary
@@ -318,6 +318,39 @@ export async function buildWorkbook(project: Project, activity: ActivityEvent[] 
   detail.getRow(1).font = { bold: true };
   detail.getRow(1).fill = solid(COLOR.header);
   detail.views = [{ state: 'frozen', ySplit: 1 }];
+
+  // Room finish schedule: every named area with its finishes.
+  const typeById = new Map(project.types.map((t) => [t.id, t]));
+  const sheetById = new Map(project.sheets.map((x) => [x.id, x]));
+  const rooms = project.measurements.filter((m) => typeById.get(m.typeId)?.kind === 'area' && (m.label || m.source === 'rooms' || m.finishes));
+  if (rooms.length) {
+    const ws = wb.addWorksheet(sheetName('Room Finishes', used));
+    const area = project.units === 'metric' ? 'm²' : 'SF';
+    const len = project.units === 'metric' ? 'm' : 'LF';
+    ws.columns = [
+      { header: 'Room', key: 'room', width: 40 },
+      { header: 'Sheet', key: 'sheet', width: 10 },
+      { header: `Area (${area})`, key: 'area', width: 12, style: { numFmt: '#,##0.00' } },
+      { header: `Perimeter (${len})`, key: 'perim', width: 14, style: { numFmt: '#,##0.00' } },
+      ...FINISH_ROLES.map((r) => ({ header: r.label, key: r.role, width: 30 })),
+    ];
+    const sorted = [...rooms].sort((a, b) => (a.label ?? '').localeCompare(b.label ?? '', undefined, { numeric: true }));
+    for (const m of sorted) {
+      const sheet = sheetById.get(m.sheetId);
+      const type = typeById.get(m.typeId)!;
+      const v = sheet ? measurementVars(m, type, sheet, project.units) : null;
+      ws.addRow({
+        room: m.label ?? '',
+        sheet: sheet?.name ?? '',
+        area: v ? v.A : 'not scaled',
+        perim: v ? v.P : null,
+        ...Object.fromEntries(FINISH_ROLES.map((r) => [r.role, m.finishes?.[r.role] ? (typeById.get(m.finishes[r.role]!)?.name ?? '') : ''])),
+      });
+    }
+    ws.getRow(1).font = { bold: true };
+    ws.getRow(1).fill = solid(COLOR.header);
+    ws.views = [{ state: 'frozen', ySplit: 1 }];
+  }
 
   // The activity log: every takeoff added, changed or deleted, newest first.
   if (activity.length) {

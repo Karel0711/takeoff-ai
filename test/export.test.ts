@@ -100,3 +100,22 @@ describe('buildWorkbook', () => {
     expect(formulaOf(s.getCell('E9').value)).toBe('SUM(E5:E8)');
   });
 });
+
+describe('room finishes in the workbook', () => {
+  it('lists named rooms with their finishes, and counts them in the finish types', async () => {
+    const p = sampleProject();
+    const [, , floor, ceiling] = p.types;
+    const room = p.measurements.find((m) => m.id === 'e')!;
+    room.label = '101 LOBBY';
+    room.finishes = { ceiling: ceiling.id };
+    const wb = await buildWorkbook(p);
+    const ws = wb.getWorksheet('Room Finishes')!;
+    expect(ws.getRow(2).values).toEqual([undefined, '101 LOBBY', 'A2.1', expect.closeTo(80, 3), expect.closeTo(36, 3), '', '', '', 'Ceiling']);
+    // The ceiling type carries the room's 80 m² on the finishes tab.
+    const fin = wb.getWorksheet('09 Finishes')!;
+    const rows = [...Array(fin.rowCount).keys()].map((i) => fin.getRow(i + 1));
+    const ceil = rows.find((r) => r.getCell('B').value === 'Ceiling')!;
+    expect(ceil.getCell('H').value as number).toBeCloseTo(80);
+    expect(floor.name).toBe('Floor finish');
+  });
+});
