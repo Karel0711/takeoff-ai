@@ -295,6 +295,7 @@ export async function buildWorkbook(project: Project, activity: ActivityEvent[] 
   detail.columns = [
     { header: 'Sheet', key: 'sheet', width: 10 },
     { header: 'Takeoff type', key: 'type', width: 50 },
+    { header: 'Name', key: 'label', width: 34 },
     { header: 'Quantity', key: 'qty', width: 14, style: { numFmt: '#,##0.000' } },
     { header: 'Unit', key: 'unit', width: 8 },
     { header: 'Perimeter', key: 'perim', width: 12, style: { numFmt: '#,##0.000' } },
@@ -311,6 +312,7 @@ export async function buildWorkbook(project: Project, activity: ActivityEvent[] 
       detail.addRow({
         sheet: s.name,
         type: type.name,
+        label: m.label ?? '',
         qty: v ? primaryOf(type.kind, v) : 'not scaled',
         unit: primaryUnit(type.kind, project.units),
         perim: type.kind === 'area' && v ? v.P : null,

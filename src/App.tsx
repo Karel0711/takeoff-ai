@@ -6,6 +6,7 @@ import { askConfirm, askText, DialogHost, notify } from './components/Dialogs';
 import { Icon, type IconName } from './components/Icons';
 import { Inspector, type InspectorTab } from './components/Inspector';
 import { Menu, Popover } from './components/Popover';
+import { RoomsDialog } from './components/RoomsDialog';
 import { ScalePicker } from './components/ScalePicker';
 import { ShortcutsDialog } from './components/ShortcutsDialog';
 import { TypeEditor } from './components/TypeEditor';
@@ -55,14 +56,15 @@ export function App() {
   const [busy, setBusy] = useState<string | null>(null);
   const [toast, setToast] = useState<Toast | null>(null);
   const [sheetFilter, setSheetFilter] = useState('');
-  const [aiDialog, setAiDialog] = useState<'assemblies' | 'settings' | 'walls' | 'shortcuts' | null>(null);
-  const [popover, setPopover] = useState<'scale' | 'more' | null>(null);
+  const [aiDialog, setAiDialog] = useState<'assemblies' | 'settings' | 'walls' | 'rooms' | 'shortcuts' | null>(null);
+  const [popover, setPopover] = useState<'scale' | 'more' | 'automate' | null>(null);
   const [tab, setTab] = useState<InspectorTab>('quantities');
   /** Fill closes wall openings up to this width (metres); wider ones count as open. */
   const [maxOpening, setMaxOpening] = useState(3);
   const fileInput = useRef<HTMLInputElement>(null);
   const scaleButton = useRef<HTMLButtonElement>(null);
   const moreButton = useRef<HTMLButtonElement>(null);
+  const automateButton = useRef<HTMLButtonElement>(null);
 
   // Load the saved project, its PDFs and its activity log.
   useEffect(() => {
@@ -429,21 +431,17 @@ export function App() {
             </button>
           )}
           {sheet && (
-            <div className="ai-group">
-              <button className="ai-button" disabled={!page} onClick={() => setAiDialog('assemblies')} title="Read the wall, floor, roof and ceiling types on a legend sheet into takeoff types">
-                <Icon name="sparkle" size={16} />
-                <span>{sheet.aiAssemblies ? 'Assembly types' : 'Read assemblies'}</span>
-              </button>
-              <button
-                className="ai-button"
-                disabled={!page || !sheet.metersPerPoint}
-                onClick={() => setAiDialog('walls')}
-                title={sheet.metersPerPoint ? 'Measure every tagged wall on this sheet by type' : 'Set the scale first'}
-              >
-                <Icon name="walls" size={16} />
-                <span>Wall takeoff</span>
-              </button>
-            </div>
+            <button
+              ref={automateButton}
+              className="ai-button"
+              onClick={() => setPopover(popover === 'automate' ? null : 'automate')}
+              aria-expanded={popover === 'automate'}
+              title="Read assemblies, take off walls, fill rooms"
+            >
+              <Icon name="sparkle" size={16} />
+              <span>Automate</span>
+              <Icon name="chevronDown" size={12} />
+            </button>
           )}
         </div>
 
@@ -702,6 +700,54 @@ export function App() {
           />
         </Popover>
       )}
+      {popover === 'automate' && sheet && (
+        <Popover anchor={automateButton} onClose={() => setPopover(null)} width={360} label="Automate">
+          <div className="automate-menu" role="menu">
+            {[
+              {
+                id: 'assemblies' as const,
+                icon: 'sparkle' as const,
+                title: sheet.aiAssemblies ? 'Assembly types (saved)' : 'Read assembly types',
+                text: 'On a legend sheet: Claude reads every wall, floor, roof and ceiling type into takeoff types with their materials.',
+                ready: !!page,
+              },
+              {
+                id: 'walls' as const,
+                icon: 'walls' as const,
+                title: 'Wall takeoff',
+                text: 'On a plan: measures every tagged wall on its centreline, by type.',
+                ready: !!page && !!sheet.metersPerPoint,
+              },
+              {
+                id: 'rooms' as const,
+                icon: 'area' as const,
+                title: 'Rooms',
+                text: 'On a plan: fills every tagged room and adds it as a named area.',
+                ready: !!page && !!sheet.metersPerPoint,
+              },
+            ].map((a) => (
+              <button
+                key={a.id}
+                role="menuitem"
+                className="automate-item"
+                disabled={!a.ready}
+                onClick={() => {
+                  setPopover(null);
+                  setAiDialog(a.id);
+                }}
+              >
+                <span className="automate-icon">
+                  <Icon name={a.icon} size={18} />
+                </span>
+                <span className="automate-text">
+                  <span className="automate-title">{a.title}</span>
+                  <span className="automate-desc">{a.ready ? a.text : 'Set this sheet’s scale first.'}</span>
+                </span>
+              </button>
+            ))}
+          </div>
+        </Popover>
+      )}
       {popover === 'more' && (
         <Menu
           anchor={moreButton}
@@ -740,6 +786,28 @@ export function App() {
                 measurements: [...p.measurements.filter((m) => !(replaceEarlier && m.sheetId === sheet.id && m.source === 'walls')), ...measurements],
               }),
               'Wall takeoff',
+            )
+          }
+          onClose={() => setAiDialog(null)}
+        />
+      )}
+      {aiDialog === 'rooms' && page && sheet && (
+        <RoomsDialog
+          page={page}
+          sheet={sheet}
+          units={project.units}
+          types={project.types}
+          earlier={project.measurements.filter((m) => m.sheetId === sheet.id && m.source === 'rooms').length}
+          palette={PALETTE}
+          maxOpening={maxOpening}
+          onApply={({ types, measurements, replaceEarlier }) =>
+            commit(
+              (p) => ({
+                ...p,
+                types: [...p.types, ...types],
+                measurements: [...p.measurements.filter((m) => !(replaceEarlier && m.sheetId === sheet.id && m.source === 'rooms')), ...measurements],
+              }),
+              'Room takeoff',
             )
           }
           onClose={() => setAiDialog(null)}

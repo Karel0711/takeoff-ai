@@ -118,9 +118,16 @@ right. Tools sit in the title bar.
 4. **Fill room** (R): pick an area type and click inside a room. If it leaks into
    the next space, lower **Close openings up to**; if it says the space isn't
    closed, raise it or draw by hand.
-5. **Wall takeoff**: on a plan with a scale, measures every tagged wall by type;
-   check the lengths and where each type goes, then **Add**. Running it again on
-   a sheet replaces its earlier wall takeoff.
+5. **Automate** (title bar):
+   - **Read assembly types** on a legend sheet (Claude reads every type).
+   - **Wall takeoff** on a plan: measures every tagged wall by type; check the
+     lengths and where each type goes, then **Add**.
+   - **Rooms** on a plan: finds every room tag (number in a box, name above),
+     fills each room to the inside face of its walls, and adds the ones you pick
+     as named areas ("112 RECEIVING & GEN. STORAGE") on the area type you
+     choose. Room numbers repeated on a second plan count once; tags in one open
+     space share it.
+   Running wall or room takeoff again on a sheet replaces its earlier results.
 6. **Cutout** (C): select an area, then draw the hole.
 7. Hover a type on the left to edit (pencil) or delete (bin) it.
 8. **Export** saves the takeoff to Excel, including the activity log.

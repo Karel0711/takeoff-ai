@@ -430,7 +430,9 @@ export function Viewer(props: Props) {
               },
             };
             const v = measurementVars(m, type, sheet, units);
-            const label = v ? `${formatQty(primaryOf(type.kind, v))} ${primaryUnit(type.kind, units)}` : 'no scale';
+            const qty = v ? `${formatQty(primaryOf(type.kind, v))} ${primaryUnit(type.kind, units)}` : 'no scale';
+            // Named takeoffs (rooms) show their number with the quantity.
+            const label = m.label ? `${m.label.split(' ')[0]} · ${qty}` : qty;
             if (type.kind === 'count') {
               const [x, y] = m.points[0];
               return (
@@ -475,7 +477,8 @@ export function Viewer(props: Props) {
                   strokeWidth={isSel ? 3 : 1.5}
                   vectorEffect="non-scaling-stroke"
                 />
-                <Label at={centroid(m.points)} z={z} text={label} />
+                {/* Labels only where the room is big enough on screen to hold one, or when selected. */}
+                {(isSel || bboxWidth(m.points) * z > label.length * 7 + 12) && <Label at={centroid(m.points)} z={z} text={label} />}
               </g>
             );
           })}
@@ -520,6 +523,12 @@ export function Viewer(props: Props) {
       </div>
     </div>
   );
+}
+
+function bboxWidth(points: Pt[]): number {
+  const xs = points.map((p) => p[0]);
+  const ys = points.map((p) => p[1]);
+  return Math.min(Math.max(...xs) - Math.min(...xs), (Math.max(...ys) - Math.min(...ys)) * 3);
 }
 
 function zoomAt(v: View, size: { w: number; h: number }, k: number): View {

@@ -65,7 +65,7 @@ export function resolveTags(texts: TagText[], segs: Segment[]): WallTag[] {
 }
 
 /** Drops repeated segments (some CAD exports draw lines twice, sometimes reversed). */
-function dedupe(segs: Segment[]): Segment[] {
+export function dedupe(segs: Segment[]): Segment[] {
   const seen = new Set<string>();
   return segs.filter((s) => {
     const a = `${s.x1.toFixed(2)},${s.y1.toFixed(2)}`;
@@ -82,7 +82,7 @@ function dedupe(segs: Segment[]): Segment[] {
  * ticks) are peeled off until only loops remain, and only a loop enclosing the
  * text counts.
  */
-function symbolLoop(segs: Segment[], x: number, y: number): Segment[] {
+export function symbolLoop(segs: Segment[], x: number, y: number): Segment[] {
   let symbol = segs;
   for (let pass = 0; pass < 20; pass++) {
     const joined = (px: number, py: number, self: Segment) =>

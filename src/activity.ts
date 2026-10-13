@@ -48,7 +48,7 @@ export function diffProjects(prev: Project, next: Project, source: string, at = 
       if (old === m) continue;
       const type = typesAfter.get(m.typeId);
       const sheet = sheetsAfter.get(m.sheetId);
-      const detail = quantity(m, type, sheet, next);
+      const detail = [m.label, quantity(m, type, sheet, next)].filter(Boolean).join(' · ');
       if (!old) event({ action: 'created', what: 'takeoff', name: codeOf(type?.name ?? 'Takeoff'), sheet: sheet?.name, detail });
       else {
         const moved = old.typeId !== m.typeId ? ` (was ${codeOf(typesBefore.get(old.typeId)?.name ?? '?')})` : '';
@@ -59,7 +59,7 @@ export function diffProjects(prev: Project, next: Project, source: string, at = 
       if (after.has(m.id)) continue;
       const type = typesBefore.get(m.typeId);
       const sheet = sheetsBefore.get(m.sheetId);
-      event({ action: 'deleted', what: 'takeoff', name: codeOf(type?.name ?? 'Takeoff'), sheet: sheet?.name, detail: quantity(m, type, sheet, prev) });
+      event({ action: 'deleted', what: 'takeoff', name: codeOf(type?.name ?? 'Takeoff'), sheet: sheet?.name, detail: [m.label, quantity(m, type, sheet, prev)].filter(Boolean).join(' · ') });
     }
   }
 

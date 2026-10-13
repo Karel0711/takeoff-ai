@@ -189,14 +189,14 @@ function connected(region: Uint8Array, w: number, h: number): boolean {
  * text and door swings do not count), and returns its outline on the inside face of
  * the walls. Several points join adjacent spaces split by a closed opening.
  */
-export function fillRoom(model: WallModel, seeds: Pt[], sheetW: number, sheetH: number): RoomFill {
+export function fillRoom(model: WallModel, seeds: Pt[], sheetW: number, sheetH: number, attempts = 3): RoomFill {
   if (!model.lines.length) return { ok: false, reason: 'no-walls' };
   const xs = seeds.map((p) => p[0]);
   const ys = seeds.map((p) => p[1]);
   const cx = (Math.min(...xs) + Math.max(...xs)) / 2;
   const cy = (Math.min(...ys) + Math.max(...ys)) / 2;
   const spread = Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) / 2;
-  const halves = [300, 700, Math.max(sheetW, sheetH)].map((h) => h + spread);
+  const halves = [300, 700, Math.max(sheetW, sheetH)].slice(0, attempts).map((h) => h + spread);
 
   for (let attempt = 0; attempt < halves.length; attempt++) {
     const g = gridAround(cx, cy, halves[attempt], sheetW, sheetH);

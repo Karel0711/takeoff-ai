@@ -68,6 +68,7 @@ function SelectionCard({ m, project, onDelete, onRetype, onSelect }: Props & { m
         <span className="dot" style={{ background: type?.color }} />
         <div className="selection-text">
           <div className="selection-qty">{qtyOf(m, type, project)}</div>
+          {m.label && <div className="selection-label">{m.label}</div>}
           <div className="selection-sub">
             Selected takeoff · {sheet?.name}
             {m.source === 'walls' ? ' · wall takeoff' : ''}
@@ -143,7 +144,10 @@ function TakeoffList({ project, sheet, selectedId, onSelect, onDelete }: Props) 
             {items.map((m, i) => (
               <li key={m.id} className={m.id === selectedId ? 'selected' : ''} onClick={() => onSelect(m.id)}>
                 <span className="row-index">{i + 1}</span>
-                <span className="row-qty">{qtyOf(m, type, project)}</span>
+                <span className="row-qty">
+                  {m.label && <span className="row-label">{m.label}</span>}
+                  {qtyOf(m, type, project)}
+                </span>
                 {scope === 'all' && <span className="row-sheet">{sheetName(m.sheetId)}</span>}
                 <button
                   className="icon-button row-delete"
