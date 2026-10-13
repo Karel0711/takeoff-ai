@@ -20,6 +20,7 @@ import { canAskClaude, readSheetName } from './ai/sheetName';
 import { describeAiError } from './ai/readLegend';
 import { findPatternOn, findSimilar, pointInRing, type Pattern } from './fill/similar';
 import { buildWallModel } from './fill/roomFill';
+import { findDoorTags } from './fill/rooms';
 import { matchSymbol, sampleSymbol, type SymbolSample } from './fill/symbols';
 import { traceLine } from './fill/trace';
 import { checkScale, type ScaleCheck } from './scaleCheck';
@@ -585,6 +586,56 @@ export function App() {
     } catch (e) {
       setToast({ text: `Something went wrong: ${e instanceof Error ? e.message : String(e)}`, undo: false });
       return;
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  /** Counts every door tag on the sheet, named by its number; prefixed tags (S114A) by prefix. */
+  async function countDoorTags() {
+    if (!page || !sheet) return;
+    setBusy('Finding door tags…');
+    try {
+      const [texts, segs] = await Promise.all([pageTexts(page), segmentsOf(page)]);
+      const tags = findDoorTags(texts, segs);
+      if (!tags.length) {
+        setToast({ text: 'No door tags on this sheet. A door tag is a door number in an oval, circle or hexagon.', undo: false });
+        return;
+      }
+      const p = projectRef.current!;
+      const newTypes: TakeoffType[] = [];
+      const typeFor = (prefix: string): string => {
+        const name = prefix ? `${prefix} – Openings tagged ${prefix}` : 'Doors';
+        const hit = [...p.types, ...newTypes].find((t) => t.kind === 'count' && (prefix ? t.name.split(' – ')[0] === prefix : /^doors?\b/i.test(t.name)));
+        if (hit) return hit.id;
+        const t: TakeoffType = {
+          id: newId(),
+          name,
+          color: PALETTE[(p.types.length + newTypes.length) % PALETTE.length],
+          kind: 'count',
+          height: p.units === 'metric' ? 3 : 10,
+          division: '08 Openings',
+          items: [{ id: newId(), name: prefix ? `Opening ${prefix}` : 'Door, frame & hardware', unit: 'ea', formula: 'N' }],
+        };
+        newTypes.push(t);
+        return t.id;
+      };
+      // Doors already counted on this sheet under their number are left alone.
+      const counted = new Set(p.measurements.filter((m) => m.sheetId === sheet.id && m.label).map((m) => `${m.typeId}|${m.label}`));
+      const added = tags.flatMap((d) => {
+        const typeId = typeFor(/^[A-Z]/.test(d.number) ? d.number[0] : '');
+        return counted.has(`${typeId}|${d.number}`) ? [] : [{ id: newId(), sheetId: sheet.id, typeId, points: [d.at], holes: [], label: d.number }];
+      });
+      if (!added.length) {
+        setToast({ text: `All ${tags.length} door tags on this sheet are already counted.`, undo: false });
+        return;
+      }
+      const used = new Set(added.map((m) => m.typeId));
+      commit((q) => ({ ...q, types: [...q.types, ...newTypes.filter((t) => used.has(t.id))], measurements: [...q.measurements, ...added] }), 'Door tags');
+      const byType = [...used].map((id) => `${added.filter((m) => m.typeId === id).length} ${([...p.types, ...newTypes].find((t) => t.id === id)?.name ?? '').split(' – ')[0]}`);
+      setToast({ text: `Counted ${byType.join(', ')}`, undo: true });
+    } catch (e) {
+      setToast({ text: `Something went wrong: ${e instanceof Error ? e.message : String(e)}`, undo: false });
     } finally {
       setBusy(null);
     }
@@ -1250,6 +1301,13 @@ export function App() {
                 ready: !!page && !!sheet.metersPerPoint,
               },
               {
+                id: 'doors' as const,
+                icon: 'count' as const,
+                title: 'Door tags',
+                text: 'On a plan: counts every door tag (a number in an oval or hexagon), named by its number.',
+                ready: !!page,
+              },
+              {
                 id: 'finishes' as const,
                 icon: 'list' as const,
                 title: 'Room finishes',
@@ -1264,7 +1322,8 @@ export function App() {
                 disabled={!a.ready}
                 onClick={() => {
                   setPopover(null);
-                  setAiDialog(a.id);
+                  if (a.id === 'doors') void countDoorTags();
+                  else setAiDialog(a.id);
                 }}
               >
                 <span className="automate-icon">

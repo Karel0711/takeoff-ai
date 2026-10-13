@@ -79,6 +79,44 @@ export function findRoomLabels(texts: PageText[], segs: Segment[]): RoomLabel[] 
   return out;
 }
 
+/** A door tag: the door's number in an oval, circle or hexagon on a plan. */
+export interface DoorTag {
+  number: string;
+  at: Pt;
+}
+
+/**
+ * Finds door tags: a number (101, 102A, D12) inside a closed symbol that is not a
+ * rectangle (room numbers sit in rectangles). A number tagged twice on one sheet (a
+ * second plan of the same floor) counts once.
+ */
+export function findDoorTags(texts: PageText[], segs: Segment[]): DoorTag[] {
+  const lines = segs.filter((s) => !s.filled && Math.hypot(s.x2 - s.x1, s.y2 - s.y1) > 0.2);
+  const index = new SegmentIndex(lines, 16);
+  const out: DoorTag[] = [];
+  const seen = new Set<string>();
+  for (const t of texts) {
+    if (!/^[A-Z]?\d{3,4}[A-Z]?$/.test(t.str) || seen.has(t.str)) continue;
+    const r = Math.max(t.w, t.h) * 0.5 + 14;
+    const local = dedupe(index.query(t.cx - r, t.cy - r, t.cx + r, t.cy + r).map((i) => lines[i]));
+    const inside = (x: number, y: number) => Math.hypot(x - t.cx, y - t.cy) <= r;
+    const candidates = local.filter((s) => inside(s.x1, s.y1) && inside(s.x2, s.y2));
+    for (const pen of new Set(candidates.map((s) => s.width))) {
+      const loop = symbolLoop(
+        candidates.filter((s) => s.width === pen),
+        t.cx,
+        t.cy,
+      );
+      // Ovals and circles come as many chords, hexagons as six sides; rectangles are rooms.
+      if (loop.length < 5) continue;
+      seen.add(t.str);
+      out.push({ number: t.str, at: [t.cx, t.cy] });
+      break;
+    }
+  }
+  return out;
+}
+
 /** The room name: text lines stacked just above `top`, centred over `cx`, with no gap between them. */
 function nameAbove(texts: PageText[], t: PageText, cx: number, top: number, width: number): string {
   const above = texts

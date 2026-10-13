@@ -200,6 +200,11 @@ right. Tools sit in the title bar.
      as named areas ("112 RECEIVING & GEN. STORAGE") on the area type you
      choose. Room numbers repeated on a second plan count once; tags in one open
      space share it.
+   - **Door tags** on a plan: counts every door tag (a door number in an oval,
+     circle or hexagon) as a door named by its number; tags with a letter
+     prefix (S114A screens) are counted under their own type. A2.1: 15 doors and
+     1 screen; A2.2: 18 doors and 8 screens. Run again, it skips doors already
+     counted.
    - **Room finishes**: floor, base, walls and ceiling for every room, picked
      per room, set for a selection, or read from a finish schedule.
    Running wall or room takeoff again on a sheet replaces its earlier results.

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { findRoomLabels, fillRooms } from '../src/fill/rooms';
+import { findDoorTags, findRoomLabels, fillRooms } from '../src/fill/rooms';
 import type { WallModel } from '../src/fill/roomFill';
 import type { Segment } from '../src/fill/vectors';
 import type { PageText } from '../src/pageText';
@@ -67,6 +67,10 @@ describe('room takeoff', () => {
       ['112', 'RECEIVING & STORAGE'],
       ['116', 'STAFF OFFICE'],
     ]);
+  });
+
+  it('finds door tags in ovals, not room numbers in boxes', () => {
+    expect(findDoorTags(texts, lines).map((d) => d.number)).toEqual(['201']);
   });
 
   it('keeps one copy of a room tagged again on a second plan', () => {
