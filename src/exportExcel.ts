@@ -344,6 +344,7 @@ export async function buildWorkbook(project: Project, activity: ActivityEvent[] 
       { header: 'Sheet', key: 'sheet', width: 10 },
       { header: `Area (${area})`, key: 'area', width: 12, style: { numFmt: '#,##0.00' } },
       { header: `Perimeter (${len})`, key: 'perim', width: 14, style: { numFmt: '#,##0.00' } },
+      { header: `Doorways (${len})`, key: 'doorways', width: 14, style: { numFmt: '#,##0.00' } },
       ...FINISH_ROLES.map((r) => ({ header: r.label, key: r.role, width: 30 })),
     ];
     const sorted = [...rooms].sort((a, b) => (a.label ?? '').localeCompare(b.label ?? '', undefined, { numeric: true }));
@@ -356,6 +357,7 @@ export async function buildWorkbook(project: Project, activity: ActivityEvent[] 
         sheet: sheet ? (sheetRepeat(sheet) > 1 ? `${sheet.name} ×${sheetRepeat(sheet)}` : sheet.name) : '',
         area: v ? v.A : 'not scaled',
         perim: v ? v.P : null,
+        doorways: v?.O || null,
         ...Object.fromEntries(FINISH_ROLES.map((r) => [r.role, m.finishes?.[r.role] ? (typeById.get(m.finishes[r.role]!)?.name ?? '') : ''])),
       });
     }

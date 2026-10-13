@@ -18,6 +18,11 @@ undo/redo, and an activity log of every change.
   when a sheet has exactly one; detected scales are flagged "verify".
 - Set scales from metric or imperial presets, or calibrate from a known dimension.
 - Area (with cutouts), linear and count measurements, coloured by takeoff type.
+- Doorways: a room filled by Fill or Rooms remembers how much of its outline
+  crosses door openings (`O` in formulas; windows, with glazing along them,
+  don't count, since the wall carries on below). Base and wall finishes set
+  on rooms leave doorways out, and the starter and library types use `P - O`
+  for base, wall paint and wall angle.
 - Assemblies: each takeoff type has material lines driven by formulas, e.g.
   studs = `ceil(L / 0.61) + N`, drywall = `2 * A * 1.1`.
 - Live quantities panel and Excel export in the estimator's bid workbook layout:

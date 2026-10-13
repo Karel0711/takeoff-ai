@@ -132,6 +132,7 @@ export function RoomsDialog({ page, sheet, units, types, earlier, palette, maxOp
               typeId: target,
               points: r.points.map((p) => [...p] as Pt),
               holes: [],
+              ...(r.openings ? { openings: r.openings } : {}),
               source: 'rooms' as const,
               label: `${roomNumber(r)} ${names.get(i) ?? ''}`.trim(),
             },

@@ -36,9 +36,11 @@ interface Props {
   selectedId: string | null;
   onSelect: (id: string | null) => void;
   /** Adds a measurement with the active type; returns its id. */
-  onAdd: (points: Pt[]) => string | undefined;
+  /** `openings`: for a filled room, its outline length across doorways (sheet points). */
+  onAdd: (points: Pt[], openings?: number) => string | undefined;
   /** Replaces a measurement's outline (used when Shift+click grows a fill). */
-  onReplacePoints: (id: string, points: Pt[], source?: string) => void;
+  /** New points; `openings` given for a fill, cleared for a hand edit. */
+  onReplacePoints: (id: string, points: Pt[], source?: string, openings?: number) => void;
   /** The sheet's wall model for Fill, read on first use. */
   getWallModel: () => Promise<WallModel> | null;
   onAddHole: (measurementId: string, ring: Pt[]) => void;
@@ -155,10 +157,10 @@ export function Viewer(props: Props) {
         return;
       }
       if (previous) {
-        props.onReplacePoints(previous.id, result.points);
+        props.onReplacePoints(previous.id, result.points, undefined, result.openings);
         lastFill.current = { id: previous.id, seeds };
       } else {
-        const id = props.onAdd(result.points);
+        const id = props.onAdd(result.points, result.openings);
         if (id) {
           lastFill.current = { id, seeds };
           props.onSelect(id);

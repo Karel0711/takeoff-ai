@@ -1382,9 +1382,9 @@ export function App() {
     setToast({ text: `Deleted ${ids.length} takeoff${ids.length === 1 ? '' : 's'}`, undo: true });
   }
 
-  const addMeasurement = (points: Pt[]) => {
+  const addMeasurement = (points: Pt[], openings?: number) => {
     if (!sheet || !activeType) return;
-    const m = { id: newId(), sheetId: sheet.id, typeId: activeType.id, points, holes: [] };
+    const m = { id: newId(), sheetId: sheet.id, typeId: activeType.id, points, holes: [], ...(openings ? { openings } : {}) };
     commit((p) => ({ ...p, measurements: [...p.measurements, m] }), tool === 'fill' ? 'Fill room' : 'Measure');
     return m.id;
   };
@@ -1673,8 +1673,8 @@ export function App() {
             if (id) setEditingTypeId(null);
           }}
           onAdd={addMeasurement}
-          onReplacePoints={(id, points, source = 'Fill room') =>
-            commit((p) => ({ ...p, measurements: p.measurements.map((m) => (m.id === id ? { ...m, points } : m)) }), source)
+          onReplacePoints={(id, points, source = 'Fill room', openings) =>
+            commit((p) => ({ ...p, measurements: p.measurements.map((m) => (m.id === id ? { ...m, points, openings } : m)) }), source)
           }
           getWallModel={() => (page && sheet ? wallModelFor(page, sheet, maxOpening) : null)}
           onAddHole={(id, ring) =>

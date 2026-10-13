@@ -352,7 +352,8 @@ export function bridgeGaps(walls: Segment[], maxGap: number, glazing?: GlazingRu
         const key = [ex, ey, best.x, best.y].map((v) => v.toFixed(2)).sort().join(',');
         if (!seen.has(key)) {
           seen.add(key);
-          bridges.push({ x1: ex, y1: ey, x2: best.x, y2: best.y, width: 0, filled: false });
+          const window = glazed(ex, ey, best.x, best.y) >= 0.5;
+          bridges.push({ x1: ex, y1: ey, x2: best.x, y2: best.y, width: 0, filled: false, bridge: true, ...(window ? { window } : {}) });
         }
       }
     }

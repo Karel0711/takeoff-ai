@@ -23,6 +23,8 @@ export interface FoundRoom {
   reason?: 'on-wall' | 'not-closed' | 'no-walls' | 'not-connected';
   /** Area in square sheet points. */
   area: number;
+  /** Outline length across door openings, in sheet points. */
+  openings?: number;
 }
 
 const ROOM_NUMBER = /^[A-Z]?\d{2,4}[A-Z]?$/;
@@ -175,7 +177,7 @@ function fillOne(model: WallModel, label: RoomLabel, sheetW: number, sheetH: num
     }
   }
   return res.ok
-    ? { labels: [label], points: res.points, area: Math.abs(ringArea(res.points)) }
+    ? { labels: [label], points: res.points, area: Math.abs(ringArea(res.points)), openings: res.openings }
     : { labels: [label], points: null, reason: res.reason, area: 0 };
 }
 

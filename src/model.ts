@@ -116,6 +116,11 @@ export interface Measurement {
   /** A name for this takeoff, e.g. the room it covers ("112 RECEIVING & GEN. STORAGE"). */
   label?: string;
   /**
+   * For a filled room: how much of its outline crosses door and window openings, in sheet
+   * points. Base and wall finishes leave it out. Cleared when the outline is edited by hand.
+   */
+  openings?: number;
+  /**
    * Room finishes: the takeoff type each finish of this room is priced under. The room's
    * outline counts toward each: floor and ceiling as area, base and walls as its perimeter.
    */
@@ -214,7 +219,7 @@ export function defaultTypes(units: Units): TakeoffType[] {
       items: [
         item('Floor area', area, 'A'),
         item('Floor finish + 10% waste', area, 'A * 1.1'),
-        item('Base', len, 'P'),
+        item('Base (doorways left out)', len, 'P - O'),
       ],
     },
     {
@@ -227,7 +232,7 @@ export function defaultTypes(units: Units): TakeoffType[] {
       package: 'Drywall & ceiling sub',
       items: [
         item('Ceiling area', area, 'A'),
-        item('Wall paint (perimeter × height)', area, 'P * H'),
+        item('Wall paint (perimeter less doorways × height)', area, '(P - O) * H'),
       ],
     },
     {
@@ -257,7 +262,7 @@ export function finishType(role: FinishRole, code: string, units: Units, color: 
     case 'walls':
       return { ...base, name: `${code} – Wall finish`, kind: 'linear', package: 'Painting sub', items: [item('Wall finish area (perimeter × height)', area, 'A')] };
     case 'ceiling':
-      return { ...base, name: `${code} – Ceiling`, kind: 'area', package: 'Drywall & ceiling sub', items: [item('Ceiling area', area, 'A'), item('Perimeter trim', len, 'P')] };
+      return { ...base, name: `${code} – Ceiling`, kind: 'area', package: 'Drywall & ceiling sub', items: [item('Ceiling area', area, 'A'), item('Perimeter trim', len, 'P - O')] };
   }
 }
 

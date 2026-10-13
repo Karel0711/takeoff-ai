@@ -40,6 +40,9 @@ describe('sample plan', () => {
     const rooms = fillRooms(buildWallModel(segs, mpp), findRoomLabels(texts, segs), vp.width, vp.height);
     const areas = Object.fromEntries(rooms.map((r) => [r.labels[0].number, +(ringArea(r.points ?? []) * mpp * mpp).toFixed(1)]));
     expect(areas).toEqual({ '101': 62.9, '102': 30.7, '103': 30.7, '104': 30.7, '105': 30.7 });
+    // Doorways along each room's outline: the lobby's four doors and the entry, one door elsewhere.
+    const doorways: Record<string, number> = { '101': 5.4, '102': 0.9, '103': 0.9, '104': 0.9, '105': 0.9 };
+    for (const r of rooms) expect(Math.abs((r.openings ?? 0) * mpp - doorways[r.labels[0].number])).toBeLessThan(0.15);
 
     expect(findDoorTags(texts, segs).map((d) => d.number).sort()).toEqual(['101', '102', '103', '104', '105']);
 

@@ -17,6 +17,8 @@ export interface Vars {
   N: number;
   /** Inner perimeter: the edges of cutouts in area measurements (included in P). */
   I: number;
+  /** Openings: the part of filled rooms' perimeters that crosses doorways (included in P). */
+  O?: number;
 }
 
 /**
@@ -30,6 +32,7 @@ export function formulaVars(vars: Vars, type: TakeoffType): Record<string, numbe
   const T = type.thickness ?? 0;
   return {
     ...vars,
+    O: vars.O ?? 0,
     W,
     D,
     T,
@@ -39,6 +42,7 @@ export function formulaVars(vars: Vars, type: TakeoffType): Record<string, numbe
     Area: vars.A,
     Perimeter: vars.P,
     InnerPerimeter: vars.I,
+    Openings: vars.O ?? 0,
     Count: vars.N,
     Width: W,
     Depth: D,
@@ -65,6 +69,7 @@ export function measurementVars(m: Measurement, type: TakeoffType, sheet: Sheet,
     P: toLength(perimPts * mpp, units),
     N: 1,
     I: toLength(m.holes.reduce((sum, h) => sum + ringLength(h), 0) * mpp, units),
+    O: toLength(Math.min(m.openings ?? 0, perimPts) * mpp, units),
   };
 }
 
@@ -77,7 +82,9 @@ export function finishVars(room: Measurement, type: TakeoffType, sheet: Sheet, u
   if (type.kind === 'area') return measurementVars(room, type, sheet, units);
   const mpp = sheet.metersPerPoint;
   if (mpp === null) return null;
-  const L = toLength((ringLength(room.points) + room.holes.reduce((sum, h) => sum + ringLength(h), 0)) * mpp, units);
+  // Base and wall finishes stop at doorways: the perimeter less its openings.
+  const perim = ringLength(room.points) + room.holes.reduce((sum, h) => sum + ringLength(h), 0);
+  const L = toLength(Math.max(0, perim - (room.openings ?? 0)) * mpp, units);
   return { L, H: type.height, A: L * type.height, P: 0, N: 1, I: 0 };
 }
 
@@ -95,7 +102,7 @@ export interface Contribution {
 /** How many times a sheet counts: a typical floor drawn once for several. */
 export const sheetRepeat = (sheet: Sheet): number => (sheet.repeat && sheet.repeat > 1 ? Math.floor(sheet.repeat) : 1);
 
-const times = (v: Vars | null, k: number): Vars | null => (v && k !== 1 ? { ...v, L: v.L * k, A: v.A * k, P: v.P * k, N: v.N * k, I: v.I * k } : v);
+const times = (v: Vars | null, k: number): Vars | null => (v && k !== 1 ? { ...v, L: v.L * k, A: v.A * k, P: v.P * k, N: v.N * k, I: v.I * k, O: (v.O ?? 0) * k } : v);
 
 /** Every measurement's share of every type, in measurement order; a repeated sheet's shares are multiplied. */
 export function contributions(project: Project): Contribution[] {
@@ -165,6 +172,7 @@ export function typeTotals(project: Project): TypeTotals[] {
       vars.P += v.P;
       vars.N += v.N;
       vars.I += v.I;
+      vars.O = (vars.O ?? 0) + (v.O ?? 0);
     }
     const items = type.items.map((it): ItemResult => {
       const r = evaluate(it.formula, formulaVars(vars, type));

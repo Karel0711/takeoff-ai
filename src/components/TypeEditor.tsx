@@ -21,6 +21,7 @@ const VARS_HELP: [keyof Vars, string][] = [
   ['A', 'Area (L × H for linear types)'],
   ['P', 'Perimeter, incl. cutouts'],
   ['I', 'Cutout edges only'],
+  ['O', 'Doorways in filled rooms (part of P)'],
   ['N', 'Number of runs, rooms or items'],
 ];
 
@@ -161,7 +162,7 @@ export function TypeEditor({ type, units, totals, onChange, onDelete, onDuplicat
               <dt>
                 <code>{k}</code> {d}
               </dt>
-              <dd>{formatQty(vars[k])}</dd>
+              <dd>{formatQty(vars[k] ?? 0)}</dd>
             </div>
           ))}
         </dl>

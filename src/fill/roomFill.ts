@@ -92,7 +92,8 @@ export function buildWallModel(
 }
 
 export type RoomFill =
-  | { ok: true; points: Pt[] }
+  /** `openings`: how much of the outline runs across closed openings (doors), in sheet points. */
+  | { ok: true; points: Pt[]; openings: number }
   | { ok: false; reason: 'on-wall' | 'not-closed' | 'no-walls' | 'not-connected' };
 
 /** Max pixels per raster; keeps memory and time bounded on full sheets. */
@@ -197,6 +198,50 @@ function connected(region: Uint8Array, w: number, h: number): boolean {
  * text and door swings do not count), and returns its outline on the inside face of
  * the walls. Several points join adjacent spaces split by a closed opening.
  */
+/**
+ * How much of an outline runs along the lines that close openings (doorways): the part
+ * of a room's perimeter with no wall, which base and wall finishes skip.
+ */
+export function openingLength(points: Pt[], model: WallModel): number {
+  // Doorways only: under a window the wall (and its base and finish) carries on.
+  const bridges = model.lines.filter((s) => s.bridge && !s.window);
+  if (!bridges.length) return 0;
+  let total = 0;
+  for (let i = 0; i < points.length; i++) {
+    const [ax, ay] = points[i];
+    const [bx, by] = points[(i + 1) % points.length];
+    const L = Math.hypot(bx - ax, by - ay);
+    if (L < 1) continue;
+    // Opening lines running the same way as this edge.
+    const along = bridges.filter((s) => {
+      const Ls = Math.hypot(s.x2 - s.x1, s.y2 - s.y1);
+      return Ls > 0 && Math.abs(((bx - ax) * (s.y2 - s.y1) - (by - ay) * (s.x2 - s.x1)) / (L * Ls)) < 0.1;
+    });
+    if (!along.length) continue;
+    // Sample the edge every point or so; a sample beside an opening line (not past its ends) counts.
+    const steps = Math.max(2, Math.ceil(L));
+    let near = 0;
+    for (let k = 0; k < steps; k++) {
+      const t = (k + 0.5) / steps;
+      const x = ax + (bx - ax) * t;
+      const y = ay + (by - ay) * t;
+      if (along.some((s) => besideSegment(x, y, s) <= 1.5)) near++;
+    }
+    total += (L * near) / steps;
+  }
+  return total;
+}
+
+/** Distance from a point to a segment, when the point lies beside it (between its ends); else infinite. */
+function besideSegment(x: number, y: number, s: Segment): number {
+  const dx = s.x2 - s.x1;
+  const dy = s.y2 - s.y1;
+  const L2 = dx * dx + dy * dy;
+  const t = L2 ? ((x - s.x1) * dx + (y - s.y1) * dy) / L2 : -1;
+  if (t < 0 || t > 1) return Infinity;
+  return Math.hypot(x - (s.x1 + dx * t), y - (s.y1 + dy * t));
+}
+
 export function fillRoom(model: WallModel, seeds: Pt[], sheetW: number, sheetH: number, attempts = 3): RoomFill {
   if (!model.lines.length) return { ok: false, reason: 'no-walls' };
   const xs = seeds.map((p) => p[0]);
@@ -237,7 +282,7 @@ export function fillRoom(model: WallModel, seeds: Pt[], sheetW: number, sheetH: 
     region = fillHoles(region, g.w, g.h);
     const corners = simplify(traceBoundary(region, g.w, g.h), 1.0);
     const outline = snapToLines(toSheet(g, corners), model.lines, 2.5 / g.res);
-    return outline.length >= 3 ? { ok: true, points: outline } : { ok: false, reason: 'not-closed' };
+    return outline.length >= 3 ? { ok: true, points: outline, openings: openingLength(outline, model) } : { ok: false, reason: 'not-closed' };
   }
   return { ok: false, reason: 'not-closed' };
 }

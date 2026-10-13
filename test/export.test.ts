@@ -110,7 +110,7 @@ describe('room finishes in the workbook', () => {
     room.finishes = { ceiling: ceiling.id };
     const wb = await buildWorkbook(p);
     const ws = wb.getWorksheet('Room Finishes')!;
-    expect(ws.getRow(2).values).toEqual([undefined, '101 LOBBY', 'A2.1', expect.closeTo(80, 3), expect.closeTo(36, 3), '', '', '', 'Ceiling']);
+    expect(ws.getRow(2).values).toEqual([undefined, '101 LOBBY', 'A2.1', expect.closeTo(80, 3), expect.closeTo(36, 3), undefined, '', '', '', 'Ceiling']);
     // The ceiling type carries the room's 80 m² on the finishes tab.
     const fin = wb.getWorksheet('09 Finishes')!;
     const rows = [...Array(fin.rowCount).keys()].map((i) => fin.getRow(i + 1));

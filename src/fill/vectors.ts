@@ -12,6 +12,10 @@ export interface Segment {
   filled: boolean;
   /** Which subpath (drawn shape) the segment belongs to; segments of one shape share it. */
   sub?: number;
+  /** A line the wall model drew to close a door or window opening, not drawn on the sheet. */
+  bridge?: boolean;
+  /** For a bridge: the opening has glazing along it (a window, where base and walls carry on below). */
+  window?: boolean;
 }
 
 type Matrix = [number, number, number, number, number, number];
