@@ -775,3 +775,32 @@ button.danger-solid {
 .toolbar input.opening {
   width: 4.5em;
 }
+
+.wall-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 8px 0;
+  font-size: 13px;
+}
+.wall-table th,
+.wall-table td {
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+}
+.wall-table .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.wall-table select {
+  max-width: 260px;
+}
+.wall-table tr.good td:last-child {
+  color: var(--accent);
+}
+.wall-table tr.fair td:last-child {
+  color: var(--warn);
+}
+.wall-table tr.poor td:last-child {
+  color: var(--danger);
+}

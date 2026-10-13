@@ -26,6 +26,22 @@ Where the project stands, for picking it up in a new session.
   them (windows); flood fill at up to 3 px/pt, hole filling, boundary trace,
   then edges snapped to the drawn lines. First click reads the sheet's operator
   list (~3–6 s), then 0.1–2 s per room.
+- **Wall takeoff (done, first version):** `src/walls/`. Centreline lengths by
+  wall type from vector linework and type tags. Against the estimator's ACC
+  takeoff (workbook rows per sheet): A2.1 total difference 11%; EW3A 42.76 vs
+  42.76 m, FR1 96.9 vs 98.3, W1 66.9 vs 68.7, CB3 18.7 vs 19.0, W3 1.98 vs 2.05,
+  EW1 41.2 vs 39.7; A2.2 W1 17.5 vs 19.1, W3 10.1 vs 9.9, W5 10.7 vs 10.7, W6B 7.8
+  vs 7.6, EW5A 41.7 vs 43.3. Known gaps: walls drawn "below/above" in light pens
+  (EW3A/EW1A on A2.2) are not found, so their tags are listed as unmatched; where
+  a tag's type stops on untagged walls is a guess (nearest tag along the walls),
+  which over-counts W2 on both sheets and FR2 on A2.2; the workbook lists EW3B
+  (11.9 m) and EW1B on A2.1 where the drawing tags less. How it works: rays from
+  every wall line find the parallel line a wall-thickness away (bands),
+  collinear pieces merge across short breaks, ends join at corners (centreline
+  intersection) and tees (to the other wall's centreline), walls split at
+  junctions; tag symbols are the closed loop around the text (per pen, so
+  furniture under a tag does not confuse it) and leaders run from a symbol
+  corner; types carry by kind (partition, exterior, furring, foundation).
 - **Not yet verified:** the real model's extraction quality on real sheets. The
   end-to-end tests intercepted the AI call with a hand-written answer.
 
@@ -78,8 +94,9 @@ the `downloads` capability).
    formulas verified by recalculating an export in LibreOffice).
 3. ~~Compare Fill room areas with the estimator's Autodesk Takeoff areas~~
    (done: they match).
-4. Finish schedules into room types; then automatic wall and room takeoff
-   (wall tags + PDF vector geometry), checked against the bid quantities.
+4. Wall takeoff: walls drawn in light pens ("below"), and a better rule for
+   where a type stops on untagged walls (room-by-room for furring and finishes).
+   Then finish schedules into room types.
 5. REA: analyse Autodesk Takeoff from a HAR capture recorded by the user (the
    cloud environment cannot reach autodesk.com, and Takeoff needs a login), and
    point REA at this app to test what it can recover.

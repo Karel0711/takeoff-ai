@@ -4,6 +4,7 @@ import { AiSettingsDialog } from './components/AiSettingsDialog';
 import { askConfirm, askText, DialogHost, notify } from './components/Dialogs';
 import { QuantityPanel } from './components/QuantityPanel';
 import { TypeEditor } from './components/TypeEditor';
+import { WallTakeoffDialog } from './components/WallTakeoffDialog';
 import { Viewer, type Tool } from './components/Viewer';
 import { exportWorkbook } from './exportExcel';
 import { wallModelFor } from './fill/sheetWalls';
@@ -27,7 +28,7 @@ export function App() {
   const [tool, setTool] = useState<Tool>('select');
   const [busy, setBusy] = useState<string | null>(null);
   const [sheetFilter, setSheetFilter] = useState('');
-  const [aiDialog, setAiDialog] = useState<'assemblies' | 'settings' | null>(null);
+  const [aiDialog, setAiDialog] = useState<'assemblies' | 'settings' | 'walls' | null>(null);
   /** Fill closes wall openings up to this width (metres); wider ones count as open. */
   const [maxOpening, setMaxOpening] = useState(3);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -366,6 +367,14 @@ export function App() {
               >
                 {sheet.aiAssemblies ? '✦ Assembly types (AI result saved)' : '✦ Read assembly types'}
               </button>
+              <button
+                className="ai"
+                onClick={() => setAiDialog('walls')}
+                disabled={!page || !sheet.metersPerPoint}
+                title={sheet.metersPerPoint ? 'Measure every tagged wall on this sheet by type, on the centreline' : 'Set the sheet scale first'}
+              >
+                ✦ Wall takeoff
+              </button>
               {sheet.scaleSource === 'detected' && (
                 <span className="hint warn-text" title="Read from the sheet's text. Check it against a known dimension.">
                   Scale detected: verify
@@ -409,6 +418,29 @@ export function App() {
         {busy && <div className="busy">{busy}</div>}
       </main>
 
+      {aiDialog === 'walls' && page && sheet && (
+        <WallTakeoffDialog
+          page={page}
+          sheet={sheet}
+          units={project.units}
+          types={project.types}
+          earlier={project.measurements.filter((m) => m.sheetId === sheet.id && m.source === 'walls').length}
+          palette={PALETTE}
+          legend={project.sheets.flatMap((s) => s.aiAssemblies?.assemblies ?? [])}
+          maxOpening={maxOpening}
+          onApply={({ types, measurements, replaceEarlier }) =>
+            update((p) => ({
+              ...p,
+              types: [...p.types, ...types],
+              measurements: [
+                ...p.measurements.filter((m) => !(replaceEarlier && m.sheetId === sheet.id && m.source === 'walls')),
+                ...measurements,
+              ],
+            }))
+          }
+          onClose={() => setAiDialog(null)}
+        />
+      )}
       {aiDialog === 'assemblies' && page && sheet && (
         <AiAssembliesDialog
           page={page}

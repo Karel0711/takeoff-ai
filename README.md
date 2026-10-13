@@ -50,6 +50,17 @@ nothing is uploaded anywhere.
   closed, and wider gaps close only where window glazing is drawn along them.
   Shift+click a neighbouring space to join it into the last fill, through the
   opening between them. Needs a vector PDF (not a scan).
+- **Wall takeoff (done):** on a plan with a scale, **✦ Wall takeoff** measures
+  every tagged wall on the centreline, by type. Walls are found from the PDF's
+  vector linework (pairs of wall lines a wall-thickness apart, carried through
+  doors); each type tag's leader is followed to the wall it points at; walls
+  are split at junctions, and a type carries on along its wall, round corners
+  and into untagged walls of the same thickness that run into it (nearest tag
+  wins). Review lengths per type, choose which takeoff type each goes to (new
+  types are built from the AI-read assembly legend when there is one), then add
+  them as linear measurements. Tags that point at no wall (walls drawn above or
+  below in light lines) are listed to measure by hand. **Score against bid
+  workbook…** compares lengths per type with the workbook's rows for that sheet.
 - Next: finish schedules into room types, sheet titles, scale verification.
 
 **Phase 3 — AI takeoff:** walls by type from the plan tags and PDF vector lines,
@@ -94,9 +105,12 @@ sheet takes one to three minutes.
 4. To take a room's area in one click: pick an area type, **Fill room**, click
    inside the room. If it leaks into the next space, lower **Close openings up
    to**; if it says the space isn't closed, raise it or draw by hand.
-5. To cut a hole out of an area: **Select**, click the area, **Cutout**, draw the hole.
-6. Click ✎ on a type to edit its name, height and assembly formulas.
-7. **Export Excel** when done.
+5. To measure walls by type: set the scale, **✦ Wall takeoff**, check the lengths
+   and where each type goes, **Add**. Running it again on a sheet replaces its
+   earlier wall takeoff.
+6. To cut a hole out of an area: **Select**, click the area, **Cutout**, draw the hole.
+7. Click ✎ on a type to edit its name, height and assembly formulas.
+8. **Export Excel** when done.
 
 Navigation: scroll to zoom, drag (in Select mode), middle-drag or Space-drag to
 pan, F to fit the sheet. Delete removes the selected measurement.
@@ -127,7 +141,9 @@ Code layout: `src/units.ts` (scales, units), `src/geometry.ts`,
 `src/ai/` (Claude request and extraction schema), `src/assemblyBuilder.ts`
 (layers to assembly formulas),
 `src/fill/` (room fill: vector linework, wall detection, opening bridges,
-raster flood fill and outline tracing),
+raster flood fill and outline tracing), `src/walls/` (wall takeoff: wall bands,
+tag leaders, junctions and type carrying), `src/eval/wallKey.ts` (wall lengths
+from a bid workbook),
 `src/components/Viewer.tsx` (PDF rendering and measuring tools).
 
 PDF rendering uses the pdf.js *legacy* build because current pdf.js relies on

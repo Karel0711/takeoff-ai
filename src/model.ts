@@ -98,6 +98,8 @@ export interface Measurement {
   points: Pt[];
   /** Cutouts subtracted from an area measurement. */
   holes: Pt[][];
+  /** Made by the automatic wall takeoff, so a re-run can replace it. */
+  source?: 'walls';
 }
 
 export interface Project {

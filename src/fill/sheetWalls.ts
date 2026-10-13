@@ -11,7 +11,7 @@ import { extractSegments, type Segment } from './vectors';
 const segmentCache = new WeakMap<PDFPageProxy, Promise<Segment[]>>();
 const modelCache = new WeakMap<PDFPageProxy, Map<string, WallModel>>();
 
-function segmentsOf(page: PDFPageProxy): Promise<Segment[]> {
+export function segmentsOf(page: PDFPageProxy): Promise<Segment[]> {
   let p = segmentCache.get(page);
   if (!p) {
     p = page.getOperatorList().then((ops) => {
