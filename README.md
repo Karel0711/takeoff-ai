@@ -246,6 +246,12 @@ right. Tools sit in the title bar.
     concrete, base, paint, doors, windows, lights, receptacles, slabs,
     footings), each with its materials worked out in the project's units
     (`src/typeLibrary.ts`).
+15. **Read a legend:** Automate → *Read a legend*, then box a symbols legend.
+    Each line becomes a takeoff type (count, area or length, from its graphic:
+    symbol, framed swatch or line type), and symbols are counted where the same
+    symbol, or its tag (FH, HP), is drawn on the sheet (`src/fill/legend.ts`).
+    Site plans often draw plan symbols differently from the legend; those rows
+    say so and are counted with Symbols.
 
 Editing: select a takeoff to show its points. Drag a corner to move it, drag
 the dot in the middle of an edge to add a point there, Option-click a corner

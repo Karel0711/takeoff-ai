@@ -10,6 +10,8 @@ import { RoomsDialog } from './components/RoomsDialog';
 import { RoomFinishesDialog } from './components/RoomFinishesDialog';
 import { QuickStartDialog } from './components/QuickStartDialog';
 import { TypeLibraryDialog } from './components/TypeLibraryDialog';
+import { LegendDialog, type LegendChoice } from './components/LegendDialog';
+import { readLegend, type LegendRow } from './fill/legend';
 import { ProjectsPanel } from './components/ProjectsPanel';
 import { ScalePicker } from './components/ScalePicker';
 import { ShortcutsDialog } from './components/ShortcutsDialog';
@@ -109,7 +111,13 @@ export function App() {
   const [busy, setBusy] = useState<string | null>(null);
   const [toast, setToast] = useState<Toast | null>(null);
   const [sheetFilter, setSheetFilter] = useState('');
-  const [aiDialog, setAiDialog] = useState<'assemblies' | 'settings' | 'walls' | 'rooms' | 'finishes' | 'shortcuts' | 'help' | 'library' | null>(null);
+  const [aiDialog, setAiDialog] = useState<'assemblies' | 'settings' | 'walls' | 'rooms' | 'finishes' | 'shortcuts' | 'help' | 'library' | 'legend' | null>(null);
+  /** Reading a legend: the next box dragged is the legend; then its rows, for the dialog. */
+  const [legendPick, setLegendPick] = useState(false);
+  const [legend, setLegend] = useState<{ sheetId: string; rows: LegendRow[] } | null>(null);
+  useEffect(() => {
+    if (tool !== 'symbol') setLegendPick(false);
+  }, [tool]);
   const [popover, setPopover] = useState<'scale' | 'more' | 'automate' | 'projects' | 'copy' | 'export' | 'newtype' | null>(null);
   const [tab, setTab] = useState<InspectorTab>('quantities');
   const [persisted, setPersisted] = useState(false);
@@ -796,6 +804,50 @@ export function App() {
     }
   }
 
+  /** Reads the legend boxed on the sheet into rows for the legend dialog. */
+  async function readLegendBox(box: [number, number, number, number]) {
+    if (!page || !sheet) return;
+    setLegendPick(false);
+    setTool('select');
+    setBusy('Reading the legend…');
+    try {
+      await new Promise((r) => setTimeout(r, 30));
+      const [texts, segs] = await Promise.all([pageTexts(page), segmentsOf(page)]);
+      const rows = readLegend(texts, segs, box);
+      if (!rows.length) {
+        setToast({ text: 'No legend lines in that box. Box the symbols together with their labels.', undo: false });
+        return;
+      }
+      setLegend({ sheetId: sheet.id, rows });
+      setAiDialog('legend');
+    } catch (e) {
+      setToast({ text: `Something went wrong: ${e instanceof Error ? e.message : String(e)}`, undo: false });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  /** Adds the legend lines chosen as types, with the symbols found counted. */
+  function addLegendTypes(sheetId: string, choices: LegendChoice[]) {
+    const p = projectRef.current!;
+    const h = p.units === 'metric' ? 3 : 10;
+    const area = p.units === 'metric' ? 'm²' : 'SF';
+    const len = p.units === 'metric' ? 'm' : 'ft';
+    const types: TakeoffType[] = [];
+    const added: Project['measurements'] = [];
+    choices.forEach((c, i) => {
+      const id = newId();
+      const item = c.kind === 'count' ? { name: c.label, unit: 'ea', formula: 'N' } : c.kind === 'area' ? { name: c.label, unit: area, formula: 'A' } : { name: c.label, unit: len, formula: 'L' };
+      types.push({ id, name: c.label, color: PALETTE[(p.types.length + i) % PALETTE.length], kind: c.kind, height: c.kind === 'linear' ? 0 : h, items: [{ id: newId(), ...item }] });
+      if (c.kind !== 'count') return;
+      const places = c.row.found?.length ? c.row.found.map((f) => f.at) : (c.row.tagged ?? []).map((t) => [t.cx, t.cy] as Pt);
+      for (const at of places) added.push({ id: newId(), sheetId, typeId: id, points: [at], holes: [] });
+    });
+    commit((q) => ({ ...q, types: [...q.types, ...types], measurements: [...q.measurements, ...added] }), 'Legend');
+    setActiveTypeId(types[0].id);
+    setToast({ text: `Added ${types.length} type${types.length === 1 ? '' : 's'} from the legend${added.length ? `, ${added.length} counted` : ''}`, undo: true });
+  }
+
   /**
    * Counts door tags, named by their number; prefixed tags (S114A) by prefix. On every
    * sheet, a door number counts once in the project (enlarged plans repeat tags), on the
@@ -1412,7 +1464,7 @@ export function App() {
           onDelete={(id) => deleteMeasurements([id])}
           onCalibrate={(mpp, label) => sheet && updateSheet(sheet.id, { metersPerPoint: mpp, scaleLabel: label, scaleSource: 'calibrated' }, 'Calibrate')}
           onToolDone={() => setTool('select')}
-          onFindSymbols={(box) => void countSymbols(box)}
+          onFindSymbols={(box) => void (legendPick ? readLegendBox(box) : countSymbols(box))}
           onTrace={(at, reach) => void traceAt(at, reach)}
           focus={focus}
           highlights={sheet ? hitsOn(sheet.id) : undefined}
@@ -1509,7 +1561,7 @@ export function App() {
           </div>
         )}
 
-        {page && <div className="hint-pill">{toolHint(tool, activeType, sheet)}</div>}
+        {page && <div className="hint-pill">{legendPick && tool === 'symbol' ? 'Drag a box around the legend: its symbols and their labels · Esc cancels' : toolHint(tool, activeType, sheet)}</div>}
         {busy && (
           <div className="busy">
             <span className="spinner small" /> {busy}
@@ -1687,6 +1739,13 @@ export function App() {
                 ready: !!page,
               },
               {
+                id: 'legend' as const,
+                icon: 'count' as const,
+                title: 'Read a legend',
+                text: 'Box a symbols legend: each line becomes a takeoff type, and symbols drawn on the sheet are counted.',
+                ready: !!page,
+              },
+              {
                 id: 'finishes' as const,
                 icon: 'list' as const,
                 title: 'Room finishes',
@@ -1702,7 +1761,10 @@ export function App() {
                 onClick={() => {
                   setPopover(null);
                   if (a.id === 'doors') void countDoorTags();
-                  else setAiDialog(a.id);
+                  else if (a.id === 'legend') {
+                    setLegendPick(true);
+                    setTool('symbol');
+                  } else setAiDialog(a.id);
                 }}
               >
                 <span className="automate-icon">
@@ -1855,6 +1917,21 @@ export function App() {
             )
           }
           onClose={() => setAiDialog(null)}
+        />
+      )}
+      {aiDialog === 'legend' && legend && (
+        <LegendDialog
+          sheetName={project.sheets.find((x) => x.id === legend.sheetId)?.name ?? ''}
+          rows={legend.rows}
+          onClose={() => {
+            setAiDialog(null);
+            setLegend(null);
+          }}
+          onAdd={(choices) => {
+            setAiDialog(null);
+            setLegend(null);
+            addLegendTypes(legend.sheetId, choices);
+          }}
         />
       )}
       {aiDialog === 'library' && (
