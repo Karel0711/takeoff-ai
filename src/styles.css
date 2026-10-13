@@ -1657,6 +1657,13 @@ table.items th {
 
 /* ---------- Narrow windows ---------- */
 
+/* Six tools with labels need about 1400 px; below that the tools show icons only. */
+@media (max-width: 1400px) {
+  .tool-label {
+    display: none;
+  }
+}
+
 @media (max-width: 1180px) {
   .app {
     grid-template-columns: 220px minmax(0, 1fr) 290px;
