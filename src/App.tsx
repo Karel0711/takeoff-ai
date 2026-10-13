@@ -968,6 +968,13 @@ export function App() {
         setBusy('Reading the legend… hatches');
         await new Promise((r) => setTimeout(r, 0));
         findLegendAreas(rows, segs, box, sheet.width, sheet.height, sheet.metersPerPoint);
+        // Each area takes the name of the room tagged in it, as Rooms does.
+        const tags = findRoomLabels(texts, segs);
+        for (const r of rows)
+          for (const a of r.areas ?? []) {
+            const inside = tags.filter((l) => pointInRing(l.at, a.points));
+            if (inside.length) a.label = inside.map((l) => `${l.number}${l.name ? ` ${l.name}` : ''}`).join(' / ');
+          }
       }
       if (!rows.length) {
         setToast({ text: 'No legend lines in that box. Box the symbols together with their labels.', undo: false });
@@ -1003,7 +1010,7 @@ export function App() {
         items: [{ id: newId(), ...item }],
       });
       if (c.kind === 'area') {
-        for (const a of c.row.areas ?? []) added.push({ id: newId(), sheetId, typeId: id, points: a.points, holes: [] });
+        for (const a of c.row.areas ?? []) added.push({ id: newId(), sheetId, typeId: id, points: a.points, holes: [], ...(a.label ? { label: a.label } : {}) });
         return;
       }
       if (c.kind !== 'count') return;

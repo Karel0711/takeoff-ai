@@ -21,8 +21,8 @@ export interface LegendRow {
   /** A short tag drawn with the graphic (FH, HP), and where it appears on the sheet outside the legend. */
   tag?: string;
   tagged?: PageText[];
-  /** For hatch swatches: the areas on the sheet hatched the same way, outside the legend. */
-  areas?: SimilarArea[];
+  /** For hatch swatches: the areas on the sheet hatched the same way, outside the legend, named by the room tag in each. */
+  areas?: (SimilarArea & { label?: string })[];
 }
 
 /**
