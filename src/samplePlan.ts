@@ -19,11 +19,14 @@ export async function samplePlanPdf(
     rotate?: 0 | 90 | 180 | 270;
     /** Wall lines broken into pieces this long (plan units), as some exports explode them. */
     pieces?: number;
+    /** Plan text written one character at a time, as some PDF writers do. */
+    charByChar?: boolean;
   } = {},
 ): Promise<Uint8Array> {
   const poche = options.walls === 'poche';
   pens = options.onePen ? { wall: 0.24, thin: 0.24 } : { wall: 0.7, thin: 0.25 };
   piece = options.pieces ?? 0;
+  byChar = !!options.charByChar;
   const doc = await PDFDocument.create();
   doc.setTitle('Takeoff sample plan');
   const font = await doc.embedFont(StandardFonts.Helvetica);
@@ -54,6 +57,7 @@ const ink = rgb(0, 0, 0);
 /** Wall and thin pen widths; one pen for both when drawn without lineweights. */
 let pens = { wall: 0.7, thin: 0.25 };
 let piece = 0;
+let byChar = false;
 
 /** `poche`: walls as solid filled shapes with no outline, as some exports draw them. */
 function drawPlan(page: PDFPage, font: PDFFont, bold: PDFFont, units: Units, ceiling: boolean, poche = false) {
@@ -85,7 +89,13 @@ function drawPlan(page: PDFPage, font: PDFFont, bold: PDFFont, units: Units, cei
     const w = f.widthOfTextAtSize(str, size);
     // Centred on (x, y) in plan metres.
     if (rotate) page.drawText(str, { x: px(x) + size * 0.35, y: py(y) - w / 2, size, font: f, color: ink, rotate: degrees(rotate) });
-    else page.drawText(str, { x: px(x) - w / 2, y: py(y) - size * 0.35, size, font: f, color: ink });
+    else if (byChar) {
+      let cx = px(x) - w / 2;
+      for (const ch of str) {
+        page.drawText(ch, { x: cx, y: py(y) - size * 0.35, size, font: f, color: ink });
+        cx += f.widthOfTextAtSize(ch, size);
+      }
+    } else page.drawText(str, { x: px(x) - w / 2, y: py(y) - size * 0.35, size, font: f, color: ink });
   };
 
   // Exterior walls, 250 thick, centred on 0–18 × 0–11, with the entry at the bottom.

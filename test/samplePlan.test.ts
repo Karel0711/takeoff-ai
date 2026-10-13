@@ -140,6 +140,7 @@ describe('sample plan', () => {
     ['a sheet saved turned a quarter', { rotate: 90 }, 0],
     ['a drawing printed without lineweights', { onePen: true }, 0.05],
     ['walls exploded into short pieces', { pieces: 0.5 }, 0],
+    ['text written one character at a time', { charByChar: true }, 0],
   ] as const) {
     it(`reads ${style}`, async () => {
       const doc = await getDocument({ data: await samplePlanPdf('metric', options) }).promise;
