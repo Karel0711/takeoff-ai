@@ -2096,3 +2096,39 @@ button.link-button:hover {
 .takeoff-search {
   margin: 0 12px 8px;
 }
+
+/* Type library */
+.library {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+  gap: 4px 20px;
+  margin-top: 8px;
+}
+.library-trade .group-title {
+  margin-top: 12px;
+}
+.library-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 8px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.library-row:hover {
+  background: var(--hover, rgba(0, 0, 0, 0.04));
+}
+.library-row.on {
+  background: var(--accent-soft, rgba(0, 113, 227, 0.08));
+}
+.library-row .row-main {
+  flex: 1;
+  min-width: 0;
+}
+.library-kind {
+  font-size: 11px;
+  color: var(--text-3);
+}
+.library-actions {
+  justify-content: flex-end;
+}

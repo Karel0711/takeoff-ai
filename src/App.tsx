@@ -9,6 +9,7 @@ import { Menu, Popover } from './components/Popover';
 import { RoomsDialog } from './components/RoomsDialog';
 import { RoomFinishesDialog } from './components/RoomFinishesDialog';
 import { QuickStartDialog } from './components/QuickStartDialog';
+import { TypeLibraryDialog } from './components/TypeLibraryDialog';
 import { ProjectsPanel } from './components/ProjectsPanel';
 import { ScalePicker } from './components/ScalePicker';
 import { ShortcutsDialog } from './components/ShortcutsDialog';
@@ -108,8 +109,8 @@ export function App() {
   const [busy, setBusy] = useState<string | null>(null);
   const [toast, setToast] = useState<Toast | null>(null);
   const [sheetFilter, setSheetFilter] = useState('');
-  const [aiDialog, setAiDialog] = useState<'assemblies' | 'settings' | 'walls' | 'rooms' | 'finishes' | 'shortcuts' | 'help' | null>(null);
-  const [popover, setPopover] = useState<'scale' | 'more' | 'automate' | 'projects' | 'copy' | 'export' | null>(null);
+  const [aiDialog, setAiDialog] = useState<'assemblies' | 'settings' | 'walls' | 'rooms' | 'finishes' | 'shortcuts' | 'help' | 'library' | null>(null);
+  const [popover, setPopover] = useState<'scale' | 'more' | 'automate' | 'projects' | 'copy' | 'export' | 'newtype' | null>(null);
   const [tab, setTab] = useState<InspectorTab>('quantities');
   const [persisted, setPersisted] = useState(false);
   const projectFileInput = useRef<HTMLInputElement>(null);
@@ -120,6 +121,7 @@ export function App() {
   const scaleButton = useRef<HTMLButtonElement>(null);
   const moreButton = useRef<HTMLButtonElement>(null);
   const exportButton = useRef<HTMLButtonElement>(null);
+  const newTypeButton = useRef<HTMLButtonElement>(null);
   const automateButton = useRef<HTMLButtonElement>(null);
 
   // Load the saved project, its PDFs and its activity log.
@@ -1303,7 +1305,14 @@ export function App() {
         <section className="source types">
           <div className="source-head">
             <h2>Takeoff types</h2>
-            <button className="icon-button small" onClick={addType} title="New takeoff type" aria-label="New takeoff type">
+            <button
+              ref={newTypeButton}
+              className="icon-button small"
+              onClick={() => setPopover(popover === 'newtype' ? null : 'newtype')}
+              title="New takeoff type"
+              aria-label="New takeoff type"
+              aria-haspopup="menu"
+            >
               <Icon name="plus" size={16} />
             </button>
           </div>
@@ -1676,6 +1685,19 @@ export function App() {
           ].filter((g) => g.length)}
         />
       )}
+      {popover === 'newtype' && (
+        <Menu
+          anchor={newTypeButton}
+          onClose={() => setPopover(null)}
+          label="New takeoff type"
+          groups={[
+            [
+              { label: 'Blank type', onSelect: addType },
+              { label: 'From the library…', hint: 'Ceilings, flooring, paint…', onSelect: () => setAiDialog('library') },
+            ],
+          ]}
+        />
+      )}
       {popover === 'export' && (
         <Menu
           anchor={exportButton}
@@ -1785,6 +1807,19 @@ export function App() {
             )
           }
           onClose={() => setAiDialog(null)}
+        />
+      )}
+      {aiDialog === 'library' && (
+        <TypeLibraryDialog
+          units={project.units}
+          existing={new Set(project.types.map((t) => t.name))}
+          onClose={() => setAiDialog(null)}
+          onAdd={(types) => {
+            setAiDialog(null);
+            commit((p) => ({ ...p, types: [...p.types, ...types] }), 'Type library');
+            setActiveTypeId(types[0].id);
+            setToast({ text: `Added ${types.length} type${types.length === 1 ? '' : 's'}. Select one to change its materials.`, undo: true });
+          }}
         />
       )}
       {aiDialog === 'finishes' && (

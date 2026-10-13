@@ -240,6 +240,12 @@ right. Tools sit in the title bar.
 13. **Search sheets and text:** the sheet search also finds text drawn on the
     sheets (room names, tags, notes). Matching sheets show how many hits; open
     one to see them outlined, and click it again for the next hit.
+14. **Type library:** + beside Takeoff types → *From the library…* adds
+    ready-made types by trade (partitions, furring, bulkheads, 2×4 and 2×2
+    acoustic ceilings, GWB ceilings, carpet tile, LVT, porcelain, sealed
+    concrete, base, paint, doors, windows, lights, receptacles, slabs,
+    footings), each with its materials worked out in the project's units
+    (`src/typeLibrary.ts`).
 
 Editing: select a takeoff to show its points. Drag a corner to move it, drag
 the dot in the middle of an edge to add a point there, Option-click a corner
