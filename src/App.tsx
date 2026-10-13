@@ -432,7 +432,11 @@ export function App() {
   // Other projects, to copy their types from (the + menu).
   const [otherProjects, setOtherProjects] = useState<ProjectSummary[]>([]);
   useEffect(() => {
-    if (popover !== 'newtype') return;
+    if (popover !== 'newtype') {
+      // Cleared on close, so the menu never offers a list from before a switch or a delete.
+      setOtherProjects([]);
+      return;
+    }
     void listProjects().then((list) => setOtherProjects(list.filter((x) => x.id !== projectRef.current?.id)));
   }, [popover]);
 
@@ -757,7 +761,14 @@ export function App() {
   /** Copies another project's types (with their assemblies) into this one, skipping names already here. */
   async function importTypes(fromId: string) {
     const from = await loadProjectById(fromId);
-    if (!from) return;
+    if (!from) {
+      setToast({ text: 'That project could not be opened. It may have been deleted.', undo: false });
+      return;
+    }
+    if (!from.types.length) {
+      setToast({ text: `${from.name} has no takeoff types to copy.`, undo: false });
+      return;
+    }
     const p = projectRef.current!;
     const have = new Set(p.types.map((t) => t.name));
     const types = from.types.filter((t) => !have.has(t.name)).map((t) => ({ ...t, id: newId(), items: t.items.map((it) => ({ ...it, id: newId() })) }));
@@ -1014,7 +1025,7 @@ export function App() {
         items: [{ id: newId(), ...item }],
       });
       if (c.kind === 'area') {
-        for (const a of c.row.areas ?? []) added.push({ id: newId(), sheetId, typeId: id, points: a.points, holes: [], ...(a.label ? { label: a.label } : {}) });
+        for (const a of c.row.areas ?? []) added.push({ id: newId(), sheetId, typeId: id, points: a.points, holes: [], ...(a.openings ? { openings: a.openings } : {}), ...(a.label ? { label: a.label } : {}) });
         return;
       }
       if (c.kind !== 'count') return;
@@ -1250,7 +1261,7 @@ export function App() {
         );
         if (!fresh.length) continue;
         perSheet.push(`${other.name} ${fresh.length}`);
-        for (const a of fresh) added.push({ id: newId(), sheetId: other.id, typeId, points: a.points, holes: [] });
+        for (const a of fresh) added.push({ id: newId(), sheetId: other.id, typeId, points: a.points, holes: [], ...(a.openings ? { openings: a.openings } : {}) });
       }
     } catch (e) {
       setToast({ text: `Something went wrong: ${e instanceof Error ? e.message : String(e)}`, undo: false });
@@ -1358,7 +1369,7 @@ export function App() {
         setToast({ text: 'No other areas hatched like this one on this sheet.', undo: false });
         return;
       }
-      const added = fresh.map((a) => ({ id: newId(), sheetId: sheet.id, typeId: m.typeId, points: a.points, holes: [] }));
+      const added = fresh.map((a) => ({ id: newId(), sheetId: sheet.id, typeId: m.typeId, points: a.points, holes: [], ...(a.openings ? { openings: a.openings } : {}) }));
       commit((p) => ({ ...p, measurements: [...p.measurements, ...added] }), 'Find similar');
       const typeId = m.typeId;
       setToast({

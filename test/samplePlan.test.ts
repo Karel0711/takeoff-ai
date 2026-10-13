@@ -163,6 +163,9 @@ describe('sample plan', () => {
     expect(m2(legend[0])).toEqual([62.9]);
     expect(m2(legend[1])).toEqual([30.7, 30.7, 30.7]);
     expect(m2(legend[2])).toEqual([30.7]);
+    // Rooms found by their hatch keep their doorways, as Fill and Rooms do.
+    const lobby = legend[0].areas![0];
+    expect(Math.abs((lobby.openings ?? 0) * mpp - 5.4)).toBeLessThan(0.15);
   }, 60000);
 
   // Two export styles seen in the wild: sheets saved turned (/Rotate) and drawings printed

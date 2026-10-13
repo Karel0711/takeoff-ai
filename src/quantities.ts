@@ -1,6 +1,6 @@
 import { evaluate } from './formula';
 import { polylineLength, ringArea, ringLength } from './geometry';
-import { FINISH_ROLES, type FinishRole, type Measurement, type Project, type Sheet, type TakeoffType, type Units } from './model';
+import { FINISH_ROLES, doorHeight, type FinishRole, type Measurement, type Project, type Sheet, type TakeoffType, type Units } from './model';
 import { areaUnit, lengthUnit, toArea, toLength } from './units';
 
 /** Formula variables in project units. */
@@ -82,10 +82,13 @@ export function finishVars(room: Measurement, type: TakeoffType, sheet: Sheet, u
   if (type.kind === 'area') return measurementVars(room, type, sheet, units);
   const mpp = sheet.metersPerPoint;
   if (mpp === null) return null;
-  // Base and wall finishes stop at doorways: the perimeter less its openings.
-  const perim = ringLength(room.points) + room.holes.reduce((sum, h) => sum + ringLength(h), 0);
-  const L = toLength(Math.max(0, perim - (room.openings ?? 0)) * mpp, units);
-  return { L, H: type.height, A: L * type.height, P: 0, N: 1, I: 0 };
+  // Base and wall finishes stop at doorways: the perimeter less its openings. Walls go on
+  // above a door, so the area loses only the door opening.
+  const perim = toLength((ringLength(room.points) + room.holes.reduce((sum, h) => sum + ringLength(h), 0)) * mpp, units);
+  const doors = Math.min(toLength((room.openings ?? 0) * mpp, units), perim);
+  const L = perim - doors;
+  const A = perim * type.height - doors * Math.min(type.height, doorHeight(units));
+  return { L, H: type.height, A, P: 0, N: 1, I: 0 };
 }
 
 /** One measurement's share of one type: drawn as that type, or a room finished with it. */

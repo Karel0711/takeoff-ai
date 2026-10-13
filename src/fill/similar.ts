@@ -11,6 +11,8 @@ export interface SimilarArea {
   area: number;
   /** 'room' when the hatch fills its room (outline on the walls), 'hatch' when it covers part of one. */
   how: 'room' | 'hatch';
+  /** For a room: its outline's length across door openings, in sheet points. */
+  openings?: number;
 }
 
 export interface SimilarResult {
@@ -207,7 +209,7 @@ function findPattern(marks: Mark[], model: WallModel, pattern: Pattern, sheetW: 
     // stair's treads and stringers under an ACT grid sample came to 0.36.
     if (share >= 0.5 && dens >= 0.45 * density) {
       const room = fillRoom(model, [seed[id]], sheetW, sheetH, 2);
-      if (room.ok && !(sample && pointInRing([sx, sy], room.points))) areas.push({ points: room.points, area: Math.abs(ringArea(room.points)), how: 'room' });
+      if (room.ok && !(sample && pointInRing([sx, sy], room.points))) areas.push({ points: room.points, area: Math.abs(ringArea(room.points)), how: 'room', openings: room.openings });
     } else if (!lines && share >= 0.08) {
       // Part of the room: the hatched cells inside it.
       const cells = cellsIn.get(id) ?? [];

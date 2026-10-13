@@ -90,7 +90,7 @@ export function RoomsDialog({ page, sheet, units, types, earlier, palette, maxOp
         // From the latest state: another retry may have finished meanwhile.
         setState((cur) =>
           cur.phase === 'done'
-            ? { ...cur, rooms: cur.rooms.map((r, j) => (j === i ? { ...r, points: res.points, reason: undefined, area: Math.abs(ringArea(res.points)), wider: true } : r)) }
+            ? { ...cur, rooms: cur.rooms.map((r, j) => (j === i ? { ...r, points: res.points, openings: res.openings, reason: undefined, area: Math.abs(ringArea(res.points)), wider: true } : r)) }
             : cur,
         );
         setPicked((s) => new Set(s).add(i));

@@ -104,5 +104,16 @@ describe('room finish quantities', () => {
     // A finish of the room's own type does not count it twice.
     const again = typeTotals({ ...p, sheets: [sheet], types: [...p.types, floor], measurements: [{ ...m, finishes: { floor: room.id } }] });
     expect(again.find((t) => t.type.id === room.id)!.primary).toBeCloseTo(20);
+
+    // A 0.9 m door: base stops at it, paint loses only the door opening (2.1 m high), and the
+    // ceiling's perimeter trim runs over the door head.
+    const ceiling = finishType('ceiling', 'ACT-1', 'metric', '#000');
+    const door: Measurement = { ...m, openings: 90, finishes: { ...m.finishes, ceiling: ceiling.id } };
+    const withDoor = typeTotals({ ...p, sheets: [sheet], types: [...p.types, floor, base, walls, ceiling], measurements: [door] });
+    const at = (id: string) => withDoor.find((t) => t.type.id === id)!;
+    expect(at(base.id).primary).toBeCloseTo(17.1);
+    expect(at(walls.id).vars.A).toBeCloseTo(18 * 2.7 - 0.9 * 2.1);
+    const trim = at(ceiling.id).items.find((it) => it.name === 'Perimeter trim')!;
+    expect(trim.value).toBeCloseTo(18);
   });
 });

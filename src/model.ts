@@ -158,6 +158,9 @@ const item = (name: string, unit: string, formula: string): AssemblyItem => ({
   formula,
 });
 
+/** Height of a standard door opening, in project length units: paint stops at it, not at the ceiling. */
+export const doorHeight = (units: Units) => (units === 'metric' ? 2.1 : 7);
+
 /** Starter takeoff types modelled on common GC scopes. Users edit or delete them freely. */
 export function defaultTypes(units: Units): TakeoffType[] {
   const m = units === 'metric';
@@ -232,7 +235,7 @@ export function defaultTypes(units: Units): TakeoffType[] {
       package: 'Drywall & ceiling sub',
       items: [
         item('Ceiling area', area, 'A'),
-        item('Wall paint (perimeter less doorways × height)', area, '(P - O) * H'),
+        item('Wall paint (perimeter × height, less door openings)', area, `P * H - O * ${doorHeight(units)}`),
       ],
     },
     {
@@ -260,9 +263,9 @@ export function finishType(role: FinishRole, code: string, units: Units, color: 
     case 'base':
       return { ...base, name: `${code} – Base`, kind: 'linear', package: 'Flooring sub', items: [item('Base', len, 'L'), item('Base + 5% waste', len, 'L * 1.05')] };
     case 'walls':
-      return { ...base, name: `${code} – Wall finish`, kind: 'linear', package: 'Painting sub', items: [item('Wall finish area (perimeter × height)', area, 'A')] };
+      return { ...base, name: `${code} – Wall finish`, kind: 'linear', package: 'Painting sub', items: [item('Wall finish area (perimeter × height, less door openings)', area, 'A')] };
     case 'ceiling':
-      return { ...base, name: `${code} – Ceiling`, kind: 'area', package: 'Drywall & ceiling sub', items: [item('Ceiling area', area, 'A'), item('Perimeter trim', len, 'P - O')] };
+      return { ...base, name: `${code} – Ceiling`, kind: 'area', package: 'Drywall & ceiling sub', items: [item('Ceiling area', area, 'A'), item('Perimeter trim', len, 'P')] };
   }
 }
 

@@ -186,8 +186,11 @@ Where the project stands, for picking it up in a new session.
   - **Doorways:** bridges carry `bridge: true` (and `window: true` when glazing
     covers half the gap); `openingLength()` in `roomFill.ts` measures the outline
     beside door bridges (parallel, between their ends), `Measurement.openings`
-    stores it (sheet points, cleared by hand edits), `O` in formulas, and base
-    and wall room finishes use P less it. Sample: lobby 5.4 m, rooms 0.9 m (±0.1).
+    stores it (sheet points, cleared by hand edits), `O` in formulas. Base room
+    finishes use P less it; wall finishes take off only the door opening
+    (`doorHeight()` in `model.ts`: 2.1 m / 7 ft); ceiling perimeter items keep
+    full P (they run over door heads). Hatch-found rooms (`SimilarArea.openings`)
+    and "Try wider openings" keep it too. Sample: lobby 5.4 m, rooms 0.9 m (±0.1).
   - **Count a text tag** from the search (exact matches, every current sheet),
     **duplicate project** (drawings copied under new ids), an upload note
     (scales read, sheets without text), quiet scale verification when a sheet
