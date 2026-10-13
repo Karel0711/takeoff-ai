@@ -2170,3 +2170,8 @@ button.link-button:hover {
   font-size: 12px;
   text-align: left;
 }
+
+.done-tag {
+  color: #248a3d;
+  font-weight: 600;
+}

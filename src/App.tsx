@@ -1514,7 +1514,11 @@ export function App() {
         <section className="source sheets">
           <div className="source-head">
             <h2>Sheets</h2>
-            <span className="count">{project.sheets.length || ''}</span>
+            <span className="count">
+              {project.sheets.some((x) => x.done)
+                ? `${project.sheets.filter((x) => x.done).length} of ${project.sheets.length} done`
+                : project.sheets.length || ''}
+            </span>
           </div>
           {project.sheets.length > 1 && (
             <label className="search">
@@ -1555,6 +1559,7 @@ export function App() {
                       <span className={`row-sub scale-${state}`}>
                         {state === 'check' && <span className="check-dot" title="Read from the sheet; check it against a dimension" />}
                         {s.metersPerPoint ? s.scaleLabel : 'No scale'}
+                        {s.done ? <span className="done-tag" title="Marked done"> · done</span> : null}
                         {hitsOn(s.id) ? <span className="found-tag"> · {hitsOn(s.id)!.length} found</span> : null}
                         {s.repeat ? <span className="repeat-tag" title={`Takeoffs on this sheet count ${s.repeat} times`}> · ×{s.repeat}</span> : null}
                       </span>
@@ -2024,7 +2029,14 @@ export function App() {
               { label: 'Keyboard shortcuts', onSelect: () => setAiDialog('shortcuts') },
               ...(page && sheet ? [{ label: 'Save sheet as image…', hint: 'With takeoffs', onSelect: () => void saveSheetImage() }] : []),
               ...(sheet
-                ? [{ label: sheet.repeat ? `Counts ×${sheet.repeat}…` : 'Count this sheet more than once…', hint: 'Typical floors', onSelect: () => void setRepeat(sheet) }]
+                ? [
+                    {
+                      label: sheet.done ? 'Mark this sheet not done' : 'Mark this sheet done',
+                      hint: 'Track progress',
+                      onSelect: () => updateSheet(sheet.id, { done: sheet.done ? undefined : true }, sheet.done ? `Reopen ${sheet.name}` : `${sheet.name} done`),
+                    },
+                    { label: sheet.repeat ? `Counts ×${sheet.repeat}…` : 'Count this sheet more than once…', hint: 'Typical floors', onSelect: () => void setRepeat(sheet) },
+                  ]
                 : []),
               ...(previousRevision ? [{ label: 'Compare with previous revision', onSelect: () => void compareRevision() }] : []),
               ...(sheet && project.measurements.some((m) => m.sheetId === sheet.id)
