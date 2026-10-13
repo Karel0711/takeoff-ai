@@ -76,7 +76,9 @@ undo/redo, and an activity log of every change.
   export. Set finishes room by room or for several rooms at once, make a new
   finish type from its code (CPT-1, RB-1, ACT-1), or **Read finish schedule**
   to fill them from a room finish schedule on the drawings (a table with a
-  room number column and floor, base, walls or ceiling columns).
+  room number column and floor, base, walls or ceiling columns). Base and wall
+  lengths are the room's perimeter with door openings included (the outline
+  closes across doors); allow for doors in the base type's formula.
 - **Find areas hatched like this (done):** select an area on a reflected
   ceiling plan or a finish plan and click **Find areas hatched like this**.
   The sample's hatch (stipple dots, a ceiling tile grid, hatch lines) is found
