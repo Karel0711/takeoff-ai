@@ -2025,3 +2025,25 @@ button.link-button:hover {
   font-size: 13px;
   line-height: 1.5;
 }
+/* Unscaled sheet banner */
+.scale-banner {
+  position: absolute;
+  top: 54px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 7px 8px 7px 14px;
+  border-radius: 10px;
+  background: #fff1f0;
+  color: #a1260d;
+  box-shadow: var(--shadow-2, 0 2px 8px rgba(0, 0, 0, 0.12));
+  font-size: 13px;
+  max-width: calc(100% - 32px);
+}
+.scale-banner button.small-button {
+  padding: 4px 10px;
+  font-size: 12px;
+}

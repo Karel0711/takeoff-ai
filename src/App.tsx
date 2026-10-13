@@ -1162,6 +1162,16 @@ export function App() {
           </div>
         )}
 
+        {page && sheet && !sheet.metersPerPoint && (
+          <div className="scale-banner" role="status">
+            <span>
+              <b>Scale not set.</b> Takeoffs on this sheet aren’t counted until it has one.
+            </span>
+            <button className="primary small-button" onClick={() => setPopover('scale')}>
+              Set scale
+            </button>
+          </div>
+        )}
         {tool === 'fill' && page && (
           <div className="tool-options">
             <label htmlFor="max-opening">Close openings up to</label>
