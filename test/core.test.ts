@@ -177,5 +177,7 @@ describe('imperial scale notes', () => {
     expect(findScaleHints('SITE PLAN 1" = 20\' and 1:100')).toEqual(['1:100', '1" = 20\'']);
     expect(findScaleHints('3/8" = 1\'-0"')).toEqual(['3/8" = 1\'-0"']);
     expect(findScaleHints('WALL 5/8" GYP. BD. = 2\'')).toEqual([]);
+    expect(findScaleHints('A-101 1/4" = 1\'-0"')).toEqual(['1/4" = 1\'-0"']);
+    expect(findScaleHints('SHEET 2 1 1/2"=1\'-0"')).toEqual(['1 1/2" = 1\'-0"']);
   });
 });

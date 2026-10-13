@@ -81,7 +81,9 @@ export function findScaleHints(text: string): string[] {
   const imperial = new Set<string>();
   const inch = `(?:"|''|\u2033|\u201d)`;
   const foot = `(?:'|\u2032|\u2019)`;
-  const re = new RegExp(`(?<![\\d/])(\\d+(?:\\s+\\d+\\/\\d+)?(?:\\/\\d+)?)\\s*${inch}\\s*=\\s*(\\d+)\\s*${foot}(?:\\s*-?\\s*0\\s*${inch})?`, 'g');
+  // The whole part of a mixed number is only ever 1 (1 1/2" = 1'-0"): a longer number
+  // before a fraction is something else (a sheet number, "A-101 1/4" = 1'-0"").
+  const re = new RegExp(`(?<![\\d/])((?:1\\s+)?\\d+\\/\\d+|\\d+)\\s*${inch}\\s*=\\s*(\\d+)\\s*${foot}(?:\\s*-?\\s*0\\s*${inch})?`, 'g');
   for (const match of text.matchAll(re)) {
     const paper = parseFraction(match[1]);
     if (!paper) continue;

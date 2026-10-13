@@ -63,3 +63,35 @@ describe('legend reading', () => {
     expect(rows[3].tagged?.length).toBe(2);
   });
 });
+
+describe('legend reading, awkward layouts', () => {
+  it('skips table headings, keeps tags inside symbols out of the label column, and stops at a second column', () => {
+    const circle = (x: number, y: number): Segment[] =>
+      Array.from({ length: 12 }, (_, i) => {
+        const a = (i / 12) * Math.PI * 2;
+        const b = ((i + 1) / 12) * Math.PI * 2;
+        return seg(x + 6 * Math.cos(a), y + 6 * Math.sin(a), x + 6 * Math.cos(b), y + 6 * Math.sin(b));
+      });
+    const segs: Segment[] = [...circle(120, 120), ...circle(120, 150), ...circle(600, 400), ...circle(700, 420)];
+    const texts: PageText[] = [
+      text('SYMBOL', 105, 95),
+      text('DESCRIPTION', 200, 95),
+      // Tags drawn inside the circles, lined up like a column.
+      text('FH', 115, 120),
+      text('SD', 115, 150),
+      text('FIRE HOSE CABINET', 200, 120),
+      text('SMOKE DETECTOR', 200, 150),
+      // A second legend column far to the right on the same lines.
+      text('DUPLEX RECEPTACLE', 330, 120),
+      text('FH', 640, 380),
+    ];
+    const rows = readLegend(texts, segs, [90, 85, 420, 165]);
+    expect(rows.map((r) => [r.label, r.kind, r.tag ?? null])).toEqual([
+      ['DESCRIPTION', null, null],
+      ['FIRE HOSE CABINET', 'count', 'FH'],
+      ['SMOKE DETECTOR', 'count', 'SD'],
+    ]);
+    expect(rows[1].found?.length).toBe(2);
+    expect(rows[1].tagged?.length).toBe(1);
+  });
+});

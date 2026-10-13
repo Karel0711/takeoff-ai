@@ -22,6 +22,8 @@ export interface LegendRow {
 
 const norm = (b: Box): Box => [Math.min(b[0], b[2]), Math.min(b[1], b[3]), Math.max(b[0], b[2]), Math.max(b[1], b[3])];
 const upright = (t: PageText) => !t.angle || Math.abs(t.angle) < 0.1;
+/** A short tag drawn with a symbol: FH, HP, SD, EX-1. */
+const TAG = /^[A-Z][A-Z0-9-]{0,5}$/;
 
 /**
  * Reads a legend boxed on the sheet. Labels are the column of text most rows start at;
@@ -29,12 +31,46 @@ const upright = (t: PageText) => !t.angle || Math.abs(t.angle) < 0.1;
  * the row's band. A wrapped label (a line with no graphic of its own) joins the row above.
  */
 export function readLegend(texts: PageText[], segs: Segment[], box: Box): LegendRow[] {
+  const rows = legendRows(texts, segs, box);
+  for (const r of rows) countRow(r, segs, box);
+  return rows;
+}
+
+/**
+ * The same, yielding between symbols so a big sheet does not freeze the page:
+ * each symbol is matched against the whole sheet.
+ */
+export async function readLegendAsync(texts: PageText[], segs: Segment[], box: Box, onProgress?: (done: number, of: number) => void): Promise<LegendRow[]> {
+  const rows = legendRows(texts, segs, box);
+  const symbols = rows.filter((r) => r.kind === 'count' && r.graphic);
+  for (const [i, r] of symbols.entries()) {
+    onProgress?.(i, symbols.length);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    countRow(r, segs, box);
+  }
+  return rows;
+}
+
+/** A symbol row's copies on the sheet, outside the legend. */
+function countRow(r: LegendRow, segs: Segment[], box: Box) {
+  if (r.kind !== 'count' || !r.graphic) return;
+  const [x0, y0, x1, y1] = norm(box);
+  const pad = 0.5;
+  const sample = sampleSymbol(segs, [r.graphic[0] - pad, r.graphic[1] - pad, r.graphic[2] + pad, r.graphic[3] + pad]);
+  if (!sample) return;
+  r.sample = sample;
+  r.found = matchSymbol(sample, segs).filter((f) => !(f.at[0] >= x0 && f.at[0] <= x1 && f.at[1] >= y0 && f.at[1] <= y1));
+}
+
+function legendRows(texts: PageText[], segs: Segment[], box: Box): LegendRow[] {
   const [x0, y0, x1, y1] = norm(box);
   const inside = texts.filter((t) => upright(t) && t.cx >= x0 && t.cx <= x1 && t.cy >= y0 && t.cy <= y1 && !/legend/i.test(t.str));
   if (!inside.length) return [];
 
-  // The label column: the left edge most text runs share (within 3 pt).
-  const lefts = inside.map((t) => t.cx - t.w / 2);
+  // The label column: the left edge most text runs share (within 3 pt). Short tags drawn in
+  // or beside the symbols (FH, SD) can line up too, so descriptions decide when there are any.
+  const described = inside.filter((t) => !TAG.test(t.str));
+  const lefts = (described.length >= 2 ? described : inside).map((t) => t.cx - t.w / 2);
   let labelX = Infinity;
   let best = 0;
   for (const l of lefts) {
@@ -54,6 +90,12 @@ export function readLegend(texts: PageText[], segs: Segment[], box: Box): Legend
     if (line) line.parts.push(t);
     else lines.push({ cy: t.cy, h: t.h, parts: [t] });
   }
+  // A line stops at a wide gap: past it is a second legend column, read when boxed on its own.
+  for (const l of lines) {
+    l.parts.sort((a, b) => a.cx - b.cx);
+    const cut = l.parts.findIndex((t, i) => i > 0 && t.cx - t.w / 2 - (l.parts[i - 1].cx + l.parts[i - 1].w / 2) > 3 * l.h);
+    if (cut > 0) l.parts = l.parts.slice(0, cut);
+  }
   lines.sort((a, b) => a.cy - b.cy);
   // A label wrapped onto a second line sits closer than the legend's rows do.
   const groups: { top: number; bottom: number; h: number; parts: PageText[] }[] = [];
@@ -69,7 +111,7 @@ export function readLegend(texts: PageText[], segs: Segment[], box: Box): Legend
   const gap = 2;
   const art = segs.filter((s) => Math.max(s.x1, s.x2) < labelX - gap && Math.min(s.x1, s.x2) >= x0 && Math.min(s.y1, s.y2) >= y0 && Math.max(s.y1, s.y2) <= y1);
 
-  const tags = inside.filter((t) => t.cx + t.w / 2 < labelX - gap && /^[A-Z][A-Z0-9-]{0,5}$/.test(t.str));
+  const tags = inside.filter((t) => t.cx + t.w / 2 < labelX - gap && TAG.test(t.str));
   const outside = (x: number, y: number) => !(x >= x0 && x <= x1 && y >= y0 && y <= y1);
   const rows: LegendRow[] = [];
   groups.forEach((line, i) => {
@@ -93,7 +135,10 @@ export function readLegend(texts: PageText[], segs: Segment[], box: Box): Legend
     const graphic: Box | null = mine.length
       ? [Math.min(...mine.map((s) => Math.min(s.x1, s.x2))), Math.min(...mine.map((s) => Math.min(s.y1, s.y2))), Math.max(...mine.map((s) => Math.max(s.x1, s.x2))), Math.max(...mine.map((s) => Math.max(s.y1, s.y2)))]
       : null;
-    const tag = tags.find((t) => t.cy >= top && t.cy <= bottom)?.str;
+    // A tag belongs to the row's graphic: inside it or just beside it (a heading is neither).
+    const near = (t: PageText) =>
+      graphic && t.cx >= graphic[0] - 3 * t.h - t.w && t.cx <= graphic[2] + 3 * t.h + t.w && t.cy >= graphic[1] - 2 * t.h && t.cy <= graphic[3] + 2 * t.h;
+    const tag = tags.find((t) => t.cy >= top && t.cy <= bottom && near(t))?.str;
     const row: LegendRow = { label, graphic, kind: graphic ? classify(mine, graphic) : null };
     if (tag) {
       row.tag = tag;
@@ -102,15 +147,6 @@ export function readLegend(texts: PageText[], segs: Segment[], box: Box): Legend
     rows.push(row);
   });
 
-  // Symbols: their copies on the sheet, outside the legend.
-  for (const r of rows) {
-    if (r.kind !== 'count' || !r.graphic) continue;
-    const pad = 0.5;
-    const sample = sampleSymbol(segs, [r.graphic[0] - pad, r.graphic[1] - pad, r.graphic[2] + pad, r.graphic[3] + pad]);
-    if (!sample) continue;
-    r.sample = sample;
-    r.found = matchSymbol(sample, segs).filter((f) => outside(f.at[0], f.at[1]));
-  }
   return rows;
 }
 

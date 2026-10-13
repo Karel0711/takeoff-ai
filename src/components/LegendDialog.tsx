@@ -23,7 +23,7 @@ export const legendCount = (r: LegendRow) => (r.found?.length ? r.found.length :
 /** The rows read from a boxed legend, to turn into takeoff types (symbols counted). */
 export function LegendDialog({ sheetName, rows, multiSheet, onAdd, onClose }: Props) {
   const [everywhere, setEverywhere] = useState(false);
-  const [draft, setDraft] = useState(() => rows.map((r) => ({ on: !!(r.graphic || r.tag), label: r.label.replace(/:$/, ''), kind: (r.kind ?? 'count') as Kind })));
+  const [draft, setDraft] = useState(() => rows.map((r) => ({ on: !!r.graphic, label: r.label.replace(/:$/, ''), kind: (r.kind ?? 'count') as Kind })));
   useEffect(() => {
     const key = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
     window.addEventListener('keydown', key);

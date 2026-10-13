@@ -11,7 +11,7 @@ import { RoomFinishesDialog } from './components/RoomFinishesDialog';
 import { QuickStartDialog } from './components/QuickStartDialog';
 import { TypeLibraryDialog } from './components/TypeLibraryDialog';
 import { LegendDialog, type LegendChoice } from './components/LegendDialog';
-import { readLegend, type LegendRow } from './fill/legend';
+import { readLegendAsync, type LegendRow } from './fill/legend';
 import { guessDivision } from './divisionGuess';
 import { ProjectsPanel } from './components/ProjectsPanel';
 import { ScalePicker } from './components/ScalePicker';
@@ -115,6 +115,10 @@ export function App() {
   const [aiDialog, setAiDialog] = useState<'assemblies' | 'settings' | 'walls' | 'rooms' | 'finishes' | 'shortcuts' | 'help' | 'library' | 'legend' | null>(null);
   /** Reading a legend: the next box dragged is the legend; then its rows, for the dialog. */
   const [legendPick, setLegendPick] = useState(false);
+  const legendPickRef = useRef(false);
+  useEffect(() => {
+    legendPickRef.current = legendPick;
+  }, [legendPick]);
   const [legend, setLegend] = useState<{ sheetId: string; rows: LegendRow[] } | null>(null);
   useEffect(() => {
     if (tool !== 'symbol') setLegendPick(false);
@@ -387,6 +391,11 @@ export function App() {
         return;
       }
       if (mod || e.altKey) return;
+      if (e.key === 'Escape' && legendPickRef.current) {
+        setLegendPick(false);
+        setTool('select');
+        return;
+      }
       if (e.key === '[' || e.key === ']') {
         // Previous / next sheet.
         const sheets = projectRef.current?.sheets ?? [];
@@ -433,8 +442,10 @@ export function App() {
         const pg = await pdf.getPage(n);
         const info = await inspectPage(pg);
         pg.cleanup();
-        // A single standard scale on the sheet is applied automatically and flagged for checking.
-        const detected = info.scaleHints.length === 1 ? info.scaleHints[0] : null;
+        // A single standard scale on the sheet is applied automatically and flagged for checking;
+        // a sheet noting its scale in both systems (1:100 and 1/8" = 1'-0") gets the project's.
+        const inUnits = info.scaleHints.filter((h) => /^1:/.test(h) === (projectRef.current?.units === 'metric'));
+        const detected = info.scaleHints.length === 1 ? info.scaleHints[0] : inUnits.length === 1 ? inUnits[0] : null;
         sheets.push({
           id: newId(),
           docId,
@@ -838,7 +849,7 @@ export function App() {
     try {
       await new Promise((r) => setTimeout(r, 30));
       const [texts, segs] = await Promise.all([pageTexts(page), segmentsOf(page)]);
-      const rows = readLegend(texts, segs, box);
+      const rows = await readLegendAsync(texts, segs, box, (i, n) => setBusy(`Reading the legend… symbol ${i + 1} of ${n}`));
       if (!rows.length) {
         setToast({ text: 'No legend lines in that box. Box the symbols together with their labels.', undo: false });
         return;
