@@ -85,7 +85,7 @@ undo/redo, and an activity log of every change.
   walls, part-hatched rooms (bulkheads, bands) as the hatched part. On the
   sample set's A6.1, one GWB-ceiling room finds 79.6 m² of GWB ceiling against
   81.7 m² in the bid workbook (A6.2: 112.9 against 127.2 m²).
-- **Count symbols (done):** pick a count type, choose **Count symbols** (S) and
+- **Count symbols (done):** pick a count type, choose **Symbols** (S) and
   drag a box around one symbol (a light fixture, a toilet, a receptacle). Every
   copy on the sheet drawn with the same lines and pens, turned or not, is
   counted. On A6.1 one box around a CAN light counts all 32 in about 0.3 s.
@@ -169,7 +169,7 @@ right. Tools sit in the title bar.
    - Area and length: click points; double-click or Return finishes. Shift keeps
      lines straight, Backspace removes the last point, Esc cancels.
    - Count: click each item.
-4. **Fill room** (R): pick an area type and click inside a room. If it leaks into
+4. **Fill** (R): pick an area type and click inside a room. If it leaks into
    the next space, lower **Close openings up to**; if it says the space isn't
    closed, raise it or draw by hand.
 5. **Automate** (title bar):
@@ -189,8 +189,10 @@ right. Tools sit in the title bar.
 6. **Find areas hatched like this**: select a hatched area (a GWB ceiling, an
    ACT grid, a tile floor) and click it on the selection card to add every
    other area on the sheet drawn with the same hatch.
-7. **Count symbols** (S): pick a count type and drag a box around one symbol to
-   count every copy on the sheet.
+7. **Symbols** (S): pick a count type and drag a box around one symbol to
+   count every copy on the sheet. **Trace** (T): pick a length type and click a
+   drawn line (a curb, roof edge, duct run, fence) to measure its whole run in
+   that pen, round corners and across dash gaps.
 8. **Cutout** (C): select an area, then draw the hole.
 9. Hover a type on the left to edit (pencil) or delete (bin) it.
 10. **Export** saves the takeoff to Excel, including the activity log.

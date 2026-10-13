@@ -8,7 +8,7 @@ import { askText, notify } from './Dialogs';
 import { Icon } from './Icons';
 import { fillRoom, type WallModel } from '../fill/roomFill';
 
-export type Tool = 'select' | 'measure' | 'calibrate' | 'cutout' | 'fill' | 'symbol';
+export type Tool = 'select' | 'measure' | 'calibrate' | 'cutout' | 'fill' | 'symbol' | 'trace';
 
 const FILL_FAILURES = {
   'on-wall': 'That click landed on a wall. Click inside the room.',
@@ -46,6 +46,8 @@ interface Props {
   onToolDone: () => void;
   /** A takeoff to bring into view; a new `n` asks again for the same one. */
   focus: { id: string; n: number } | null;
+  /** Trace line: a click on a drawn line, and how near (sheet points) counts as on it. */
+  onTrace: (at: Pt, reach: number) => void;
   /** Count by symbol: the box dragged around one symbol (x0, y0, x1, y1). */
   onFindSymbols: (box: [number, number, number, number]) => void;
 }
@@ -381,6 +383,9 @@ export function Viewer(props: Props) {
       } else {
         setDraft(next);
       }
+    } else if (tool === 'trace') {
+      if (activeType?.kind !== 'linear') return;
+      props.onTrace(toPt(e).pt, 8 / view.zoom);
     } else if (tool === 'fill') {
       if (activeType?.kind !== 'area') return;
       void fillAt(toPt(e).pt, e.shiftKey);

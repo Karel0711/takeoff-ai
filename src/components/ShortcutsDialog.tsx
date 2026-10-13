@@ -5,6 +5,7 @@ const SHORTCUTS: [string, string][] = [
   ['M', 'Measure with the chosen type'],
   ['R', 'Fill a room'],
   ['C', 'Cut a hole out of the selected area'],
+  ['T', 'Trace line: click a drawn line to measure its whole run'],
   ['S', 'Count symbols: drag a box around one symbol to count every copy'],
   ['Return or double-click', 'Finish a line or area'],
   ['Shift', 'Keep lines straight while measuring; join spaces when filling'],

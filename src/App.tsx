@@ -20,6 +20,7 @@ import { canAskClaude, readSheetName } from './ai/sheetName';
 import { describeAiError } from './ai/readLegend';
 import { findSimilar, pointInRing } from './fill/similar';
 import { matchSymbol, sampleSymbol, type SymbolSample } from './fill/symbols';
+import { traceLine } from './fill/trace';
 import { isHosted, saveFile } from './host';
 import { defaultTypes, newId, newProject, type Project, type Pt, type Sheet, type TakeoffType, type Units } from './model';
 import { inspectPage, openPdf, type PDFDocumentProxy, type PDFPageProxy } from './pdf';
@@ -44,9 +45,10 @@ interface Toast {
 const TOOLS: { id: Tool; label: string; icon: IconName; key: string; help: string }[] = [
   { id: 'select', label: 'Select', icon: 'select', key: 'V', help: 'Select, move around and delete takeoffs' },
   { id: 'measure', label: 'Measure', icon: 'measure', key: 'M', help: 'Measure with the chosen takeoff type' },
-  { id: 'fill', label: 'Fill room', icon: 'fill', key: 'R', help: 'Click inside a room to take off its area' },
+  { id: 'fill', label: 'Fill', icon: 'fill', key: 'R', help: 'Click inside a room to take off its area' },
+  { id: 'trace', label: 'Trace', icon: 'linear', key: 'T', help: 'Click a drawn line to measure the whole run' },
+  { id: 'symbol', label: 'Symbols', icon: 'count', key: 'S', help: 'Drag a box around one symbol to count every copy on the sheet' },
   { id: 'cutout', label: 'Cutout', icon: 'cutout', key: 'C', help: 'Cut a hole out of the selected area' },
-  { id: 'symbol', label: 'Count symbols', icon: 'count', key: 'S', help: 'Drag a box around one symbol to count every copy on the sheet' },
 ];
 
 export function App() {
@@ -459,6 +461,19 @@ export function App() {
     setToast({ text: `Deleted ${type?.name.split(' – ')[0] ?? 'type'}${count ? ` and ${count} takeoff${count === 1 ? '' : 's'}` : ''}`, undo: true });
   }
 
+  /** Measures the drawn line under a click, as the active length type. */
+  async function traceAt(at: Pt, reach: number) {
+    if (!page || !sheet || activeType?.kind !== 'linear') return;
+    const line = traceLine(await segmentsOf(page), at, reach);
+    if (!line) {
+      setToast({ text: 'No line there. Click right on a drawn line.', undo: false });
+      return;
+    }
+    const m = { id: newId(), sheetId: sheet.id, typeId: activeType.id, points: line, holes: [] };
+    commit((p) => ({ ...p, measurements: [...p.measurements, m] }), 'Trace line');
+    setSelectedId(m.id);
+  }
+
   /** Counts every copy of the symbol in the box, as the active count type. */
   async function countSymbols(box: [number, number, number, number]) {
     if (!page || !sheet || activeType?.kind !== 'count') return;
@@ -605,7 +620,7 @@ export function App() {
   const chooseType = (t: TakeoffType) => {
     setActiveTypeId(t.id);
     setSelectedId(null);
-    if (tool === 'select' || tool === 'calibrate' || (tool === 'fill' && t.kind !== 'area') || (tool === 'symbol' && t.kind !== 'count') || tool === 'cutout') setTool('measure');
+    if (tool === 'select' || tool === 'calibrate' || (tool === 'fill' && t.kind !== 'area') || (tool === 'symbol' && t.kind !== 'count') || (tool === 'trace' && t.kind !== 'linear') || tool === 'cutout') setTool('measure');
   };
 
   const filteredSheets = project.sheets.filter((s) => s.name.toLowerCase().includes(sheetFilter.toLowerCase()));
@@ -616,10 +631,11 @@ export function App() {
     (id === 'measure' && !activeType) ||
     (id === 'fill' && activeType?.kind !== 'area') ||
     (id === 'symbol' && activeType?.kind !== 'count') ||
+    (id === 'trace' && activeType?.kind !== 'linear') ||
     (id === 'cutout' && selectedType?.kind !== 'area');
   const toolTitle = (t: (typeof TOOLS)[number]) =>
     `${t.help} (${t.key})${
-      t.id === 'measure' && !activeType ? ' — choose a takeoff type first' : t.id === 'fill' && activeType?.kind !== 'area' ? ' — choose an area type first' : t.id === 'symbol' && activeType?.kind !== 'count' ? ' — choose a count type first' : t.id === 'cutout' && selectedType?.kind !== 'area' ? ' — select an area first' : ''
+      t.id === 'measure' && !activeType ? ' — choose a takeoff type first' : t.id === 'fill' && activeType?.kind !== 'area' ? ' — choose an area type first' : t.id === 'symbol' && activeType?.kind !== 'count' ? ' — choose a count type first' : t.id === 'trace' && activeType?.kind !== 'linear' ? ' — choose a length type first' : t.id === 'cutout' && selectedType?.kind !== 'area' ? ' — select an area first' : ''
     }`;
 
   return (
@@ -857,6 +873,7 @@ export function App() {
           onCalibrate={(mpp, label) => sheet && updateSheet(sheet.id, { metersPerPoint: mpp, scaleLabel: label, scaleSource: 'calibrated' }, 'Calibrate')}
           onToolDone={() => setTool('select')}
           onFindSymbols={(box) => void countSymbols(box)}
+          onTrace={(at, reach) => void traceAt(at, reach)}
           focus={focus}
         />
 
@@ -1225,6 +1242,9 @@ function toolHint(tool: Tool, type: TakeoffType | null, sheet: Sheet | null): st
       return 'Click points · Double-click or Return to finish · Shift keeps lines straight · Esc cancels';
     case 'calibrate':
       return 'Click both ends of a dimension you know, then type its length';
+    case 'trace':
+      if (type?.kind !== 'linear') return 'Choose a length type on the left';
+      return 'Click a drawn line · its whole run in that pen is measured, round corners and across dash gaps';
     case 'symbol':
       if (type?.kind !== 'count') return 'Choose a count type on the left';
       return 'Drag a box around one symbol · every copy on this sheet is counted, turned or not';
