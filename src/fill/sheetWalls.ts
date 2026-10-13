@@ -23,6 +23,17 @@ export function segmentsOf(page: PDFPageProxy): Promise<Segment[]> {
   return p;
 }
 
+/** A page's segments read once without keeping them (for scanning every sheet); frees the page after. */
+export async function segmentsOnce(page: PDFPageProxy): Promise<Segment[]> {
+  const cached = segmentCache.get(page);
+  if (cached) return cached;
+  const ops = await page.getOperatorList();
+  const vp = page.getViewport({ scale: 1 });
+  const segs = extractSegments(ops.fnArray, ops.argsArray, vp.transform as [number, number, number, number, number, number]);
+  page.cleanup();
+  return segs;
+}
+
 export async function wallModelFor(page: PDFPageProxy, sheet: Sheet, maxOpening: number): Promise<WallModel> {
   const key = `${sheet.metersPerPoint ?? 'none'}|${maxOpening}`;
   let byKey = modelCache.get(page);

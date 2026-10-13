@@ -90,6 +90,9 @@ undo/redo, and an activity log of every change.
   copy on the sheet drawn with the same lines and pens, turned or not, is
   counted. On A6.1 one box around a CAN light counts all 32 in about 0.3 s.
   Copies already counted as that type are skipped, so it can be run again.
+  **Count on all sheets** (on the result) looks for the same symbol on every
+  other sheet drawn at that scale: A6.1's CAN light finds 34 more on A6.2, about
+  18 s for the 51-sheet set.
 - Next: sheet titles for sheets drawn without text, scale verification.
 
 **Phase 3 — AI takeoff:** walls by type from the plan tags and PDF vector lines,

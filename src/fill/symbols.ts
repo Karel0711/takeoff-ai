@@ -50,22 +50,43 @@ const same = (s: Line, ax: number, ay: number, bx: number, by: number, width: nu
   ((Math.hypot(s.x1 - ax, s.y1 - ay) <= tol && Math.hypot(s.x2 - bx, s.y2 - by) <= tol) ||
     (Math.hypot(s.x1 - bx, s.y1 - by) <= tol && Math.hypot(s.x2 - ax, s.y2 - ay) <= tol));
 
-/**
- * Finds every copy of the symbol drawn inside `box` (x0, y0, x1, y1): the same lines,
- * in the same pens, at the same size, moved and turned by quarter turns. CAD blocks
- * repeat exactly, so a copy must have nearly all of the sample's lines.
- */
-export function findSymbols(segs: Segment[], box: [number, number, number, number], minScore = 0.85): SymbolMatch[] {
+/** A symbol taken from a sheet: its lines about its centre, ready to look for elsewhere. */
+export interface SymbolSample {
+  lines: Line[];
+  /** The box's longer side, in points. */
+  span: number;
+}
+
+/** The lines drawn wholly inside `box` (x0, y0, x1, y1), about the box centre; null when there are too few. */
+export function sampleSymbol(segs: Segment[], box: [number, number, number, number]): SymbolSample | null {
   const [x0, y0, x1, y1] = [Math.min(box[0], box[2]), Math.min(box[1], box[3]), Math.max(box[0], box[2]), Math.max(box[1], box[3])];
   const cx = (x0 + x1) / 2;
   const cy = (y0 + y1) / 2;
   const inBox = (x: number, y: number) => x >= x0 && x <= x1 && y >= y0 && y <= y1;
   // Lines too short to tell apart (dots, chord pieces under a point) are left out.
+  const lines = segs.filter((s) => len(s) >= 0.4 && inBox(s.x1, s.y1) && inBox(s.x2, s.y2));
+  if (lines.length < 2) return null;
+  return {
+    lines: lines.map((s) => ({ x1: s.x1 - cx, y1: s.y1 - cy, x2: s.x2 - cx, y2: s.y2 - cy, width: s.width })),
+    span: Math.max(x1 - x0, y1 - y0),
+  };
+}
+
+/**
+ * Finds every copy of the symbol drawn inside `box`: the same lines, in the same pens,
+ * at the same size, moved and turned by quarter turns. CAD blocks repeat exactly, so a
+ * copy must have nearly all of the sample's lines.
+ */
+export function findSymbols(segs: Segment[], box: [number, number, number, number], minScore = 0.85): SymbolMatch[] {
+  const sample = sampleSymbol(segs, box);
+  return sample ? matchSymbol(sample, segs, minScore) : [];
+}
+
+/** Every copy of a sampled symbol among a sheet's segments. */
+export function matchSymbol(sample: SymbolSample, segs: Segment[], minScore = 0.85): SymbolMatch[] {
+  const rel = sample.lines;
+  const span = sample.span;
   const lines: Line[] = segs.filter((s) => len(s) >= 0.4);
-  const sample = lines.filter((s) => inBox(s.x1, s.y1) && inBox(s.x2, s.y2));
-  if (sample.length < 2) return [];
-  const rel = sample.map((s) => ({ x1: s.x1 - cx, y1: s.y1 - cy, x2: s.x2 - cx, y2: s.y2 - cy, width: s.width }));
-  const span = Math.max(x1 - x0, y1 - y0);
   const tol = Math.max(0.35, span * 0.01);
   const index = new Index(lines, Math.max(4, span / 2));
 

@@ -15,9 +15,9 @@ import { TypeEditor } from './components/TypeEditor';
 import { Viewer, type Tool } from './components/Viewer';
 import { WallTakeoffDialog } from './components/WallTakeoffDialog';
 import { exportWorkbook } from './exportExcel';
-import { segmentsOf, wallModelFor } from './fill/sheetWalls';
+import { segmentsOf, segmentsOnce, wallModelFor } from './fill/sheetWalls';
 import { findSimilar, pointInRing } from './fill/similar';
-import { findSymbols } from './fill/symbols';
+import { matchSymbol, sampleSymbol, type SymbolSample } from './fill/symbols';
 import { isHosted, saveFile } from './host';
 import { defaultTypes, newId, newProject, type Project, type Pt, type Sheet, type TakeoffType, type Units } from './model';
 import { inspectPage, openPdf, type PDFDocumentProxy, type PDFPageProxy } from './pdf';
@@ -463,8 +463,10 @@ export function App() {
     setBusy('Looking for this symbol…');
     try {
       await new Promise((r) => setTimeout(r, 30));
-      const found = findSymbols(await segmentsOf(page), box);
-      if (!found.length) {
+      const segs = await segmentsOf(page);
+      const sample = sampleSymbol(segs, box);
+      const found = sample ? matchSymbol(sample, segs) : [];
+      if (!sample || !found.length) {
         setToast({ text: 'Nothing to match in that box. Drag it around one symbol’s linework.', undo: false });
         return;
       }
@@ -478,13 +480,52 @@ export function App() {
       }
       const added = fresh.map((f) => ({ id: newId(), sheetId: sheet.id, typeId: activeType.id, points: [f.at], holes: [] }));
       commit((p) => ({ ...p, measurements: [...p.measurements, ...added] }), 'Count symbols');
+      const typeId = activeType.id;
       setToast({
         text: `Counted ${added.length} ${activeType.name.split(' – ')[0]}${found.length > added.length ? ` (${found.length - added.length} already counted)` : ''}`,
         undo: true,
+        action: project!.sheets.length > 1 ? { label: 'Count on all sheets', run: () => void countEverywhere(sample, typeId, sheet.id) } : undefined,
       });
     } finally {
       setBusy(null);
     }
+  }
+
+  /** Counts a sampled symbol on every other sheet, as one change. */
+  async function countEverywhere(sample: SymbolSample, typeId: string, fromSheet: string) {
+    const p = projectRef.current!;
+    const type = p.types.find((t) => t.id === typeId);
+    if (!type) return;
+    const added: Project['measurements'] = [];
+    const perSheet: string[] = [];
+    try {
+      const source = p.sheets.find((x) => x.id === fromSheet);
+      // A symbol only matches at the scale it was drawn at.
+      const others = p.sheets.filter(
+        (x) => x.id !== fromSheet && !(x.metersPerPoint && source?.metersPerPoint && Math.abs(x.metersPerPoint / source.metersPerPoint - 1) > 0.01),
+      );
+      for (const [i, other] of others.entries()) {
+        setBusy(`Counting on every sheet… ${i + 1} of ${others.length}`);
+        await new Promise((r) => setTimeout(r, 0));
+        const pg = await pdfs.get(other.docId)?.getPage(other.page);
+        if (!pg) continue;
+        const counted = p.measurements.filter((m) => m.sheetId === other.id && m.typeId === typeId).map((m) => m.points[0]);
+        const fresh = matchSymbol(sample, await segmentsOnce(pg)).filter(
+          (f) => !counted.some((q) => Math.hypot(q[0] - f.at[0], q[1] - f.at[1]) < sample.span / 2),
+        );
+        if (!fresh.length) continue;
+        perSheet.push(`${other.name} ${fresh.length}`);
+        for (const f of fresh) added.push({ id: newId(), sheetId: other.id, typeId, points: [f.at], holes: [] });
+      }
+    } finally {
+      setBusy(null);
+    }
+    if (!added.length) {
+      setToast({ text: 'No copies of this symbol on the other sheets.', undo: false });
+      return;
+    }
+    commit((q) => ({ ...q, measurements: [...q.measurements, ...added] }), 'Count symbols');
+    setToast({ text: `Counted ${added.length} more ${type.name.split(' – ')[0]}: ${perSheet.slice(0, 4).join(', ')}${perSheet.length > 4 ? '…' : ''}`, undo: true });
   }
 
   /** Adds every area on the sheet hatched like the given one, as the same type. */
