@@ -34,6 +34,13 @@ nothing is uploaded anywhere.
   printed on the sheet that the AI did not return are flagged, so nothing is
   silently missed. A type whose tag already exists is updated in place and keeps
   its measurements.
+- **Score the AI (done):** after reading a legend, **Score against bid
+  workbook…** compares the result with an estimator's transcription (any
+  workbook with a `Type | Design / assembly name | Construction | Notes` table,
+  sections headed with their sheet number). It reports types found, layers read
+  exactly (sizes and spacings must match), framing spacings, overall thickness
+  and category, and lists every difference. **Download AI result** saves the raw
+  answer as JSON for deeper analysis.
 - Next: finish schedules into room types, sheet titles, scale verification.
 
 **Phase 3 — AI takeoff:** walls by type from the plan tags and PDF vector lines,

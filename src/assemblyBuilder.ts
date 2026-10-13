@@ -98,7 +98,7 @@ export function findAssemblyCodes(texts: string[]): string[] {
   const codes = new Set<string>();
   for (const t of texts) {
     const s = t.trim();
-    if (/^(?:EW|IW|W|FR|F|R|RF|C|CL|S)\d{1,2}[A-Z]?$/.test(s)) codes.add(s);
+    if (/^(?:EW|IW|W|FR|F|FW|R|RF|C|CB|CL|CW|PW|S)\d{1,2}[A-Z]?$/.test(s)) codes.add(s);
   }
   return [...codes].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
 }

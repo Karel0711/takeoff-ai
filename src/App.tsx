@@ -6,7 +6,7 @@ import { QuantityPanel } from './components/QuantityPanel';
 import { TypeEditor } from './components/TypeEditor';
 import { Viewer, type Tool } from './components/Viewer';
 import { exportWorkbook } from './exportExcel';
-import { getDownloads, isHosted } from './host';
+import { isHosted, saveFile } from './host';
 import { newId, newProject, type Project, type Pt, type Sheet, type TakeoffType, type Units } from './model';
 import { inspectPage, openPdf, type PDFDocumentProxy, type PDFPageProxy } from './pdf';
 import { typeTotals } from './quantities';
@@ -139,22 +139,9 @@ export function App() {
     try {
       const blob = await exportWorkbook(project!);
       const filename = `${project!.name.replace(/[^\w\- ]+/g, '').trim() || 'takeoff'} - takeoff.xlsx`;
-      // Hosted pages cannot start downloads themselves; the viewer confirms the save instead.
-      const downloads = await getDownloads();
-      if (downloads) {
-        try {
-          await downloads.save({ filename, data: blob });
-        } catch (e) {
-          const code = (e as { code?: string }).code;
-          if (code !== 'declined') await notify('The Excel file could not be saved here. Try again in a moment.');
-        }
-        return;
+      if ((await saveFile(filename, blob)) === 'failed') {
+        await notify('The Excel file could not be saved here. Try again in a moment.');
       }
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = filename;
-      a.click();
-      URL.revokeObjectURL(a.href);
     } finally {
       setBusy(null);
     }

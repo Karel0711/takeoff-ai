@@ -54,3 +54,27 @@ export async function getDownloads(): Promise<Downloads | null> {
 export function isSampleError(e: unknown): e is SampleError {
   return typeof e === 'object' && e !== null && typeof (e as SampleError).code === 'string';
 }
+
+export type SaveOutcome = 'saved' | 'declined' | 'failed';
+
+/**
+ * Saves a generated file. Hosted pages cannot start downloads themselves, so
+ * there the viewer confirms the save; elsewhere the browser downloads it.
+ */
+export async function saveFile(filename: string, data: Blob): Promise<SaveOutcome> {
+  const downloads = await getDownloads();
+  if (downloads) {
+    try {
+      await downloads.save({ filename, data });
+      return 'saved';
+    } catch (e) {
+      return (e as { code?: string }).code === 'declined' ? 'declined' : 'failed';
+    }
+  }
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(data);
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(a.href);
+  return 'saved';
+}

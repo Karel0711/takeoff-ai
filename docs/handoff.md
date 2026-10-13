@@ -39,7 +39,11 @@ the `downloads` capability).
 
 ## Next
 
-1. Run the AI legend reading on A0.2/A0.3 for real and tune it.
+1. Run the AI legend reading on A0.2/A0.3 for real and tune it. The scorer
+   (`src/eval/`, **Score against bid workbook…** in the review screen) grades it
+   against the estimator's "Schedules A0.2 A0.3" tab: 25 entries on A0.2 and 23 on
+   A0.3. A perfect answer scores 100% and deliberately damaged ones lose exactly
+   the expected points (checked on the real workbook).
 2. ~~Match the Excel export to the estimator's bid workbook layout~~ (done;
    formulas verified by recalculating an export in LibreOffice).
 3. Finish schedules into room types; then automatic wall and room takeoff

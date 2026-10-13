@@ -3,7 +3,11 @@ import { aiRoute, describeAiError, readLegend, type AiRoute } from '../ai/readLe
 import type { ExtractedAssembly } from '../ai/schema';
 import { buildTakeoffType, findAssemblyCodes } from '../assemblyBuilder';
 import type { Sheet, TakeoffType, Units } from '../model';
+import { readAnswerKey, type ExpectedAssembly } from '../eval/answerKey';
+import { scoreExtraction, type ScoreReport } from '../eval/score';
+import { saveFile } from '../host';
 import type { PDFPageProxy } from '../pdf';
+import { ScorePanel } from './ScorePanel';
 import { lengthUnit } from '../units';
 
 interface Props {
@@ -34,6 +38,9 @@ const CATEGORY_LABEL: Record<ExtractedAssembly['category'], string> = {
 
 const codeOf = (typeName: string) => typeName.split(' – ')[0].trim();
 
+/** The last answer-key workbook loaded, kept for this visit so each sheet can be scored without re-picking it. */
+let answerKey: { name: string; key: ExpectedAssembly[] } | null = null;
+
 export function AiAssembliesDialog({ page, sheet, units, existingTypes, onApply, onClose, onOpenSettings }: Props) {
   const [state, setState] = useState<State>({ phase: 'idle' });
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -41,6 +48,28 @@ export function AiAssembliesDialog({ page, sheet, units, existingTypes, onApply,
   const [, tick] = useState(0);
   const abort = useRef<AbortController | null>(null);
   const [route, setRoute] = useState<AiRoute | null>(null);
+  const [score, setScore] = useState<{ report: ScoreReport; keyName: string } | null>(null);
+  const [scoreError, setScoreError] = useState<string | null>(null);
+  const keyInput = useRef<HTMLInputElement>(null);
+
+  const scoreWith = (key: { name: string; key: ExpectedAssembly[] }, assemblies: ExtractedAssembly[]) => {
+    setScore({ report: scoreExtraction(key.key, assemblies, sheet.name), keyName: key.name });
+  };
+
+  async function loadKey(file: File, assemblies: ExtractedAssembly[]) {
+    setScoreError(null);
+    try {
+      const key = await readAnswerKey(await file.arrayBuffer());
+      if (!key.length) {
+        setScoreError('No assembly schedule found in that workbook (a table headed Type | Design | Construction | Notes).');
+        return;
+      }
+      answerKey = { name: file.name, key };
+      scoreWith(answerKey, assemblies);
+    } catch {
+      setScoreError('That file could not be read as an Excel workbook.');
+    }
+  }
 
   useEffect(() => {
     void aiRoute().then(setRoute);
@@ -72,6 +101,7 @@ export function AiAssembliesDialog({ page, sheet, units, existingTypes, onApply,
       const printed = findAssemblyCodes(runsText);
       const assemblies = extraction.assemblies;
       setSelected(new Set(assemblies.map((a) => a.code)));
+      if (answerKey) scoreWith(answerKey, assemblies);
       setState({ phase: 'done', assemblies, printed, answeredBy, seconds: Math.round((Date.now() - started) / 1000) });
     } catch (e) {
       if (abort.current?.signal.aborted) {
@@ -203,6 +233,37 @@ export function AiAssembliesDialog({ page, sheet, units, existingTypes, onApply,
           {unprinted.length > 0 && (
             <div className="warn">Not found in the sheet text, check these: {unprinted.join(', ')}</div>
           )}
+          <div className="row-actions">
+            <input
+              ref={keyInput}
+              id="answer-key-file"
+              type="file"
+              accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+              hidden
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) void loadKey(f, state.assemblies);
+                e.target.value = '';
+              }}
+            />
+            <button onClick={() => keyInput.current?.click()}>
+              {score ? 'Score against another workbook…' : 'Score against bid workbook…'}
+            </button>
+            <button
+              onClick={() =>
+                void saveFile(
+                  `${sheet.name} assembly types (AI).json`,
+                  new Blob([JSON.stringify({ sheet: sheet.name, answeredBy: state.answeredBy, assemblies: state.assemblies }, null, 2)], {
+                    type: 'application/json',
+                  }),
+                )
+              }
+            >
+              Download AI result
+            </button>
+          </div>
+          {scoreError && <p className="err-box">{scoreError}</p>}
+          {score && <ScorePanel report={score.report} keyName={score.keyName} />}
         </div>
 
         <div className="assembly-list">
