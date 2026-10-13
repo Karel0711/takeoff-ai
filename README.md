@@ -6,6 +6,10 @@ nothing is uploaded anywhere.
 
 ## Status
 
+**Interface:** a light, Mac-style window: segmented tools, a scale picker with
+metric and imperial scales on every sheet, a Takeoffs list for quick deletes,
+undo/redo, and an activity log of every change.
+
 **Phase 1 — manual takeoff (done)**
 
 - Upload PDF drawing sets; every page becomes a sheet.
@@ -96,26 +100,42 @@ sheet takes one to three minutes.
 
 ## Using it
 
-1. **Upload drawings** (top right). Sheets appear on the left with their scale.
-2. Pick a sheet. If its scale says *no scale* or *verify*, choose one from the
-   **Scale** menu or use **Calibrate**: click both ends of a known dimension and
-   type its length (`3.5`, `3500mm`, `12'6"`).
-3. Click a **takeoff type** on the left, then click on the drawing:
-   - Area / linear: click points, double-click or press Enter to finish.
-     Hold Shift for straight lines, Backspace removes the last point, Esc cancels.
-   - Count: click each item.
-4. To take a room's area in one click: pick an area type, **Fill room**, click
-   inside the room. If it leaks into the next space, lower **Close openings up
-   to**; if it says the space isn't closed, raise it or draw by hand.
-5. To measure walls by type: set the scale, **✦ Wall takeoff**, check the lengths
-   and where each type goes, **Add**. Running it again on a sheet replaces its
-   earlier wall takeoff.
-6. To cut a hole out of an area: **Select**, click the area, **Cutout**, draw the hole.
-7. Click ✎ on a type to edit its name, height and assembly formulas.
-8. **Export Excel** when done.
+The window works like a Mac document: sheets and takeoff types on the left, the
+drawing in the middle, and an inspector (Quantities, Takeoffs, History) on the
+right. Tools sit in the title bar.
 
-Navigation: scroll to zoom, drag (in Select mode), middle-drag or Space-drag to
-pan, F to fit the sheet. Delete removes the selected measurement.
+1. **Add drawings** (title bar). Every PDF page becomes a sheet, named from its
+   title block, with its scale read from the sheet where it can be.
+2. Pick a sheet. The **scale pill** in the title bar shows its scale; an amber
+   **Check** means it was read from the sheet. Click it to pick any metric or
+   imperial scale (whatever the project's units), type another one (`1:150`,
+   `3/32" = 1'-0"`), or **Calibrate from a dimension**: click both ends of a
+   known dimension and type its length (`3.5`, `3500mm`, `12'6"`).
+3. Click a **takeoff type** on the left, then **Measure** (M):
+   - Area and length: click points; double-click or Return finishes. Shift keeps
+     lines straight, Backspace removes the last point, Esc cancels.
+   - Count: click each item.
+4. **Fill room** (R): pick an area type and click inside a room. If it leaks into
+   the next space, lower **Close openings up to**; if it says the space isn't
+   closed, raise it or draw by hand.
+5. **Wall takeoff**: on a plan with a scale, measures every tagged wall by type;
+   check the lengths and where each type goes, then **Add**. Running it again on
+   a sheet replaces its earlier wall takeoff.
+6. **Cutout** (C): select an area, then draw the hole.
+7. Hover a type on the left to edit (pencil) or delete (bin) it.
+8. **Export** saves the takeoff to Excel, including the activity log.
+
+Deleting: select a takeoff and press Delete, use **Delete takeoff** on the
+selection card, or open **Takeoffs** in the inspector to delete one row, a whole
+type or everything on the sheet. Every delete shows an **Undo** button;
+⌘Z / ⇧⌘Z undo and redo (200 steps).
+
+History: every takeoff, type, scale and drawing change is recorded with its time,
+sheet and quantity, saved in the browser's database beside the project, shown in
+the **History** tab and exported as the **Activity** sheet.
+
+Navigation: scroll to zoom, drag or Space-drag to pan, F fits the sheet.
+**More → Keyboard shortcuts** lists them all.
 
 ### Assembly formula variables
 

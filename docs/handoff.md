@@ -46,6 +46,12 @@ Where the project stands, for picking it up in a new session.
   junctions; tag symbols are the closed loop around the text (per pen, so
   furniture under a tag does not confuse it) and leaders run from a symbol
   corner; types carry by kind (partition, exterior, furring, foundation).
+- **Interface (redesigned):** light, Mac-style (system font, segmented tools,
+  source-list sidebar, inspector with Quantities / Takeoffs / History). State
+  changes go through `commit()` in `App.tsx`, which keeps undo/redo stacks and
+  diffs each change into the activity log (`src/activity.ts`, saved under the
+  `activity` key in IndexedDB, exported as the Activity sheet). Typing in one
+  field within 4 s counts as one change.
 - **Not yet verified:** the real model's extraction quality on real sheets. The
   end-to-end tests intercepted the AI call with a hand-written answer.
 
