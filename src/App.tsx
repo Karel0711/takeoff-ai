@@ -72,8 +72,8 @@ interface Toast {
   action?: { label: string; run: () => void };
   /** Stay until dismissed. */
   sticky?: boolean;
-  /** For Undo: the project as the change left it. Once anything else changes it, Undo would undo that instead. */
-  after?: Project;
+  /** For Undo: the history count the change left. After another change, undo or redo, Undo would undo something else. */
+  after?: number;
 }
 
 const TOOLS: { id: Tool; label: string; icon: IconName; key: string; help: string }[] = [
@@ -92,6 +92,8 @@ export function App() {
   const future = useRef<Project[]>([]);
   const lastCommit = useRef<{ key: string; at: number; batch: string } | null>(null);
   const [, setHistoryTick] = useState(0);
+  /** Counts commits, undos and redos: a toast's Undo belongs to the count it was shown at. */
+  const historyRev = useRef(0);
   const [activity, setActivity] = useState<ActivityEvent[]>([]);
   const activityRef = useRef<ActivityEvent[]>([]);
 
@@ -121,8 +123,8 @@ export function App() {
   const [toast, setToastState] = useState<Toast | null>(null);
   /** The latest chooseTool, for the keyboard handler. */
   const chooseToolRef = useRef<(id: Tool) => void>(() => {});
-  // A toast's Undo belongs to the change just made, which is the project as it is now.
-  const setToast = useCallback((t: Toast | null) => setToastState(t?.undo ? { ...t, after: projectRef.current ?? undefined } : t), []);
+  // A toast's Undo belongs to the change just made, the latest in the history.
+  const setToast = useCallback((t: Toast | null) => setToastState(t?.undo ? { ...t, after: historyRev.current } : t), []);
   const [sheetFilter, setSheetFilter] = useState('');
   const [aiDialog, setAiDialog] = useState<'assemblies' | 'settings' | 'walls' | 'rooms' | 'finishes' | 'shortcuts' | 'help' | 'library' | 'legend' | null>(null);
   /** Reading a legend: the next box dragged is the legend; then its rows, for the dialog. */
@@ -163,6 +165,8 @@ export function App() {
     past.current = [];
     future.current = [];
     lastCommit.current = null;
+    // A new history: no toast from the last project can undo anything here.
+    historyRev.current++;
     activityRef.current = log;
     setActivity(log);
     setPdfs(opened);
@@ -356,6 +360,7 @@ export function App() {
       future.current = [];
       projectRef.current = next;
       setProject(next);
+      historyRev.current++;
       setHistoryTick((n) => n + 1);
     },
     [record],
@@ -371,6 +376,7 @@ export function App() {
     projectRef.current = prev;
     setProject(prev);
     setSelectedId(null);
+    historyRev.current++;
     setHistoryTick((n) => n + 1);
   }, [record]);
 
@@ -383,6 +389,7 @@ export function App() {
     lastCommit.current = null;
     projectRef.current = next;
     setProject(next);
+    historyRev.current++;
     setHistoryTick((n) => n + 1);
   }, [record]);
 
@@ -459,6 +466,7 @@ export function App() {
    * type) takes the first type of that kind, and says so, rather than doing nothing.
    */
   function chooseTool(id: Tool) {
+    if (!page) return;
     const need: Kind | null = id === 'fill' ? 'area' : id === 'symbol' ? 'count' : id === 'trace' ? 'linear' : null;
     const current = projectRef.current?.types.find((t) => t.id === activeTypeId);
     if ((need && current?.kind !== need) || (id === 'measure' && !current)) {
@@ -469,7 +477,8 @@ export function App() {
         return;
       }
       setActiveTypeId(pick.id);
-      setToast({ text: `Taking off as ${pick.name}. Pick another type on the left to change it.`, undo: false });
+      // A note, so it doesn't take the place of a toast that can still undo something.
+      if (!(toast?.undo && toast.after === historyRev.current)) setToast({ text: `Taking off as ${pick.name}. Pick another type on the left to change it.`, undo: false });
     }
     setTool(id);
   }
@@ -1847,7 +1856,7 @@ export function App() {
                 Later
               </button>
             )}
-            {toast.undo && toast.after === project && (
+            {toast.undo && toast.after === historyRev.current && (
               <button
                 onClick={() => {
                   undo();
@@ -2214,7 +2223,8 @@ export function App() {
             setLegend(null);
           }}
           multiSheet={project.sheets.length > 1}
-          existing={project.types}
+          // Only types in use: an unused starter W1 counts nothing twice.
+          existing={project.types.filter((t) => project.measurements.some((m) => m.typeId === t.id || Object.values(m.finishes ?? {}).includes(t.id)))}
           onAdd={(choices, everywhere) => {
             setAiDialog(null);
             setLegend(null);

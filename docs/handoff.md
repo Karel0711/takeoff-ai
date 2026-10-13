@@ -201,8 +201,10 @@ Where the project stands, for picking it up in a new session.
     (scales read, sheets without text), quiet scale verification when a sheet
     opens, build version in Quick start (`__BUILD__` from `vite.config.ts`).
   - **First-time-sub pass** (a walkthrough audit at 1280 and 1440 px):
-    - A toast's Undo shows only while the project is still as that change left it
-      (`Toast.after`); before, Undo after ⌘Z undid an older change.
+    - A toast's Undo shows only while its change is the latest in the history
+      (`Toast.after` against `historyRev`, which commits, undo, redo and opening
+      a project advance; the quiet scale verification does not). Before, Undo
+      after ⌘Z undid an older change.
     - Tools are never greyed out for want of a type: `chooseTool()` takes the
       first type of the kind the tool needs and says so.
     - Select, Measure, Fill and Symbols keep their labels down to 1260 px; Trace

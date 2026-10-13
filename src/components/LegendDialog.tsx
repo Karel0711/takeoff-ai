@@ -13,7 +13,7 @@ interface Props {
   rows: LegendRow[];
   /** Whether the project has other sheets to count the symbols on. */
   multiSheet: boolean;
-  /** The project's types, to spot a line whose code is already one (ACT-1 read from a finish schedule). */
+  /** The types in use, to spot a line whose code is already one (ACT-1 read from a finish schedule). */
   existing: TakeoffType[];
   onAdd: (choices: LegendChoice[], everywhere: boolean) => void;
   onClose: () => void;
