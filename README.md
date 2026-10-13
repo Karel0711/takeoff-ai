@@ -67,7 +67,23 @@ undo/redo, and an activity log of every change.
   at, up to the walls that meet it, flagged "check". Partitions can be measured
   through door openings or not (exterior walls always run through openings). **Score against bid
   workbook…** compares lengths per type with the workbook's rows for that sheet.
-- Next: finish schedules into room types, sheet titles, scale verification.
+- **Room finishes (done):** **Automate › Room finishes** lists every room
+  takeoff with a floor, base, walls and ceiling type each. The room's area
+  counts toward its floor and ceiling types, its perimeter toward base and
+  walls (walls × the wall type's height), in the quantities and the Excel
+  export. Set finishes room by room or for several rooms at once, make a new
+  finish type from its code (CPT-1, RB-1, ACT-1), or **Read finish schedule**
+  to fill them from a room finish schedule on the drawings (a table with a
+  room number column and floor, base, walls or ceiling columns).
+- **Find areas hatched like this (done):** select an area on a reflected
+  ceiling plan or a finish plan and click **Find areas hatched like this**.
+  The sample's hatch (stipple dots, a ceiling tile grid, hatch lines) is found
+  from the PDF's linework, every space the walls enclose is checked, and each
+  one carrying that hatch is added as the same type: whole rooms to their
+  walls, part-hatched rooms (bulkheads, bands) as the hatched part. On the
+  sample set's A6.1, one GWB-ceiling room finds 79.6 m² of GWB ceiling against
+  81.7 m² in the bid workbook (A6.2: 112.9 against 127.2 m²).
+- Next: sheet titles for sheets drawn without text, scale verification.
 
 **Phase 3 — AI takeoff:** walls by type from the plan tags and PDF vector lines,
 rooms with finishes, all as suggestions you accept or correct.
@@ -151,10 +167,17 @@ right. Tools sit in the title bar.
      as named areas ("112 RECEIVING & GEN. STORAGE") on the area type you
      choose. Room numbers repeated on a second plan count once; tags in one open
      space share it.
+   - **Room finishes**: floor, base, walls and ceiling for every room, picked
+     per room, set for a selection, or read from a finish schedule.
    Running wall or room takeoff again on a sheet replaces its earlier results.
-6. **Cutout** (C): select an area, then draw the hole.
-7. Hover a type on the left to edit (pencil) or delete (bin) it.
-8. **Export** saves the takeoff to Excel, including the activity log.
+   Rooms go under a **Rooms** type; their finishes carry the floor and ceiling
+   areas, so nothing is counted twice.
+6. **Find areas hatched like this**: select a hatched area (a GWB ceiling, an
+   ACT grid, a tile floor) and click it on the selection card to add every
+   other area on the sheet drawn with the same hatch.
+7. **Cutout** (C): select an area, then draw the hole.
+8. Hover a type on the left to edit (pencil) or delete (bin) it.
+9. **Export** saves the takeoff to Excel, including the activity log.
 
 Deleting: select a takeoff and press Delete, use **Delete takeoff** on the
 selection card, or open **Takeoffs** in the inspector to delete one row, a whole

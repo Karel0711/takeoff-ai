@@ -53,6 +53,28 @@ Where the project stands, for picking it up in a new session.
   junctions; tag symbols are the closed loop around the text (per pen, so
   furniture under a tag does not confuse it) and leaders run from a symbol
   corner; types carry by kind (partition, exterior, furring, foundation).
+- **Room finishes:** `Measurement.finishes` maps floor/base/walls/ceiling to
+  takeoff types; `contributions()` in `src/quantities.ts` adds each room to its
+  finish types (area for floor and ceiling, perimeter for base and walls) and
+  everything (quantities, Excel division rows, Measurements sheet) reads from
+  it. `src/finishSchedule.ts` reads a room finish schedule from sheet text (no
+  sample in this drawing set; tested on a synthetic table).
+- **Hatch match (ceilings, finish plans):** `src/fill/marks.ts` groups segments
+  into shapes (subpaths) with a class (pen, dot / line at an angle / shape
+  size; filled lettering is excluded); `src/fill/similar.ts` picks the class
+  many times denser inside the sample than on the sheet (lines weigh by
+  length; a perpendicular line class of the same pen joins it as a grid),
+  labels every space the walls enclose on one sheet-wide raster, takes spaces
+  the pattern covers (≥50% of cells, ≥35% of the sample's density) to their
+  walls with `fillRoom`, and outlines partly hatched spaces (dot patterns only).
+  The RCPs here (A6.1/A6.2, PDF pages 34–35) have no text layer (text is drawn
+  as outlines), so their sheet names read "Page 34/35" and tags can't be read.
+  GWB ceiling (stipple, pen 0.54 dots): A6.1 79.6 vs 81.7 m² workbook, A6.2
+  112.9 vs 127.2. ACT grid (0.30 lines) finds the matching rooms plus a false
+  hit over the entry stair. RCP walls are 1.44 (exterior) and 0.84 (interior),
+  so wall pen detection now keeps every paired pen ≥55% of the heaviest and
+  relaxes the paired share to 40% when no pen reaches 50% (the 1.44 pen also
+  draws the sheet border).
 - **Interface (redesigned):** light, Mac-style (system font, segmented tools,
   source-list sidebar, inspector with Quantities / Takeoffs / History). State
   changes go through `commit()` in `App.tsx`, which keeps undo/redo stacks and
