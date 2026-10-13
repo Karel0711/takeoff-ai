@@ -21,7 +21,7 @@ import { canAskClaude, readSheetName } from './ai/sheetName';
 import { describeAiError } from './ai/readLegend';
 import { findPatternOn, findSimilar, pointInRing, type Pattern } from './fill/similar';
 import { buildWallModel } from './fill/roomFill';
-import { findDoorTags } from './fill/rooms';
+import { findDoorTags, findRoomLabels } from './fill/rooms';
 import type { Segment } from './fill/vectors';
 import { matchSymbol, sampleSymbol, type SymbolSample } from './fill/symbols';
 import { traceLine } from './fill/trace';
@@ -653,18 +653,46 @@ export function App() {
     }
   }
 
-  /** Counts every door tag on the sheet, named by its number; prefixed tags (S114A) by prefix. */
-  async function countDoorTags() {
+  /**
+   * Counts door tags, named by their number; prefixed tags (S114A) by prefix. On every
+   * sheet, a door number counts once in the project (enlarged plans repeat tags), on the
+   * first sheet it appears.
+   */
+  async function countDoorTags(everywhere = false) {
     if (!page || !sheet) return;
     setBusy('Finding door tags…');
     try {
-      const [texts, segs] = await Promise.all([pageTexts(page), segmentsOf(page)]);
-      const tags = findDoorTags(texts, segs);
-      if (!tags.length) {
-        setToast({ text: 'No door tags on this sheet. A door tag is a door number in an oval, circle or hexagon.', undo: false });
+      const p = projectRef.current!;
+      const found: { sheetId: string; tags: ReturnType<typeof findDoorTags> }[] = [];
+      const targets = everywhere ? p.sheets : [sheet];
+      for (const [i, x] of targets.entries()) {
+        if (everywhere) setBusy(`Finding door tags… sheet ${i + 1} of ${targets.length}`);
+        const pg = x.id === sheet.id ? page : await pdfs.get(x.docId)?.getPage(x.page);
+        if (!pg) continue;
+        const segs = x.id === sheet.id ? await segmentsOf(pg) : await segmentsOnce(pg);
+        const texts = await pageTexts(pg);
+        let tags = findDoorTags(texts, segs);
+        if (x.id !== sheet.id) {
+          // Elevations and sections carry level markers (4000, 8570) in ovals that look
+          // like door tags. Door numbers follow the room numbers (door 113A by room 113),
+          // so on other sheets only tags in the sheet's room-number range count, and only
+          // on sheets with a plan's worth of them.
+          const rooms = findRoomLabels(texts, segs).map((r) => parseInt(r.number.replace(/^\D/, ''), 10));
+          if (!rooms.length) continue;
+          const [lo, hi] = [Math.min(...rooms) - 20, Math.max(...rooms) + 20];
+          tags = tags.filter((d) => {
+            const n = parseInt(d.number.replace(/^\D/, ''), 10);
+            return n >= lo && n <= hi;
+          });
+          if (tags.length < 4) continue;
+        }
+        found.push({ sheetId: x.id, tags });
+      }
+      const total = found.reduce((n, f) => n + f.tags.length, 0);
+      if (!total) {
+        setToast({ text: `No door tags on ${everywhere ? 'any sheet' : 'this sheet'}. A door tag is a door number in an oval, circle or hexagon.`, undo: false });
         return;
       }
-      const p = projectRef.current!;
       const newTypes: TakeoffType[] = [];
       const typeFor = (prefix: string): string => {
         const name = prefix ? `${prefix} – Openings tagged ${prefix}` : 'Doors';
@@ -682,20 +710,30 @@ export function App() {
         newTypes.push(t);
         return t.id;
       };
-      // Doors already counted on this sheet under their number are left alone.
-      const counted = new Set(p.measurements.filter((m) => m.sheetId === sheet.id && m.label).map((m) => `${m.typeId}|${m.label}`));
-      const added = tags.flatMap((d) => {
-        const typeId = typeFor(/^[A-Z]/.test(d.number) ? d.number[0] : '');
-        return counted.has(`${typeId}|${d.number}`) ? [] : [{ id: newId(), sheetId: sheet.id, typeId, points: [d.at], holes: [], label: d.number }];
-      });
+      // Doors already counted under their number are left alone: on this sheet, or anywhere when counting every sheet.
+      const counted = new Set(p.measurements.filter((m) => m.label && (everywhere || m.sheetId === sheet.id)).map((m) => `${m.typeId}|${m.label}`));
+      const added = found.flatMap(({ sheetId, tags }) =>
+        tags.flatMap((d) => {
+          const typeId = typeFor(/^[A-Z]/.test(d.number) ? d.number[0] : '');
+          const key = `${typeId}|${d.number}`;
+          if (counted.has(key)) return [];
+          counted.add(key);
+          return [{ id: newId(), sheetId, typeId, points: [d.at], holes: [], label: d.number }];
+        }),
+      );
       if (!added.length) {
-        setToast({ text: `All ${tags.length} door tags on this sheet are already counted.`, undo: false });
+        setToast({ text: `All ${total} door tags ${everywhere ? 'on the drawings' : 'on this sheet'} are already counted.`, undo: false });
         return;
       }
       const used = new Set(added.map((m) => m.typeId));
       commit((q) => ({ ...q, types: [...q.types, ...newTypes.filter((t) => used.has(t.id))], measurements: [...q.measurements, ...added] }), 'Door tags');
       const byType = [...used].map((id) => `${added.filter((m) => m.typeId === id).length} ${([...p.types, ...newTypes].find((t) => t.id === id)?.name ?? '').split(' – ')[0]}`);
-      setToast({ text: `Counted ${byType.join(', ')}`, undo: true });
+      const sheets = new Set(added.map((m) => m.sheetId)).size;
+      setToast({
+        text: `Counted ${byType.join(', ')}${everywhere ? ` on ${sheets} sheet${sheets === 1 ? '' : 's'}` : ''}`,
+        undo: true,
+        action: !everywhere && p.sheets.length > 1 ? { label: 'Count on all sheets', run: () => void countDoorTags(true) } : undefined,
+      });
     } catch (e) {
       setToast({ text: `Something went wrong: ${e instanceof Error ? e.message : String(e)}`, undo: false });
     } finally {

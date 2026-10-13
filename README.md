@@ -208,7 +208,9 @@ right. Tools sit in the title bar.
      circle or hexagon) as a door named by its number; tags with a letter
      prefix (S114A screens) are counted under their own type. A2.1: 15 doors and
      1 screen; A2.2: 18 doors and 8 screens. Run again, it skips doors already
-     counted.
+     counted. **Count on all sheets** adds the other plans (a door number counts
+     once in the project; on other sheets only tags in that sheet's room-number
+     range count, so level markers on sections and elevations are left out).
    - **Room finishes**: floor, base, walls and ceiling for every room, picked
      per room, set for a selection, or read from a finish schedule.
    Running wall or room takeoff again on a sheet replaces its earlier results.
