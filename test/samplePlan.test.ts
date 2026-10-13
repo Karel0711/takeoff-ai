@@ -114,4 +114,23 @@ describe('sample plan', () => {
     const gwb = findSimilar(segs, model, lobby.points!, vp.width, vp.height);
     expect(gwb.areas.map((a) => +(a.area * mpp * mpp).toFixed(1))).toEqual([30.7]);
   }, 60000);
+
+  it('fills rooms and takes off walls drawn as solid poché, with no outlines', async () => {
+    const doc = await getDocument({ data: await samplePlanPdf('metric', { walls: 'poche' }) }).promise;
+    const page = (await doc.getPage(1)) as unknown as PDFPageProxy;
+    const mpp = parseScale('1:100')!;
+    const vp = page.getViewport({ scale: 1 });
+    const ops = await page.getOperatorList();
+    const segs = extractSegments(ops.fnArray, ops.argsArray, vp.transform as never);
+    const texts = await pageTexts(page);
+    const model = buildWallModel(segs, mpp);
+    expect(model.pens).toEqual(['fill']);
+    const rooms = fillRooms(model, findRoomLabels(texts, segs), vp.width, vp.height);
+    const areas = Object.fromEntries(rooms.map((r) => [r.labels[0].number, +(ringArea(r.points ?? []) * mpp * mpp).toFixed(1)]));
+    expect(areas).toEqual({ '101': 62.9, '102': 30.7, '103': 30.7, '104': 30.7, '105': 30.7 });
+    const sheet = { id: 's', docId: 'd', page: 1, name: 'A1.01', width: vp.width, height: vp.height, metersPerPoint: mpp, scaleLabel: '1:100', scaleSource: 'preset', scaleHints: [] } as Sheet;
+    const walls = lengthsByType((await sheetWallTakeoff(page, sheet, 3, true)).runs, mpp);
+    expect(Math.round(walls.get('EW1')?.length ?? 0)).toBe(58);
+    expect(Math.round(walls.get('W1')?.length ?? 0)).toBe(34);
+  }, 60000);
 });

@@ -58,7 +58,8 @@ function overlap(a: Segment, b: Segment, ux: number, uy: number): number {
 export function penStats(segs: Segment[], minGap: number, maxGap: number): PenStats[] {
   const byPen = new Map<string, Segment[]>();
   for (const s of segs) {
-    if (s.filled || len(s) < 1) continue;
+    // Filled shapes count together as one "pen": walls drawn as solid poché with no outline.
+    if (len(s) < 1) continue;
     const k = widthKey(s);
     const list = byPen.get(k);
     if (list) list.push(s);
@@ -104,7 +105,15 @@ export function penStats(segs: Segment[], minGap: number, maxGap: number): PenSt
  * as heavy that pairs as well (some offices draw exterior walls heavier still).
  */
 export function detectWallPens(stats: PenStats[]): string[] {
-  const most = Math.max(0, ...stats.map((s) => s.paired));
+  const stroked = detectStrokedPens(stats);
+  if (stroked.length) return stroked;
+  // No outlined walls: walls drawn as solid fills only (poché), when the fills pair like walls.
+  const fill = stats.find((s) => s.key === 'fill');
+  return fill && fill.paired > 0 && fill.paired / fill.length >= 0.4 ? ['fill'] : [];
+}
+
+function detectStrokedPens(stats: PenStats[]): string[] {
+  const most = Math.max(0, ...stats.filter((s) => s.key !== 'fill').map((s) => s.paired));
   if (most === 0) return [];
   // Wall pens draw mostly in parallel pairs. A sheet border or title block in the same pen
   // can pull its share down, so a looser share is accepted when no pen passes.

@@ -9,13 +9,14 @@ import type { Units } from './model';
  * A second sheet is its reflected ceiling plan: an ACT grid, a GWB stipple, downlights and
  * a ceiling legend.
  */
-export async function samplePlanPdf(units: Units = 'metric'): Promise<Uint8Array> {
+export async function samplePlanPdf(units: Units = 'metric', options: { walls?: 'lines' | 'poche' } = {}): Promise<Uint8Array> {
+  const poche = options.walls === 'poche';
   const doc = await PDFDocument.create();
   doc.setTitle('Takeoff sample plan');
   const font = await doc.embedFont(StandardFonts.Helvetica);
   const bold = await doc.embedFont(StandardFonts.HelveticaBold);
-  drawPlan(doc.addPage([W, H]), font, bold, units, false);
-  drawPlan(doc.addPage([W, H]), font, bold, units, true);
+  drawPlan(doc.addPage([W, H]), font, bold, units, false, poche);
+  drawPlan(doc.addPage([W, H]), font, bold, units, true, poche);
   return doc.save();
 }
 
@@ -37,7 +38,8 @@ const ink = rgb(0, 0, 0);
 const WALL = 0.7;
 const THIN = 0.25;
 
-function drawPlan(page: PDFPage, font: PDFFont, bold: PDFFont, units: Units, ceiling: boolean) {
+/** `poche`: walls as solid filled shapes with no outline, as some exports draw them. */
+function drawPlan(page: PDFPage, font: PDFFont, bold: PDFFont, units: Units, ceiling: boolean, poche = false) {
   const metric = units === 'metric';
   const K = metric ? 72 / 0.0254 / 100 : 9 * FT_PER_UNIT;
   const label = (len: number) => (metric ? String(Math.round(len * 1000)) : feetInches(len * FT_PER_UNIT));
@@ -49,6 +51,7 @@ function drawPlan(page: PDFPage, font: PDFFont, bold: PDFFont, units: Units, cei
     page.drawLine({ start: { x: px(x1), y: py(y1) }, end: { x: px(x2), y: py(y2) }, thickness, color: ink });
   /** A straight wall face from `a` to `b` along a fixed x or y, skipping the gaps. */
   const face = (vertical: boolean, at: number, a: number, b: number, gaps: [number, number][] = []) => {
+    if (poche) return;
     let from = a;
     for (const [g0, g1] of [...gaps].sort((p, q) => p[0] - q[0])) {
       if (g0 > from) (vertical ? line(at, from, at, g0) : line(from, at, g0, at));
@@ -79,7 +82,7 @@ function drawPlan(page: PDFPage, font: PDFFont, bold: PDFFont, units: Units, cei
   face(false, 11 - t, t, 18 - t, [[6 - p, 6 + p], [12 - p, 12 + p], entry]);
   face(true, t, t, 11 - t, [[5.5 - p, 5.5 + p]]);
   face(true, 18 - t, t, 11 - t, [[5.5 - p, 5.5 + p]]);
-  for (const x of entry) line(x, 11 - t, x, 11 + t);
+  if (!poche) for (const x of entry) line(x, 11 - t, x, 11 + t);
 
   // Partitions, 150 thick: two across the building, and one splitting each side.
   const doorsAt: [number, number][] = [
@@ -91,10 +94,27 @@ function drawPlan(page: PDFPage, font: PDFFont, bold: PDFFont, units: Units, cei
     const inner = x === 6 ? x + p : x - p;
     face(true, outer, t, 11 - t, [...doorsAt, [5.5 - p, 5.5 + p]]);
     face(true, inner, t, 11 - t, doorsAt);
-    for (const [d0, d1] of doorsAt) {
+    for (const [d0, d1] of poche ? [] : doorsAt) {
       line(x - p, d0, x + p, d0);
       line(x - p, d1, x + p, d1);
     }
+  }
+  if (poche) {
+    const solid = (x0: number, y0: number, x1: number, y1: number) =>
+      page.drawRectangle({ x: px(x0), y: py(y1), width: (x1 - x0) * K, height: (y1 - y0) * K, color: ink });
+    solid(-t, -t, 18 + t, t);
+    solid(-t, 11 - t, entry[0], 11 + t);
+    solid(entry[1], 11 - t, 18 + t, 11 + t);
+    // Side walls between the top and bottom ones, so the pieces only meet, not overlap.
+    solid(-t, t, t, 11 - t);
+    solid(18 - t, t, 18 + t, 11 - t);
+    for (const x of [6, 12]) {
+      solid(x - p, t, x + p, doorsAt[0][0]);
+      solid(x - p, doorsAt[0][1], x + p, doorsAt[1][0]);
+      solid(x - p, doorsAt[1][1], x + p, 11 - t);
+    }
+    solid(t, 5.5 - p, 6 - p, 5.5 + p);
+    solid(12 + p, 5.5 - p, 18 - t, 5.5 + p);
   }
   face(false, 5.5 - p, t, 6 - p);
   face(false, 5.5 + p, t, 6 - p);
