@@ -486,11 +486,11 @@ export function App() {
       // What is ready: scales read, and sheets the automatic tools can't read.
       const scaled = sheets.filter((x) => x.metersPerPoint).length;
       const parts = [
-        `${sheets.length} sheet${sheets.length === 1 ? '' : 's'} from ${file.name}`,
-        scaled === sheets.length ? 'every scale read' : `${scaled} with the scale read, ${sheets.length - scaled} to set`,
-        ...(noText ? [`${noText} without text (scanned, or text drawn as shapes): tags and schedules can't be read there`] : []),
+        `Added ${sheets.length} sheet${sheets.length === 1 ? '' : 's'}`,
+        scaled === sheets.length ? 'every scale read' : `${scaled} scales read, ${sheets.length - scaled} to set`,
+        ...(noText ? [`${noText} without text (tags can't be read there)`] : []),
       ];
-      setToast({ text: `Added ${parts.join('; ')}.`, undo: false });
+      setToast({ text: `${parts.join(' · ')}`, undo: false });
       await offerRevision(sheets);
     }
     setBusy(null);
