@@ -55,7 +55,7 @@ function overlap(a: Segment, b: Segment, ux: number, uy: number): number {
  * only counts where the shared run is at least twice the gap (walls are long
  * and thin; tags are about as long as they are wide).
  */
-export function penStats(segs: Segment[], minGap: number, maxGap: number): PenStats[] {
+export function penStats(segs: Segment[], minGap: number, maxGap: number, join = false): PenStats[] {
   const byPen = new Map<string, Segment[]>();
   for (const s of segs) {
     // Filled shapes count together as one "pen": walls drawn as solid poché with no outline.
@@ -66,9 +66,12 @@ export function penStats(segs: Segment[], minGap: number, maxGap: number): PenSt
     else byPen.set(k, [s]);
   }
   const out: PenStats[] = [];
-  for (const [key, list] of byPen) {
+  for (const [key, pieces] of byPen) {
+    // Some exports break lines at every crossing: then score the joined runs, not the pieces.
+    // Only as a fallback: joined hatch rows pair like walls too.
+    const list = join && pieces.length <= 50000 ? joinCollinear(pieces) : pieces;
     const length = list.reduce((n, s) => n + len(s), 0);
-    if (list.length < 20 || list.length > 50000) {
+    if (pieces.length < 20 || list.length > 50000) {
       out.push({ key, segments: list.length, length, paired: 0 });
       continue;
     }
@@ -96,6 +99,64 @@ export function penStats(segs: Segment[], minGap: number, maxGap: number): PenSt
     out.push({ key, segments: list.length, length, paired });
   }
   return out.sort((a, b) => b.paired - a.paired);
+}
+
+/** Collinear pieces that touch or overlap, joined into one segment each (for scoring only). */
+export function joinCollinear(segs: Segment[]): Segment[] {
+  const groups = new Map<string, { t0: number; t1: number; s: Segment }[]>();
+  const out: Segment[] = [];
+  for (const s of segs) {
+    const L = len(s);
+    if (L === 0) continue;
+    let ux = (s.x2 - s.x1) / L;
+    let uy = (s.y2 - s.y1) / L;
+    // One direction per line: the angle in [0, π).
+    if (uy < 0 || (uy === 0 && ux < 0)) {
+      ux = -ux;
+      uy = -uy;
+    }
+    const off = -s.x1 * uy + s.y1 * ux;
+    const key = `${Math.round(Math.atan2(uy, ux) * 2000)},${Math.round(off * 10)}`;
+    const a = s.x1 * ux + s.y1 * uy;
+    const b = s.x2 * ux + s.y2 * uy;
+    const list = groups.get(key);
+    const item = { t0: Math.min(a, b), t1: Math.max(a, b), s };
+    if (list) list.push(item);
+    else groups.set(key, [item]);
+  }
+  for (const list of groups.values()) {
+    if (list.length === 1) {
+      out.push(list[0].s);
+      continue;
+    }
+    list.sort((p, q) => p.t0 - q.t0);
+    let run = { ...list[0] };
+    const flush = () => {
+      const { s } = run;
+      const L = len(s);
+      let ux = (s.x2 - s.x1) / L;
+      let uy = (s.y2 - s.y1) / L;
+      if (uy < 0 || (uy === 0 && ux < 0)) {
+        ux = -ux;
+        uy = -uy;
+      }
+      // Back along the line from the first piece's start to the run's ends.
+      const base = s.x1 * ux + s.y1 * uy;
+      const at = (t: number) => [s.x1 + (t - base) * ux, s.y1 + (t - base) * uy];
+      const [x1, y1] = at(run.t0);
+      const [x2, y2] = at(run.t1);
+      out.push({ ...s, x1, y1, x2, y2 });
+    };
+    for (const next of list.slice(1)) {
+      if (next.t0 <= run.t1 + 0.2) run.t1 = Math.max(run.t1, next.t1);
+      else {
+        flush();
+        run = { ...next };
+      }
+    }
+    flush();
+  }
+  return out;
 }
 
 /**

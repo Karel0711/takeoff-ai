@@ -17,10 +17,13 @@ export async function samplePlanPdf(
     onePen?: boolean;
     /** The page's /Rotate, as plotters often save sheets. */
     rotate?: 0 | 90 | 180 | 270;
+    /** Wall lines broken into pieces this long (plan units), as some exports explode them. */
+    pieces?: number;
   } = {},
 ): Promise<Uint8Array> {
   const poche = options.walls === 'poche';
   pens = options.onePen ? { wall: 0.24, thin: 0.24 } : { wall: 0.7, thin: 0.25 };
+  piece = options.pieces ?? 0;
   const doc = await PDFDocument.create();
   doc.setTitle('Takeoff sample plan');
   const font = await doc.embedFont(StandardFonts.Helvetica);
@@ -50,6 +53,7 @@ const OY = 150;
 const ink = rgb(0, 0, 0);
 /** Wall and thin pen widths; one pen for both when drawn without lineweights. */
 let pens = { wall: 0.7, thin: 0.25 };
+let piece = 0;
 
 /** `poche`: walls as solid filled shapes with no outline, as some exports draw them. */
 function drawPlan(page: PDFPage, font: PDFFont, bold: PDFFont, units: Units, ceiling: boolean, poche = false) {
@@ -60,8 +64,13 @@ function drawPlan(page: PDFPage, font: PDFFont, bold: PDFFont, units: Units, cei
   // Plan metres to PDF points (PDF y runs up from the bottom).
   const px = (x: number) => OX + x * K;
   const py = (y: number) => H - (OY + y * K);
-  const line = (x1: number, y1: number, x2: number, y2: number, thickness = pens.wall) =>
-    page.drawLine({ start: { x: px(x1), y: py(y1) }, end: { x: px(x2), y: py(y2) }, thickness, color: ink });
+  const line = (x1: number, y1: number, x2: number, y2: number, thickness = pens.wall) => {
+    const n = piece && thickness === pens.wall ? Math.max(1, Math.ceil(Math.hypot(x2 - x1, y2 - y1) / piece)) : 1;
+    for (let i = 0; i < n; i++) {
+      const [a, b] = [i / n, (i + 1) / n];
+      page.drawLine({ start: { x: px(x1 + (x2 - x1) * a), y: py(y1 + (y2 - y1) * a) }, end: { x: px(x1 + (x2 - x1) * b), y: py(y1 + (y2 - y1) * b) }, thickness, color: ink });
+    }
+  };
   /** A straight wall face from `a` to `b` along a fixed x or y, skipping the gaps. */
   const face = (vertical: boolean, at: number, a: number, b: number, gaps: [number, number][] = []) => {
     if (poche) return;

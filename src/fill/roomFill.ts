@@ -60,8 +60,13 @@ export function buildWallModel(
 ): WallModel {
   const { pens, maxOpening = 3.0 } = options;
   const pt = (m: number, fallback: number) => (metersPerPoint ? m / metersPerPoint : fallback);
-  const stats = penStats(segs, pt(0.06, 1.5), pt(0.7, 20));
-  const chosen = pens?.length ? pens : detectWallPens(stats);
+  let stats = penStats(segs, pt(0.06, 1.5), pt(0.7, 20));
+  let chosen = pens?.length ? pens : detectWallPens(stats);
+  if (!chosen.length) {
+    // Walls exploded into short pieces pair poorly piece by piece: score joined runs.
+    stats = penStats(segs, pt(0.06, 1.5), pt(0.7, 20), true);
+    chosen = detectWallPens(stats);
+  }
   const walls = segs.filter((s) => chosen.includes(widthKey(s)));
   // Glazing and frames are drawn with lighter pens than walls, but heavier than hatching.
   const wallWidth = Math.min(...chosen.map(Number).filter((n) => !Number.isNaN(n)));
