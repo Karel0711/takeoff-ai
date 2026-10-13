@@ -191,7 +191,8 @@ function TakeoffList({ project, sheet, selectedId, onShow, onDelete }: Props) {
                 <span className="row-index">{i + 1}</span>
                 <span className="row-qty">
                   {m.label && <span className="row-label">{m.label}</span>}
-                  {qtyOf(m, type, project)}
+                  {/* An unnamed count is one each: its type's name says more than "1 ea". */}
+                  {type.kind === 'count' && !m.label ? type.name.split(' – ')[0] : qtyOf(m, type, project)}
                 </span>
                 {scope === 'all' && <span className="row-sheet">{sheetName(m.sheetId)}</span>}
                 <button
