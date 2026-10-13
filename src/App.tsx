@@ -250,7 +250,8 @@ export function App() {
 
   useEffect(() => {
     if (!toast || toast.sticky) return;
-    const t = window.setTimeout(() => setToast(null), 6000);
+    // Long enough to read: longer messages stay up longer.
+    const t = window.setTimeout(() => setToast(null), Math.min(14000, Math.max(6000, toast.text.length * 60)));
     return () => window.clearTimeout(t);
   }, [toast]);
 
