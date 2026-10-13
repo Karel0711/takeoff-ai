@@ -15,7 +15,7 @@ const STEPS: { title: string; text: string }[] = [
   },
   {
     title: 'Let Automate do the repetitive part',
-    text: 'Automate reads the assembly legend into types, takes off every tagged wall, fills every tagged room, counts door tags, and sets room finishes. Select a hatched ceiling or floor area and choose Find areas hatched like this for the rest.',
+    text: 'Automate reads the assembly legend into types, takes off every tagged wall, fills every tagged room, counts door tags, sets room finishes, and turns a boxed symbols legend into types with every symbol counted. Select a hatched ceiling or floor area and choose Find areas hatched like this for the rest.',
   },
   {
     title: 'Fix anything by hand',
