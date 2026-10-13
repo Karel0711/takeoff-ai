@@ -89,7 +89,9 @@ export function AiAssembliesDialog({ page, sheet, units, existingTypes, onApply,
       chosen.map((a, i) => {
         const built = buildTakeoffType(a, units, existingTypes.length + i, height);
         const old = replaces(a);
-        return old ? { ...built, id: old.id, color: old.color } : built;
+        return old
+          ? { ...built, id: old.id, color: old.color, division: old.division ?? built.division, package: old.package }
+          : built;
       }),
     );
     onClose();

@@ -46,7 +46,37 @@ export interface TakeoffType {
   /** Wall or room height in project length units; drives A = L × H for linear types. */
   height: number;
   items: AssemblyItem[];
+  /** Estimate division the type is priced in, e.g. "09 Finishes". */
+  division?: string;
+  /** Subtrade package it is grouped under, e.g. "Drywall / ceiling sub". */
+  package?: string;
+  /** Assembly heading as scheduled, e.g. "TYPICAL INTERIOR WALL – 1HR F.R.R.". */
+  assemblyTitle?: string;
+  /** Assembly build-up, e.g. the layers from the legend. */
+  description?: string;
 }
+
+/** Estimate divisions, named as on the estimator's bid workbook tabs. */
+export const DIVISIONS = [
+  '01 General Requirements',
+  '02 Existing Conditions',
+  '03 Concrete',
+  '04 Masonry',
+  '05 Metals',
+  '06 Wood Framing & Partitions',
+  '06 Mass Timber (CLT Glulam)',
+  '07 Thermal & Moisture',
+  '07 Roofing',
+  '08 Openings',
+  '09 Finishes',
+  '10 Specialties',
+  '14 Conveying Equipment',
+  '20-25 Mechanical',
+  '26 Electrical',
+  '31 Earthwork',
+  '32 Exterior Improvements',
+  '33 Utilities',
+];
 
 export interface Measurement {
   id: string;
@@ -94,6 +124,8 @@ export function defaultTypes(units: Units): TakeoffType[] {
       color: '#e4572e',
       kind: 'linear',
       height: h,
+      division: '06 Wood Framing & Partitions',
+      package: 'Drywall & framing sub',
       items: [
         item('Wall area', area, 'A'),
         item('92mm steel studs', 'ea', `ceil(L / ${s610}) + N`),
@@ -109,6 +141,8 @@ export function defaultTypes(units: Units): TakeoffType[] {
       color: '#17bebb',
       kind: 'linear',
       height: h,
+      division: '06 Wood Framing & Partitions',
+      package: 'Drywall & framing sub',
       items: [
         item('Furring area', area, 'A'),
         item('64mm steel studs', 'ea', `ceil(L / ${s406}) + N`),
@@ -122,6 +156,8 @@ export function defaultTypes(units: Units): TakeoffType[] {
       color: '#76b041',
       kind: 'area',
       height: h,
+      division: '09 Finishes',
+      package: 'Flooring sub',
       items: [
         item('Floor area', area, 'A'),
         item('Floor finish + 10% waste', area, 'A * 1.1'),
@@ -134,6 +170,8 @@ export function defaultTypes(units: Units): TakeoffType[] {
       color: '#ffc914',
       kind: 'area',
       height: h,
+      division: '09 Finishes',
+      package: 'Drywall & ceiling sub',
       items: [
         item('Ceiling area', area, 'A'),
         item('Wall paint (perimeter × height)', area, 'P * H'),
@@ -145,6 +183,7 @@ export function defaultTypes(units: Units): TakeoffType[] {
       color: '#7d5ba6',
       kind: 'count',
       height: h,
+      division: '08 Openings',
       items: [item('Door, frame & hardware', 'ea', 'N')],
     },
   ];

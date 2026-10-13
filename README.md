@@ -16,7 +16,12 @@ nothing is uploaded anywhere.
 - Area (with cutouts), linear and count measurements, coloured by takeoff type.
 - Assemblies: each takeoff type has material lines driven by formulas, e.g.
   studs = `ceil(L / 0.61) + N`, drywall = `2 * A * 1.1`.
-- Live quantities panel and Excel export (Summary, Assemblies, Detail).
+- Live quantities panel and Excel export in the estimator's bid workbook layout:
+  a Bid Summary (cost per division, editable markup, totals) linked to one tab
+  per division with the columns Mark … Notes, blue GROUP rows per subtrade
+  package, imperial pricing formulas, yellow input cells for rates, Height and
+  Incl?, and a subtotal that skips GROUP rows; plus assembly materials and every
+  measurement. Each takeoff type has an estimate division and subtrade package.
 - Metric (m, m²) or imperial (ft, SF) projects.
 
 **Phase 2 — AI setup (in progress)**

@@ -1,5 +1,5 @@
 import { evaluate } from '../formula';
-import { newId, type Kind, type TakeoffType, type Units } from '../model';
+import { DIVISIONS, newId, type Kind, type TakeoffType, type Units } from '../model';
 import type { Vars } from '../quantities';
 import { formatQty, lengthUnit } from '../units';
 import { askConfirm } from './Dialogs';
@@ -56,6 +56,33 @@ export function TypeEditor({ type, units, totals, onChange, onDelete, onClose }:
             step={0.1}
             value={type.height}
             onChange={(e) => set({ height: Math.max(0, Number(e.target.value) || 0) })}
+          />
+        </label>
+      </div>
+
+      <div className="row">
+        <label>
+          Estimate division
+          <input
+            id="type-division"
+            list="division-list"
+            placeholder="e.g. 09 Finishes"
+            value={type.division ?? ''}
+            onChange={(e) => set({ division: e.target.value || undefined })}
+          />
+          <datalist id="division-list">
+            {DIVISIONS.map((d) => (
+              <option key={d} value={d} />
+            ))}
+          </datalist>
+        </label>
+        <label>
+          Subtrade package
+          <input
+            id="type-package"
+            placeholder="e.g. Drywall & ceiling sub"
+            value={type.package ?? ''}
+            onChange={(e) => set({ package: e.target.value || undefined })}
           />
         </label>
       </div>

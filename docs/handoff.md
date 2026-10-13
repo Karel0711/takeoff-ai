@@ -40,7 +40,8 @@ the `downloads` capability).
 ## Next
 
 1. Run the AI legend reading on A0.2/A0.3 for real and tune it.
-2. Match the Excel export to the estimator's bid workbook layout.
+2. ~~Match the Excel export to the estimator's bid workbook layout~~ (done;
+   formulas verified by recalculating an export in LibreOffice).
 3. Finish schedules into room types; then automatic wall and room takeoff
    (wall tags + PDF vector geometry), checked against the bid quantities.
 4. REA: analyse Autodesk Takeoff from a HAR capture recorded by the user (the

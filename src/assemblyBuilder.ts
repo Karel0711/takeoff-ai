@@ -9,6 +9,16 @@ const WASTE = 1.1;
 
 const round = (n: number, digits = 3) => Number(n.toFixed(digits));
 
+/** Where the estimator's workbook prices each kind of assembly. */
+const DIVISION_BY_CATEGORY: Record<ExtractedAssembly['category'], string | undefined> = {
+  interior_wall: '06 Wood Framing & Partitions',
+  exterior_wall: '06 Wood Framing & Partitions',
+  floor: '03 Concrete',
+  roof: '07 Roofing',
+  ceiling: '09 Finishes',
+  other: undefined,
+};
+
 /** Converts millimetres to project length units (m or ft), for use inside formulas. */
 const mmToLength = (mm: number, units: Units) => round(units === 'metric' ? mm / 1000 : mm / 304.8, 4);
 
@@ -77,6 +87,9 @@ export function buildTakeoffType(a: ExtractedAssembly, units: Units, index: numb
     kind,
     height,
     items: [headline, ...a.layers.flatMap((l) => layerItems(l, kind, units))],
+    division: DIVISION_BY_CATEGORY[a.category],
+    assemblyTitle: [title, ...a.notes.filter((n) => /F\.?R\.?R|STC|ULC|FIRE/i.test(n)).map(clean)].join(' – ') || undefined,
+    description: a.layers.map((l) => `• ${clean(l.material)}`).join(' '),
   };
 }
 
