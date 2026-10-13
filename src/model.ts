@@ -59,6 +59,10 @@ export interface TakeoffType {
   kind: Kind;
   /** Wall or room height in project length units; drives A = L × H for linear types. */
   height: number;
+  /** Other sizes the assembly formulas can use (W, D, T), in project length units: a footing's width and depth, a slab's thickness. */
+  width?: number;
+  depth?: number;
+  thickness?: number;
   items: AssemblyItem[];
   /** Estimate division the type is priced in, e.g. "09 Finishes". */
   division?: string;

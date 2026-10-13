@@ -249,6 +249,13 @@ Navigation: scroll to zoom, drag or Space-drag to pan, F fits the sheet.
 | `A` | area: measured area for area types, `L × H` for linear types |
 | `P` | perimeter of area measurements, including cutouts |
 | `N` | number of measurements (runs, rooms or counted items) |
+| `I` | inner perimeter: the edges of cutouts (already in `P`) |
+| `W`, `D`, `T` | the type's width, depth and thickness, set in the type editor |
+
+Autodesk Takeoff's names work too, so its formulas can be pasted in: `Distance`
+(= `L`), `Area`, `Perimeter`, `InnerPerimeter`, `Height`, `Width`, `Depth`,
+`Thickness`, `Count`. A strip footing is `L * W * D`, or
+`Distance * Width * Depth`.
 
 Functions: `ceil`, `floor`, `round`, `min`, `max`, `abs`.
 

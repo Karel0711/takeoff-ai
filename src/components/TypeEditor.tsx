@@ -1,6 +1,6 @@
 import { evaluate } from '../formula';
 import { DIVISIONS, newId, type Kind, type TakeoffType, type Units } from '../model';
-import type { Vars } from '../quantities';
+import { formulaVars, type Vars } from '../quantities';
 import { formatQty, lengthUnit } from '../units';
 import { Icon } from './Icons';
 
@@ -20,13 +20,14 @@ const VARS_HELP: [keyof Vars, string][] = [
   ['H', 'Height'],
   ['A', 'Area (L × H for linear types)'],
   ['P', 'Perimeter, incl. cutouts'],
+  ['I', 'Cutout edges only'],
   ['N', 'Number of runs, rooms or items'],
 ];
 
 /** Edits a takeoff type: name, kind, colour, height, estimate grouping and its assembly items. */
 export function TypeEditor({ type, units, totals, onChange, onDelete, onDuplicate, onClose }: Props) {
   const set = (patch: Partial<TakeoffType>) => onChange({ ...type, ...patch });
-  const vars = totals ?? { L: 0, H: type.height, A: 0, P: 0, N: 0 };
+  const vars = totals ?? { L: 0, H: type.height, A: 0, P: 0, N: 0, I: 0 };
 
   return (
     <div className="type-editor">
@@ -67,6 +68,24 @@ export function TypeEditor({ type, units, totals, onChange, onDelete, onDuplicat
             <input id="type-color" type="color" value={type.color} onChange={(e) => set({ color: e.target.value })} />
           </label>
         </div>
+        <div className="field-row">
+          {(['width', 'depth', 'thickness'] as const).map((k) => (
+            <label className="field" key={k} title={`${k[0].toUpperCase()} in formulas`}>
+              <span>
+                {k[0].toUpperCase() + k.slice(1)} ({units === 'metric' ? 'm' : 'ft'})
+              </span>
+              <input
+                id={`type-${k}`}
+                type="number"
+                min={0}
+                step={0.01}
+                value={type[k] ?? ''}
+                placeholder="—"
+                onChange={(e) => set({ [k]: e.target.value === '' ? undefined : Math.max(0, Number(e.target.value) || 0) })}
+              />
+            </label>
+          ))}
+        </div>
         <label className="field">
           <span>Estimate division</span>
           <input
@@ -97,7 +116,7 @@ export function TypeEditor({ type, units, totals, onChange, onDelete, onDuplicat
       <div className="assembly-items">
         {type.items.length === 0 && <p className="muted small-text">Add the materials this type needs. Each one is a formula of the totals below.</p>}
         {type.items.map((it, i) => {
-          const r = evaluate(it.formula, { ...vars });
+          const r = evaluate(it.formula, formulaVars(vars, type));
           const update = (patch: Partial<typeof it>) => set({ items: type.items.map((x, j) => (j === i ? { ...x, ...patch } : x)) });
           return (
             <div className="assembly-item" key={it.id}>
@@ -141,8 +160,9 @@ export function TypeEditor({ type, units, totals, onChange, onDelete, onDuplicat
           ))}
         </dl>
         <p className="small-text muted">
-          Formulas use these letters with + - * / and <code>ceil</code> <code>floor</code> <code>round</code> <code>min</code> <code>max</code>, e.g.{' '}
-          <code>ceil(L / 0.61) + N</code>.
+          Formulas use these letters, and the type’s <code>W</code> <code>D</code> <code>T</code>, with + - * / and <code>ceil</code> <code>floor</code>{' '}
+          <code>round</code> <code>min</code> <code>max</code>, e.g. <code>ceil(L / 0.61) + N</code>. Autodesk-style names work too: <code>Distance</code>{' '}
+          <code>Area</code> <code>Perimeter</code> <code>InnerPerimeter</code> <code>Height</code> <code>Width</code> <code>Depth</code> <code>Thickness</code>.
         </p>
       </div>
 

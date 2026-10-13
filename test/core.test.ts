@@ -135,3 +135,15 @@ describe('equivalent scale', () => {
     expect(equivalentScale(parseScale('1" = 20\'')!, 'imperial')).toBe('≈ 1" = 20\'');
   });
 });
+
+describe('formula names', () => {
+  it('takes the type sizes and Autodesk-style names', async () => {
+    const { formulaVars } = await import('../src/quantities');
+    const { evaluate } = await import('../src/formula');
+    const type = { id: 't', name: 'Footing', color: '#000', kind: 'linear' as const, height: 0, width: 0.6, depth: 0.3, items: [] };
+    const vars = formulaVars({ L: 10, H: 0, A: 0, P: 0, N: 2, I: 0 }, type);
+    expect(evaluate('L * W * D', vars)).toEqual({ ok: true, value: expect.closeTo(1.8, 6) });
+    expect(evaluate('Distance * Width * Depth * 1.1', vars)).toEqual({ ok: true, value: expect.closeTo(1.98, 6) });
+    expect(evaluate('Count', vars)).toEqual({ ok: true, value: 2 });
+  });
+});

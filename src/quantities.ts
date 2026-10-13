@@ -15,17 +15,46 @@ export interface Vars {
   P: number;
   /** Number of measurements (runs, rooms or counted items). */
   N: number;
+  /** Inner perimeter: the edges of cutouts in area measurements (included in P). */
+  I: number;
+}
+
+/**
+ * The names a formula can use: the totals, the type's own sizes (W, D, T), and the
+ * long names Autodesk Takeoff formulas use (Distance, Area, Perimeter, …), so
+ * formulas written there work here.
+ */
+export function formulaVars(vars: Vars, type: TakeoffType): Record<string, number> {
+  const W = type.width ?? 0;
+  const D = type.depth ?? 0;
+  const T = type.thickness ?? 0;
+  return {
+    ...vars,
+    W,
+    D,
+    T,
+    Distance: vars.L,
+    Length: vars.L,
+    Height: vars.H,
+    Area: vars.A,
+    Perimeter: vars.P,
+    InnerPerimeter: vars.I,
+    Count: vars.N,
+    Width: W,
+    Depth: D,
+    Thickness: T,
+  };
 }
 
 /** Quantities of one measurement, or null when its sheet has no scale yet. */
 export function measurementVars(m: Measurement, type: TakeoffType, sheet: Sheet, units: Units): Vars | null {
   const H = type.height;
-  if (type.kind === 'count') return { L: 0, H, A: 0, P: 0, N: 1 };
+  if (type.kind === 'count') return { L: 0, H, A: 0, P: 0, N: 1, I: 0 };
   const mpp = sheet.metersPerPoint;
   if (mpp === null) return null;
   if (type.kind === 'linear') {
     const L = toLength(polylineLength(m.points) * mpp, units);
-    return { L, H, A: L * H, P: 0, N: 1 };
+    return { L, H, A: L * H, P: 0, N: 1, I: 0 };
   }
   const areaPts = ringArea(m.points) - m.holes.reduce((sum, h) => sum + ringArea(h), 0);
   const perimPts = ringLength(m.points) + m.holes.reduce((sum, h) => sum + ringLength(h), 0);
@@ -35,6 +64,7 @@ export function measurementVars(m: Measurement, type: TakeoffType, sheet: Sheet,
     A: toArea(Math.max(0, areaPts) * mpp * mpp, units),
     P: toLength(perimPts * mpp, units),
     N: 1,
+    I: toLength(m.holes.reduce((sum, h) => sum + ringLength(h), 0) * mpp, units),
   };
 }
 
@@ -43,12 +73,12 @@ export function measurementVars(m: Measurement, type: TakeoffType, sheet: Sheet,
  * perimeter), a linear type its perimeter as length, so A = perimeter × the type's height.
  */
 export function finishVars(room: Measurement, type: TakeoffType, sheet: Sheet, units: Units): Vars | null {
-  if (type.kind === 'count') return { L: 0, H: type.height, A: 0, P: 0, N: 1 };
+  if (type.kind === 'count') return { L: 0, H: type.height, A: 0, P: 0, N: 1, I: 0 };
   if (type.kind === 'area') return measurementVars(room, type, sheet, units);
   const mpp = sheet.metersPerPoint;
   if (mpp === null) return null;
   const L = toLength((ringLength(room.points) + room.holes.reduce((sum, h) => sum + ringLength(h), 0)) * mpp, units);
-  return { L, H: type.height, A: L * type.height, P: 0, N: 1 };
+  return { L, H: type.height, A: L * type.height, P: 0, N: 1, I: 0 };
 }
 
 /** One measurement's share of one type: drawn as that type, or a room finished with it. */
@@ -117,7 +147,7 @@ export function typeTotals(project: Project): TypeTotals[] {
     else byType.set(c.type.id, [c]);
   }
   return project.types.map((type) => {
-    const vars: Vars = { L: 0, H: type.height, A: 0, P: 0, N: 0 };
+    const vars: Vars = { L: 0, H: type.height, A: 0, P: 0, N: 0, I: 0 };
     let unscaled = 0;
     for (const { vars: v } of byType.get(type.id) ?? []) {
       if (!v) {
@@ -128,9 +158,10 @@ export function typeTotals(project: Project): TypeTotals[] {
       vars.A += v.A;
       vars.P += v.P;
       vars.N += v.N;
+      vars.I += v.I;
     }
     const items = type.items.map((it): ItemResult => {
-      const r = evaluate(it.formula, { ...vars });
+      const r = evaluate(it.formula, formulaVars(vars, type));
       return r.ok
         ? { name: it.name, unit: it.unit, formula: it.formula, value: r.value, error: null }
         : { name: it.name, unit: it.unit, formula: it.formula, value: null, error: r.error };
