@@ -714,7 +714,14 @@ export function App() {
       const oldPage = await pdfs.get(previousRevision.docId)?.getPage(previousRevision.page);
       if (!oldPage) throw new Error('The previous revision’s drawing is not available.');
       const blob = await compareSheets(oldPage, page);
-      setComparison({ url: URL.createObjectURL(blob), blob, name: sheet.name });
+      // A data URL rather than a blob: URL, which hosted pages may not be allowed to show.
+      const url = await new Promise<string>((resolve, reject) => {
+        const r = new FileReader();
+        r.onload = () => resolve(r.result as string);
+        r.onerror = () => reject(new Error('Could not show the comparison.'));
+        r.readAsDataURL(blob);
+      });
+      setComparison({ url, blob, name: sheet.name });
     } catch (e) {
       setToast({ text: `Something went wrong: ${e instanceof Error ? e.message : String(e)}`, undo: false });
     } finally {
@@ -1598,7 +1605,6 @@ export function App() {
         <div
           className="modal-backdrop"
           onClick={() => {
-            URL.revokeObjectURL(comparison.url);
             setComparison(null);
           }}
         >
@@ -1608,10 +1614,7 @@ export function App() {
               <div className="button-row">
                 <button onClick={() => void saveFile(`${comparison.name} - changes.png`, comparison.blob)}>Save image</button>
                 <button
-                  onClick={() => {
-                    URL.revokeObjectURL(comparison.url);
-                    setComparison(null);
-                  }}
+                  onClick={() => setComparison(null)}
                 >
                   Close
                 </button>
