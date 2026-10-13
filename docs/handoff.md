@@ -14,6 +14,18 @@ Where the project stands, for picking it up in a new session.
     1.2 MP there, so the sheet's text layer carries the small print.
   - Run locally (`npm run dev`): uses the user's Anthropic API key from
     **AI settings**, `claude-opus-5-5`, structured outputs.
+- **Fill room (done, awaiting comparison with Autodesk areas):** one-click room
+  areas from PDF vector linework (`src/fill/`). On A2.1 at 1:100 every labelled
+  room fills; closed rooms snap to the wall lines with 0.0 mm edge error, e.g.
+  Staff Office 10.57 m², Staff Room 56.72, Elevator 5.49, Storage 23.30, BF WR
+  7.60, Ski Service 40.66, Receiving 25.91, Mechanical 26.48, Electrical 11.54,
+  Rescue & Safety 23.04, Jan. Cl. 2.66; the open-plan lobby/rental hall is
+  273.87 m². How it works: wall pen = heaviest pen with mostly paired parallel
+  lines (A2.1: 0.57 pt walls, 0.51 tags/frames, 0.28 furniture/hatch); gaps on a
+  wall line up to 3 m are bridged (doors), up to 10 m when glazing runs along
+  them (windows); flood fill at up to 3 px/pt, hole filling, boundary trace,
+  then edges snapped to the drawn lines. First click reads the sheet's operator
+  list (~3–6 s), then 0.1–2 s per room.
 - **Not yet verified:** the real model's extraction quality on real sheets. The
   end-to-end tests intercepted the AI call with a hand-written answer.
 
@@ -64,8 +76,10 @@ the `downloads` capability).
      addendum documents is a future feature.
 2. ~~Match the Excel export to the estimator's bid workbook layout~~ (done;
    formulas verified by recalculating an export in LibreOffice).
-3. Finish schedules into room types; then automatic wall and room takeoff
+3. Compare Fill room areas with the estimator's Autodesk Takeoff areas for the
+   same rooms; tune the opening rules if open-plan spaces split differently.
+4. Finish schedules into room types; then automatic wall and room takeoff
    (wall tags + PDF vector geometry), checked against the bid quantities.
-4. REA: analyse Autodesk Takeoff from a HAR capture recorded by the user (the
+5. REA: analyse Autodesk Takeoff from a HAR capture recorded by the user (the
    cloud environment cannot reach autodesk.com, and Takeoff needs a login), and
    point REA at this app to test what it can recover.

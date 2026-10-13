@@ -5,8 +5,17 @@ import type { PDFPageProxy } from '../pdf';
 import { measurementVars, primaryOf, primaryUnit } from '../quantities';
 import { areaUnit, formatQty, lengthUnit, parseLength, toArea, toLength } from '../units';
 import { askText, notify } from './Dialogs';
+import { fillRoom, type WallModel } from '../fill/roomFill';
 
-export type Tool = 'select' | 'measure' | 'calibrate' | 'cutout';
+export type Tool = 'select' | 'measure' | 'calibrate' | 'cutout' | 'fill';
+
+const FILL_FAILURES = {
+  'on-wall': 'That click landed on a wall. Click inside the room.',
+  'not-closed':
+    'This space isn’t closed: it leaks out through an opening wider than the “close openings” size, or the sheet has no walls around it. Raise the opening size, or draw the area by hand.',
+  'not-connected': 'That space is on the other side of a wall from the last fill. Fill it on its own instead (Shift+click joins spaces split only by a closed opening).',
+  'no-walls': 'No wall lines were found on this sheet, so rooms can’t be filled. Draw the area by hand.',
+};
 
 interface View {
   zoom: number;
@@ -24,7 +33,12 @@ interface Props {
   tool: Tool;
   selectedId: string | null;
   onSelect: (id: string | null) => void;
-  onAdd: (points: Pt[]) => void;
+  /** Adds a measurement with the active type; returns its id. */
+  onAdd: (points: Pt[]) => string | undefined;
+  /** Replaces a measurement's outline (used when Shift+click grows a fill). */
+  onReplacePoints: (id: string, points: Pt[]) => void;
+  /** The sheet's wall model for Fill, read on first use. */
+  getWallModel: () => Promise<WallModel> | null;
   onAddHole: (measurementId: string, ring: Pt[]) => void;
   onDelete: (id: string) => void;
   onCalibrate: (metersPerPoint: number, label: string) => void;
@@ -51,6 +65,9 @@ export function Viewer(props: Props) {
   const pan = useRef<{ sx: number; sy: number; vx: number; vy: number; moved: boolean } | null>(null);
   const suppressClick = useRef(false);
   const spaceHeld = useRef(false);
+  /** The last fill on this sheet, so Shift+click can grow it into a neighbouring space. */
+  const lastFill = useRef<{ id: string; seeds: Pt[] } | null>(null);
+  const [filling, setFilling] = useState(false);
   const viewRef = useRef(view);
   viewRef.current = view;
 
@@ -80,7 +97,45 @@ export function Viewer(props: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sheet?.id, size.w > 0]);
 
-  useEffect(() => setDraft([]), [tool, activeType?.id]);
+  useEffect(() => {
+    setDraft([]);
+    lastFill.current = null;
+  }, [tool, activeType?.id, sheet?.id]);
+
+  async function fillAt(pt: Pt, grow: boolean) {
+    if (!sheet || filling) return;
+    const pending = props.getWallModel();
+    if (!pending) return;
+    setFilling(true);
+    setStatus('Finding the room…');
+    try {
+      const model = await pending;
+      const previous = grow ? lastFill.current : null;
+      const seeds = previous ? [...previous.seeds, pt] : [pt];
+      const result = fillRoom(model, seeds, sheet.width, sheet.height);
+      if (!result.ok) {
+        setStatus(null);
+        await notify(FILL_FAILURES[result.reason]);
+        return;
+      }
+      if (previous) {
+        props.onReplacePoints(previous.id, result.points);
+        lastFill.current = { id: previous.id, seeds };
+      } else {
+        const id = props.onAdd(result.points);
+        if (id) {
+          lastFill.current = { id, seeds };
+          props.onSelect(id);
+        }
+      }
+      setStatus(null);
+    } catch (err) {
+      setStatus(null);
+      await notify(`Couldn’t read this sheet’s linework: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setFilling(false);
+    }
+  }
 
   const paint = useCallback(() => {
     const canvas = canvasRef.current;
@@ -279,6 +334,9 @@ export function Viewer(props: Props) {
       } else {
         setDraft(next);
       }
+    } else if (tool === 'fill') {
+      if (activeType?.kind !== 'area') return;
+      void fillAt(toPt(e).pt, e.shiftKey);
     } else if (tool === 'cutout') {
       if (!selected || selectedType?.kind !== 'area') return;
       if (e.detail >= 2) {
@@ -340,7 +398,7 @@ export function Viewer(props: Props) {
 
   const z = view.zoom;
   const shapesInteractive = tool === 'select';
-  const cursor = pan.current ? 'grabbing' : tool === 'select' ? 'default' : 'crosshair';
+  const cursor = pan.current ? 'grabbing' : filling ? 'progress' : tool === 'select' ? 'default' : tool === 'fill' ? 'cell' : 'crosshair';
 
   return (
     <div className="viewer" ref={wrapRef}>

@@ -41,6 +41,15 @@ nothing is uploaded anywhere.
   exactly (sizes and spacings must match), framing spacings, overall thickness
   and category, and lists every difference. **Download AI result** saves the raw
   answer as JSON for deeper analysis.
+- **Fill room (done):** pick an area type, click **Fill room**, click inside a
+  room. The outline follows the inside face of the walls; furniture, text and
+  door swings are ignored, and door openings are closed off along the wall face,
+  so the opening is not part of the area. It works from the PDF's vector
+  linework (no image model): the wall pen is found from parallel line pairs and
+  line weight, wall gaps up to **Close openings up to** (3 m by default) are
+  closed, and wider gaps close only where window glazing is drawn along them.
+  Shift+click a neighbouring space to join it into the last fill, through the
+  opening between them. Needs a vector PDF (not a scan).
 - Next: finish schedules into room types, sheet titles, scale verification.
 
 **Phase 3 — AI takeoff:** walls by type from the plan tags and PDF vector lines,
@@ -82,9 +91,12 @@ sheet takes one to three minutes.
    - Area / linear: click points, double-click or press Enter to finish.
      Hold Shift for straight lines, Backspace removes the last point, Esc cancels.
    - Count: click each item.
-4. To cut a hole out of an area: **Select**, click the area, **Cutout**, draw the hole.
-5. Click ✎ on a type to edit its name, height and assembly formulas.
-6. **Export Excel** when done.
+4. To take a room's area in one click: pick an area type, **Fill room**, click
+   inside the room. If it leaks into the next space, lower **Close openings up
+   to**; if it says the space isn't closed, raise it or draw by hand.
+5. To cut a hole out of an area: **Select**, click the area, **Cutout**, draw the hole.
+6. Click ✎ on a type to edit its name, height and assembly formulas.
+7. **Export Excel** when done.
 
 Navigation: scroll to zoom, drag (in Select mode), middle-drag or Space-drag to
 pan, F to fit the sheet. Delete removes the selected measurement.
@@ -114,6 +126,8 @@ Code layout: `src/units.ts` (scales, units), `src/geometry.ts`,
 `src/sheetInfo.ts` (sheet number and scale detection), `src/exportExcel.ts`,
 `src/ai/` (Claude request and extraction schema), `src/assemblyBuilder.ts`
 (layers to assembly formulas),
+`src/fill/` (room fill: vector linework, wall detection, opening bridges,
+raster flood fill and outline tracing),
 `src/components/Viewer.tsx` (PDF rendering and measuring tools).
 
 PDF rendering uses the pdf.js *legacy* build because current pdf.js relies on

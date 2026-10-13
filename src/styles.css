@@ -771,3 +771,7 @@ button.danger-solid {
   margin: 2px 0;
   overflow-wrap: anywhere;
 }
+
+.toolbar input.opening {
+  width: 4.5em;
+}

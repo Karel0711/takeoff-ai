@@ -6,6 +6,7 @@ import { QuantityPanel } from './components/QuantityPanel';
 import { TypeEditor } from './components/TypeEditor';
 import { Viewer, type Tool } from './components/Viewer';
 import { exportWorkbook } from './exportExcel';
+import { wallModelFor } from './fill/sheetWalls';
 import { isHosted, saveFile } from './host';
 import { newId, newProject, type Project, type Pt, type Sheet, type TakeoffType, type Units } from './model';
 import { inspectPage, openPdf, type PDFDocumentProxy, type PDFPageProxy } from './pdf';
@@ -27,6 +28,8 @@ export function App() {
   const [busy, setBusy] = useState<string | null>(null);
   const [sheetFilter, setSheetFilter] = useState('');
   const [aiDialog, setAiDialog] = useState<'assemblies' | 'settings' | null>(null);
+  /** Fill closes wall openings up to this width (metres); wider ones count as open. */
+  const [maxOpening, setMaxOpening] = useState(3);
   const fileInput = useRef<HTMLInputElement>(null);
 
   // Load the saved project and its PDFs.
@@ -164,6 +167,7 @@ export function App() {
     if (!sheet || !activeType) return;
     const m = { id: newId(), sheetId: sheet.id, typeId: activeType.id, points, holes: [] };
     update((p) => ({ ...p, measurements: [...p.measurements, m] }));
+    return m.id;
   };
 
   const filteredSheets = project.sheets.filter((s) => s.name.toLowerCase().includes(sheetFilter.toLowerCase()));
@@ -299,6 +303,31 @@ export function App() {
             Measure{activeType ? `: ${activeType.name.split(' – ')[0]}` : ''}
           </button>
           <button
+            className={tool === 'fill' ? 'on' : ''}
+            onClick={() => setTool('fill')}
+            disabled={activeType?.kind !== 'area' || !page}
+            title="Click inside a room to take its area off along the inside face of the walls"
+          >
+            Fill room
+          </button>
+          {tool === 'fill' && (
+            <label className="muted" title="Door and other openings up to this width are closed off; wider ones join the spaces either side. Windows with glazing drawn close up to 10 m.">
+              Close openings up to{' '}
+              <input
+                className="opening"
+                type="number"
+                min={0.5}
+                step={project.units === 'metric' ? 0.5 : 1}
+                value={project.units === 'metric' ? maxOpening : Math.round(maxOpening / 0.3048)}
+                onChange={(e) => {
+                  const v = Number(e.target.value);
+                  if (v > 0) setMaxOpening(project.units === 'metric' ? v : v * 0.3048);
+                }}
+              />{' '}
+              {project.units === 'metric' ? 'm' : 'ft'}
+            </label>
+          )}
+          <button
             className={tool === 'cutout' ? 'on' : ''}
             onClick={() => setTool('cutout')}
             disabled={selectedType?.kind !== 'area'}
@@ -358,6 +387,10 @@ export function App() {
           selectedId={selectedId}
           onSelect={setSelectedId}
           onAdd={addMeasurement}
+          onReplacePoints={(id, points) =>
+            update((p) => ({ ...p, measurements: p.measurements.map((m) => (m.id === id ? { ...m, points } : m)) }))
+          }
+          getWallModel={() => (page && sheet ? wallModelFor(page, sheet, maxOpening) : null)}
           onAddHole={(id, ring) =>
             update((p) => ({
               ...p,
@@ -436,5 +469,8 @@ function toolHint(tool: Tool, type: TakeoffType | null): string {
       return 'Click both ends of a known dimension, then type its real length';
     case 'cutout':
       return 'Draw the hole inside the selected area · double-click or Enter to finish';
+    case 'fill':
+      if (type?.kind !== 'area') return 'Pick an area takeoff type on the left';
+      return 'Click inside a room to fill it · Shift+click a neighbouring space to join it · Del removes it';
   }
 }
