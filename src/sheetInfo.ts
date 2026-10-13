@@ -26,6 +26,24 @@ export function guessSheetNumber(runs: TextRun[], width: number, height: number)
   return best?.str ?? null;
 }
 
+/**
+ * Groups text runs into reading lines (top to bottom, left to right), each
+ * prefixed with its position so a model can tell which column text belongs to.
+ */
+export function textLines(runs: TextRun[]): string[] {
+  const sorted = [...runs].sort((a, b) => a.y - b.y || a.x - b.x);
+  const lines: TextRun[][] = [];
+  for (const run of sorted) {
+    const line = lines[lines.length - 1];
+    if (line && Math.abs(line[0].y - run.y) <= Math.max(1.5, run.size * 0.3)) line.push(run);
+    else lines.push([run]);
+  }
+  return lines.map((line) => {
+    line.sort((a, b) => a.x - b.x);
+    return `y${Math.round(line[0].y)}: ${line.map((r) => `[x${Math.round(r.x)}] ${r.str.trim()}`).join('  ')}`;
+  });
+}
+
 export interface SheetInfo {
   name: string | null;
   scaleHints: string[];

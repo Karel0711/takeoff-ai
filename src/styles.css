@@ -424,3 +424,142 @@ code {
   font-family: ui-monospace, monospace;
   color: var(--text);
 }
+
+button.ai {
+  border-color: #7d5ba6;
+  color: #5b3d86;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 20, 25, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+}
+.modal {
+  background: var(--panel);
+  border-radius: 10px;
+  padding: 16px 18px;
+  width: min(480px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.25);
+}
+.modal.wide {
+  width: min(900px, calc(100vw - 32px));
+}
+.modal p {
+  line-height: 1.5;
+}
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 8px 0;
+}
+.row-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+}
+.row-actions.sticky {
+  position: sticky;
+  bottom: -16px;
+  background: var(--panel);
+  padding: 10px 0;
+  border-top: 1px solid var(--border);
+}
+label.inline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+label.inline input {
+  width: 70px;
+}
+.running {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 20px 0;
+}
+.spinner {
+  width: 22px;
+  height: 22px;
+  border: 3px solid var(--border);
+  border-top-color: #7d5ba6;
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.err-box {
+  color: var(--danger);
+  background: #fdecec;
+  padding: 8px 10px;
+  border-radius: 6px;
+}
+.coverage {
+  margin: 6px 0 10px;
+}
+.assembly-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.assembly {
+  display: flex;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+.assembly.picked {
+  border-color: #7d5ba6;
+  background: #f6f2fb;
+}
+.assembly-body {
+  flex: 1;
+}
+.assembly-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.tag {
+  font-size: 11px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0 7px;
+  color: var(--muted);
+}
+.warn-tag {
+  color: var(--warn);
+  border-color: var(--warn);
+}
+.layers {
+  margin: 6px 0 0;
+  padding-left: 20px;
+}
+.layers li {
+  margin: 1px 0;
+}
+.role {
+  margin-left: 6px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.notes {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}

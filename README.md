@@ -19,8 +19,17 @@ nothing is uploaded anywhere.
 - Live quantities panel and Excel export (Summary, Assemblies, Detail).
 - Metric (m, m²) or imperial (ft, SF) projects.
 
-**Phase 2 — AI setup (next):** read wall-type legends and finish schedules into
-assemblies, sheet titles, scale verification.
+**Phase 2 — AI setup (in progress)**
+
+- **Read assembly types (done):** on a wall/floor/roof type legend sheet, click
+  **✦ Read assembly types**. Claude reads every type (W1, EW3C, F1, R1, …) and
+  its layers; you review them and add the ones you want as takeoff types with
+  assembly items built from the layers (studs and track from framing spacing,
+  board and membranes with 10% waste, slab and fill volumes, and so on). Tags
+  printed on the sheet that the AI did not return are flagged, so nothing is
+  silently missed. A type whose tag already exists is updated in place and keeps
+  its measurements.
+- Next: finish schedules into room types, sheet titles, scale verification.
 
 **Phase 3 — AI takeoff:** walls by type from the plan tags and PDF vector lines,
 rooms with finishes, all as suggestions you accept or correct.
@@ -35,6 +44,14 @@ npm run dev
 ```
 
 Then open the address it prints (usually http://localhost:5173).
+
+### AI features
+
+AI features use your own Anthropic API key (get one at console.anthropic.com).
+Click **AI settings** in the top bar and paste it there. It is stored only in that
+browser. When you use an AI feature, the sheet you chose (as images and its text)
+is sent to Anthropic's API; nothing else leaves your computer. Reading one legend
+sheet takes one to three minutes.
 
 ## Using it
 
@@ -76,6 +93,8 @@ npm run build
 Code layout: `src/units.ts` (scales, units), `src/geometry.ts`,
 `src/formula.ts` (safe formula evaluator), `src/quantities.ts` (rollups),
 `src/sheetInfo.ts` (sheet number and scale detection), `src/exportExcel.ts`,
+`src/ai/` (Claude request and extraction schema), `src/assemblyBuilder.ts`
+(layers to assembly formulas),
 `src/components/Viewer.tsx` (PDF rendering and measuring tools).
 
 PDF rendering uses the pdf.js *legacy* build because current pdf.js relies on

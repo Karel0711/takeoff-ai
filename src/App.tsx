@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { AiAssembliesDialog } from './components/AiAssembliesDialog';
+import { AiSettingsDialog } from './components/AiSettingsDialog';
 import { QuantityPanel } from './components/QuantityPanel';
 import { TypeEditor } from './components/TypeEditor';
 import { Viewer, type Tool } from './components/Viewer';
@@ -22,6 +24,7 @@ export function App() {
   const [tool, setTool] = useState<Tool>('select');
   const [busy, setBusy] = useState<string | null>(null);
   const [sheetFilter, setSheetFilter] = useState('');
+  const [aiDialog, setAiDialog] = useState<'assemblies' | 'settings' | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
 
   // Load the saved project and its PDFs.
@@ -184,6 +187,7 @@ export function App() {
           }}
         />
         <button onClick={() => fileInput.current?.click()}>Upload drawings</button>
+        <button onClick={() => setAiDialog('settings')}>AI settings</button>
         <button onClick={() => void exportExcel()} disabled={!project.measurements.length}>
           Export Excel
         </button>
@@ -320,6 +324,14 @@ export function App() {
               <button className={tool === 'calibrate' ? 'on' : ''} onClick={() => setTool('calibrate')}>
                 Calibrate
               </button>
+              <button
+                className="ai"
+                onClick={() => setAiDialog('assemblies')}
+                disabled={!page}
+                title="Read wall, floor, roof and ceiling types from this sheet into takeoff types"
+              >
+                ✦ Read assembly types
+              </button>
               {sheet.scaleSource === 'detected' && (
                 <span className="hint warn-text" title="Read from the sheet's text. Check it against a known dimension.">
                   Scale detected: verify
@@ -358,6 +370,26 @@ export function App() {
         />
         {busy && <div className="busy">{busy}</div>}
       </main>
+
+      {aiDialog === 'assemblies' && page && sheet && (
+        <AiAssembliesDialog
+          page={page}
+          sheet={sheet}
+          units={project.units}
+          existingTypes={project.types}
+          onApply={(incoming) =>
+            update((p) => {
+              const byId = new Map(incoming.map((t) => [t.id, t]));
+              const kept = p.types.map((t) => byId.get(t.id) ?? t);
+              const added = incoming.filter((t) => !p.types.some((x) => x.id === t.id));
+              return { ...p, types: [...kept, ...added] };
+            })
+          }
+          onClose={() => setAiDialog(null)}
+          onOpenSettings={() => setAiDialog('settings')}
+        />
+      )}
+      {aiDialog === 'settings' && <AiSettingsDialog onClose={() => setAiDialog(null)} />}
 
       <aside className="right">
         {editingType ? (
