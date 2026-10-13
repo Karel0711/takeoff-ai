@@ -180,6 +180,37 @@ function drawPlan(page: PDFPage, font: PDFFont, bold: PDFFont, units: Units, cei
     page.drawLine({ start: { x: px(1.2), y: py(4.4) }, end: { x: px(1.2), y: py(5.5 - p) }, thickness: THIN, color: ink });
   }
 
+  if (!ceiling) {
+    // Room finish schedule, between the plan and the title block (in sheet points), ruled
+    // by rows only so its room numbers are not boxed like room tags.
+    const cols: [string, number][] = [
+      ['NO.', 708],
+      ['ROOM NAME', 728],
+      ['FLOOR', 790],
+      ['BASE', 820],
+      ['WALLS', 846],
+      ['CEILING', 872],
+    ];
+    const rows: string[][] = [
+      ['101', 'LOBBY', 'POR-1', 'RB-1', 'PT-2', 'GWB-1'],
+      ['102', 'OFFICE', 'CPT-1', 'RB-1', 'PT-1', 'ACT-1'],
+      ['103', 'OFFICE', 'CPT-1', 'RB-1', 'PT-1', 'ACT-1'],
+      ['104', 'MEETING ROOM', 'CPT-1', 'RB-1', 'PT-1', 'ACT-1'],
+      ['105', 'STORAGE', 'SC-1', 'RB-1', 'PT-1', 'GWB-1'],
+    ];
+    let sy = H - 330;
+    page.drawText('ROOM FINISH SCHEDULE', { x: 708, y: sy + 16, size: 7, font: bold, color: ink });
+    const rule = (y: number) => page.drawLine({ start: { x: 704, y }, end: { x: 900, y }, thickness: THIN, color: ink });
+    rule(sy + 11);
+    for (const [h, x] of cols) page.drawText(h, { x, y: sy, size: 5, font: bold, color: ink });
+    rule(sy - 4);
+    for (const r of rows) {
+      sy -= 13;
+      r.forEach((cell, i) => page.drawText(cell, { x: cols[i][1], y: sy, size: 5, font, color: ink }));
+      rule(sy - 4);
+    }
+  }
+
   if (ceiling) {
     const GRID = 0.18;
     // ACT: a 2×4 grid (1.2 × 0.6) in the offices and the meeting room.

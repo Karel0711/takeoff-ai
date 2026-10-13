@@ -10,6 +10,7 @@ import type { Sheet } from '../src/model';
 import { pageTexts } from '../src/pageText';
 import { inspectPage, type PDFPageProxy } from '../src/pdf';
 import { samplePlanPdf } from '../src/samplePlan';
+import { readFinishSchedule } from '../src/finishSchedule';
 import { checkScale } from '../src/scaleCheck';
 import { parseScale } from '../src/units';
 import { sheetWallTakeoff } from '../src/walls/sheetWallTakeoff';
@@ -41,6 +42,15 @@ describe('sample plan', () => {
     expect(areas).toEqual({ '101': 62.9, '102': 30.7, '103': 30.7, '104': 30.7, '105': 30.7 });
 
     expect(findDoorTags(texts, segs).map((d) => d.number).sort()).toEqual(['101', '102', '103', '104', '105']);
+
+    const schedule = readFinishSchedule(texts)!;
+    expect(schedule.rows.map((r) => [r.number, r.name, r.finishes.floor, r.finishes.base, r.finishes.walls, r.finishes.ceiling])).toEqual([
+      ['101', 'LOBBY', 'POR-1', 'RB-1', 'PT-2', 'GWB-1'],
+      ['102', 'OFFICE', 'CPT-1', 'RB-1', 'PT-1', 'ACT-1'],
+      ['103', 'OFFICE', 'CPT-1', 'RB-1', 'PT-1', 'ACT-1'],
+      ['104', 'MEETING ROOM', 'CPT-1', 'RB-1', 'PT-1', 'ACT-1'],
+      ['105', 'STORAGE', 'SC-1', 'RB-1', 'PT-1', 'GWB-1'],
+    ]);
 
     const sheet = { id: 's', docId: 'd', page: 1, name: 'A1.01', width: vp.width, height: vp.height, metersPerPoint: mpp, scaleLabel: '1:100', scaleSource: 'preset', scaleHints: [] } as Sheet;
     const walls = lengthsByType((await sheetWallTakeoff(page, sheet, 3, true)).runs, mpp);

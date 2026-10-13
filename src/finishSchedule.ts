@@ -61,7 +61,8 @@ export function readFinishSchedule(texts: PageText[]): FinishSchedule | null {
     const right = Math.max(...columns.map((c) => c.x));
     const bottom = Math.max(...band.map((h) => h.y + h.h));
 
-    const below = texts.filter((t) => t.cy > bottom && t.cx > left - 120 && t.cx < right + 160);
+    // Table cells read across the page: turned text near the table (a dimension) is not one.
+    const below = texts.filter((t) => t.cy > bottom && t.cx > left - 120 && t.cx < right + 160 && (!t.angle || Math.abs(t.angle) < 0.1));
     // The room number column: its heading, or else the leftmost column of room-number-like cells.
     let roomX = columns.find((c) => c.role === 'room')?.x;
     if (roomX === undefined) {
@@ -72,8 +73,11 @@ export function readFinishSchedule(texts: PageText[]): FinishSchedule | null {
     }
     const nearest = (x: number) => columns.reduce((a, b) => (Math.abs(b.x - x) < Math.abs(a.x - x) ? b : a));
 
+    // A room number sits in its column: no farther from the heading than the next column is.
+    const nextX = Math.min(...columns.filter((c) => c.x > roomX! + 1).map((c) => c.x));
+    const reach = Number.isFinite(nextX) ? Math.max(24, nextX - roomX) : 60;
     const rowsAt = below
-      .filter((t) => ROOM_NO.test(t.str) && nearest(t.cx).role === 'room')
+      .filter((t) => ROOM_NO.test(t.str) && nearest(t.cx).role === 'room' && Math.abs(t.cx - roomX!) <= reach)
       .sort((a, b) => a.cy - b.cy);
     if (rowsAt.length < 2) continue;
     // Stop at the first big gap: the schedule has ended.
