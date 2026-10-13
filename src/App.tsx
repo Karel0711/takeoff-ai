@@ -12,6 +12,7 @@ import { QuickStartDialog } from './components/QuickStartDialog';
 import { TypeLibraryDialog } from './components/TypeLibraryDialog';
 import { LegendDialog, type LegendChoice } from './components/LegendDialog';
 import { readLegend, type LegendRow } from './fill/legend';
+import { guessDivision } from './divisionGuess';
 import { ProjectsPanel } from './components/ProjectsPanel';
 import { ScalePicker } from './components/ScalePicker';
 import { ShortcutsDialog } from './components/ShortcutsDialog';
@@ -862,7 +863,15 @@ export function App() {
     choices.forEach((c, i) => {
       const id = newId();
       const item = c.kind === 'count' ? { name: c.label, unit: 'ea', formula: 'N' } : c.kind === 'area' ? { name: c.label, unit: area, formula: 'A' } : { name: c.label, unit: len, formula: 'L' };
-      types.push({ id, name: c.label, color: PALETTE[(p.types.length + i) % PALETTE.length], kind: c.kind, height: c.kind === 'linear' ? 0 : h, items: [{ id: newId(), ...item }] });
+      types.push({
+        id,
+        name: c.label,
+        color: PALETTE[(p.types.length + i) % PALETTE.length],
+        kind: c.kind,
+        height: c.kind === 'linear' ? 0 : h,
+        division: guessDivision(c.label),
+        items: [{ id: newId(), ...item }],
+      });
       if (c.kind !== 'count') return;
       const places = c.row.found?.length ? c.row.found.map((f) => f.at) : (c.row.tagged ?? []).map((t) => [t.cx, t.cy] as Pt);
       for (const at of places) added.push({ id: newId(), sheetId, typeId: id, points: [at], holes: [] });
