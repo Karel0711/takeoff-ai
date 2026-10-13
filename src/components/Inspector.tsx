@@ -14,6 +14,8 @@ interface Props {
   project: Project;
   sheet: Sheet | null;
   totals: TypeTotals[];
+  /** The same, for the current sheet only. */
+  sheetTotals: TypeTotals[];
   activity: ActivityEvent[];
   selectedId: string | null;
   onSelect: (id: string | null) => void;
@@ -50,7 +52,7 @@ export function Inspector(props: Props) {
         </div>
       </div>
       <div className="inspector-body">
-        {tab === 'quantities' && <QuantityPanel totals={props.totals} onEdit={props.onEditType} />}
+        {tab === 'quantities' && <QuantityPanel totals={props.totals} sheetTotals={props.sheetTotals} sheetName={props.sheet?.name} onEdit={props.onEditType} />}
         {tab === 'takeoffs' && <TakeoffList {...props} />}
         {tab === 'history' && <HistoryList events={props.activity} />}
       </div>

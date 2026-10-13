@@ -199,6 +199,10 @@ export function App() {
   }, [toast]);
 
   const totals = useMemo(() => (project ? typeTotals(project) : []), [project]);
+  const sheetTotals = useMemo(
+    () => (project && sheetId ? typeTotals({ ...project, measurements: project.measurements.filter((m) => m.sheetId === sheetId) }) : []),
+    [project, sheetId],
+  );
 
   const record = useCallback((events: ActivityEvent[], replaceBatch?: string) => {
     if (!events.length && !replaceBatch) return;
@@ -1220,6 +1224,7 @@ export function App() {
             project={project}
             sheet={sheet}
             totals={totals}
+            sheetTotals={sheetTotals}
             activity={activity}
             selectedId={selectedId}
             onSelect={setSelectedId}

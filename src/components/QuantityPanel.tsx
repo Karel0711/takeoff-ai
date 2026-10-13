@@ -1,16 +1,21 @@
+import { useState } from 'react';
 import type { TypeTotals } from '../quantities';
 import { formatQty } from '../units';
 import { Icon } from './Icons';
 
 interface Props {
   totals: TypeTotals[];
+  sheetTotals: TypeTotals[];
+  sheetName?: string;
   onEdit: (typeId: string) => void;
 }
 
 /** Project totals per takeoff type, with each assembly item's quantity. */
-export function QuantityPanel({ totals, onEdit }: Props) {
-  const used = totals.filter((t) => t.vars.N > 0 || t.unscaled > 0);
-  if (!used.length)
+export function QuantityPanel({ totals, sheetTotals, sheetName, onEdit }: Props) {
+  const [scope, setScope] = useState<'all' | 'sheet'>('all');
+  const anything = totals.some((t) => t.vars.N > 0 || t.unscaled > 0);
+  const used = (scope === 'sheet' ? sheetTotals : totals).filter((t) => t.vars.N > 0 || t.unscaled > 0);
+  if (!anything)
     return (
       <div className="empty-note">
         <Icon name="sigma" size={22} />
@@ -19,6 +24,17 @@ export function QuantityPanel({ totals, onEdit }: Props) {
     );
   return (
     <div className="quantities">
+      <div className="list-toolbar">
+        <div className="segmented small" role="tablist" aria-label="Quantities for">
+          <button role="tab" aria-selected={scope === 'all'} className={scope === 'all' ? 'on' : ''} onClick={() => setScope('all')}>
+            All sheets
+          </button>
+          <button role="tab" aria-selected={scope === 'sheet'} className={scope === 'sheet' ? 'on' : ''} onClick={() => setScope('sheet')} disabled={!sheetName}>
+            {sheetName ? `Sheet ${sheetName}` : 'This sheet'}
+          </button>
+        </div>
+      </div>
+      {used.length === 0 && <p className="muted empty-line">Nothing taken off on this sheet yet.</p>}
       {used.map((t) => (
         <section className="qty-card" key={t.type.id}>
           <button className="qty-head" onClick={() => onEdit(t.type.id)} title="Edit type and assembly">
