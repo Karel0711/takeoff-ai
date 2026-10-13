@@ -138,7 +138,7 @@ export function wallTakeoff(
   const pieceRun: number[] = [];
   const firstPiece: number[] = [];
   const lastPiece: number[] = [];
-  const links: [number, number, 'wall' | 'tee'][] = [];
+  const links: [number, number, 'straight' | 'corner' | 'tee'][] = [];
   runs.forEach((r, ri) => {
     const L = runLength(r);
     const ux = (r.b[0] - r.a[0]) / L;
@@ -152,7 +152,7 @@ export function wallTakeoff(
     const bounds = [0, ...ts, L];
     firstPiece[ri] = pieces.length;
     for (let k = 0; k < bounds.length - 1; k++) {
-      if (k > 0) links.push([pieces.length - 1, pieces.length, 'wall']);
+      if (k > 0) links.push([pieces.length - 1, pieces.length, 'straight']);
       pieceRun.push(ri);
       pieces.push({ a: k === 0 ? r.a : at(bounds[k]), b: k === bounds.length - 2 ? r.b : at(bounds[k + 1]), thickness: r.thickness, id: pieces.length, tags: [], how: null });
     }
@@ -162,7 +162,7 @@ export function wallTakeoff(
   for (const c of corners) {
     const r2 = runs[c.r2];
     const end2 = dist(r2.a, c.at) <= dist(r2.b, c.at) ? 'a' : 'b';
-    links.push([pieceAtEnd(c.r1, c.end1), pieceAtEnd(c.r2, end2), 'wall']);
+    links.push([pieceAtEnd(c.r1, c.end1), pieceAtEnd(c.r2, end2), 'corner']);
   }
   // A wall running into the side of another: an untagged one is most likely the same type.
   for (const t of carry === 'wall+tees' ? tees : []) {
@@ -235,13 +235,13 @@ export function wallTakeoff(
   // Partitions and furring keep to walls of the same thickness. Exterior and
   // foundation types follow their wall on round corners even where it thickens
   // (cladding, footings change), but never into walls that run into it.
-  const adj = pieces.map(() => [] as { j: number; diff: number; tee: boolean }[]);
+  const adj = pieces.map(() => [] as { j: number; diff: number; tee: boolean; link: 'straight' | 'corner' | 'tee' }[]);
   for (const [i, j, kind] of links) {
     if (carry === 'none') continue;
     const diff = Math.abs(pieces[i].thickness - pieces[j].thickness) / Math.max(pieces[i].thickness, pieces[j].thickness);
     const abs = Math.abs(pieces[i].thickness - pieces[j].thickness);
-    adj[i].push({ j, diff: abs <= 0.6 ? 0 : diff, tee: kind === 'tee' });
-    adj[j].push({ j: i, diff: abs <= 0.6 ? 0 : diff, tee: kind === 'tee' });
+    adj[i].push({ j, diff: abs <= 0.6 ? 0 : diff, tee: kind === 'tee', link: kind });
+    adj[j].push({ j: i, diff: abs <= 0.6 ? 0 : diff, tee: kind === 'tee', link: kind });
   }
   const followsWall = (kind: string) => kind === 'exterior' || kind === 'foundation';
   const kinds = new Set(tagged.flatMap((m) => [...m.keys()]));
@@ -266,7 +266,10 @@ export function wallTakeoff(
       const i = queue.splice(k, 1)[0];
       if (done.has(i)) continue;
       done.add(i);
-      for (const { j, diff, tee } of adj[i]) {
+      for (const { j, diff, tee, link } of adj[i]) {
+        // Furring and finishes belong to a room: they turn its corners but stop where a
+        // wall meets them and the wall carries on into the next room.
+        if (kind === 'furring' && link === 'straight') continue;
         // Within a fifth of the thickness counts as the same wall for exterior and
         // foundation walls (cladding and footing changes, pilasters); others must match.
         if (diff > (followsWall(kind) && !tee ? 0.2 : 0)) continue;
