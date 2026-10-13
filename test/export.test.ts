@@ -118,4 +118,13 @@ describe('room finishes in the workbook', () => {
     expect(ceil.getCell('H').value as number).toBeCloseTo(80);
     expect(floor.name).toBe('Floor finish');
   });
+
+  it('leaves out areas a legend found, which are a finish named by their room', async () => {
+    const p = sampleProject();
+    const room = p.measurements.find((m) => m.id === 'e')!;
+    room.label = '101 LOBBY';
+    p.measurements.push({ ...room, id: 'legend-area', label: '101 LOBBY', source: 'legend' });
+    const ws = (await buildWorkbook(p)).getWorksheet('Room Finishes')!;
+    expect(ws.rowCount).toBe(2);
+  });
 });

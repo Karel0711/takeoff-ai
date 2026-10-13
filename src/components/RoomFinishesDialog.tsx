@@ -35,7 +35,8 @@ export function RoomFinishesDialog({ project, palette, getPage, onApply, onFindR
   const rooms = useMemo(
     () =>
       project.measurements
-        .filter((m) => areaTypeIds.has(m.typeId) && (m.label || m.source === 'rooms'))
+        // Areas a legend found are a finish already (named by the room they're in), not rooms.
+        .filter((m) => areaTypeIds.has(m.typeId) && m.source !== 'legend' && (m.label || m.source === 'rooms'))
         .sort((a, b) => (a.label ?? '').localeCompare(b.label ?? '', undefined, { numeric: true })),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [project.measurements],

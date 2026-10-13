@@ -334,7 +334,9 @@ export async function buildWorkbook(project: Project, activity: ActivityEvent[] 
   // Room finish schedule: every named area with its finishes.
   const typeById = new Map(project.types.map((t) => [t.id, t]));
   const sheetById = new Map(project.sheets.map((x) => [x.id, x]));
-  const rooms = project.measurements.filter((m) => typeById.get(m.typeId)?.kind === 'area' && (m.label || m.source === 'rooms' || m.finishes));
+  const rooms = project.measurements.filter(
+    (m) => typeById.get(m.typeId)?.kind === 'area' && (m.finishes || (m.source !== 'legend' && (m.label || m.source === 'rooms'))),
+  );
   if (rooms.length) {
     const ws = wb.addWorksheet(sheetName('Room Finishes', used));
     const area = project.units === 'metric' ? 'm²' : 'SF';

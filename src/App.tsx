@@ -1058,7 +1058,7 @@ export function App() {
         items: [{ id: newId(), ...item }],
       });
       if (c.kind === 'area') {
-        for (const a of c.row.areas ?? []) added.push({ id: newId(), sheetId, typeId: id, points: a.points, holes: [], ...(a.openings ? { openings: a.openings } : {}), ...(a.label ? { label: a.label } : {}) });
+        for (const a of c.row.areas ?? []) added.push({ id: newId(), sheetId, typeId: id, points: a.points, holes: [], source: 'legend' as const, ...(a.openings ? { openings: a.openings } : {}), ...(a.label ? { label: a.label } : {}) });
         return;
       }
       if (c.kind !== 'count') return;

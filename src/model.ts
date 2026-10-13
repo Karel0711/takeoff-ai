@@ -112,7 +112,7 @@ export interface Measurement {
   /** Cutouts subtracted from an area measurement. */
   holes: Pt[][];
   /** Made by the automatic wall or room takeoff, so a re-run can replace it. */
-  source?: 'walls' | 'rooms';
+  source?: 'walls' | 'rooms' | 'legend';
   /** A name for this takeoff, e.g. the room it covers ("112 RECEIVING & GEN. STORAGE"). */
   label?: string;
   /**
