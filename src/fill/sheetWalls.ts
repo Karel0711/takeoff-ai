@@ -8,8 +8,23 @@ import { extractSegments, type Segment } from './vectors';
  * plan, so segments are kept per page and the model is rebuilt only when the scale
  * or the opening size changes.
  */
-const segmentCache = new WeakMap<PDFPageProxy, Promise<Segment[]>>();
-const modelCache = new WeakMap<PDFPageProxy, Map<string, WallModel>>();
+// A dense sheet's linework runs to hundreds of thousands of segments, and pdf.js keeps
+// page objects alive, so only the last few sheets used are kept.
+const KEEP = 4;
+const segmentCache = new Map<PDFPageProxy, Promise<Segment[]>>();
+const modelCache = new Map<PDFPageProxy, Map<string, WallModel>>();
+
+function touch(page: PDFPageProxy) {
+  const p = segmentCache.get(page);
+  if (!p) return;
+  segmentCache.delete(page);
+  segmentCache.set(page, p);
+  while (segmentCache.size > KEEP) {
+    const oldest = segmentCache.keys().next().value!;
+    segmentCache.delete(oldest);
+    modelCache.delete(oldest);
+  }
+}
 
 export function segmentsOf(page: PDFPageProxy): Promise<Segment[]> {
   let p = segmentCache.get(page);
@@ -18,8 +33,11 @@ export function segmentsOf(page: PDFPageProxy): Promise<Segment[]> {
       const vp = page.getViewport({ scale: 1 });
       return extractSegments(ops.fnArray, ops.argsArray, vp.transform as [number, number, number, number, number, number]);
     });
+    // A failed read is not kept, so the next try reads again.
+    p.catch(() => segmentCache.delete(page));
     segmentCache.set(page, p);
   }
+  touch(page);
   return p;
 }
 
