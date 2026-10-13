@@ -144,6 +144,7 @@ describe('sample plan', () => {
     ['a drawing printed without lineweights', { onePen: true }, 0.05],
     ['walls exploded into short pieces', { pieces: 0.5 }, 0],
     ['text written one character at a time', { charByChar: true }, 0],
+    ['room numbers printed without a box', { bareRoomNumbers: true }, 0],
   ] as const) {
     it(`reads ${style}`, async () => {
       const doc = await getDocument({ data: await samplePlanPdf('metric', options) }).promise;
@@ -156,6 +157,7 @@ describe('sample plan', () => {
       expect(checkScale(texts, segs, 'metric')!.agree).toBe(11);
       const rooms = fillRooms(buildWallModel(segs, mpp), findRoomLabels(texts, segs), vp.width, vp.height);
       const want: Record<string, number> = { '101': 62.89, '102': 30.74, '103': 30.74, '104': 30.74, '105': 30.74 };
+      expect(rooms.map((r) => r.labels[0].number).sort()).toEqual(Object.keys(want));
       for (const r of rooms) {
         const area = ringArea(r.points ?? []) * mpp * mpp;
         // Door swings drawn in the wall pen come off the room, a few percent.

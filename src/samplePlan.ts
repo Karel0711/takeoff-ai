@@ -21,12 +21,15 @@ export async function samplePlanPdf(
     pieces?: number;
     /** Plan text written one character at a time, as some PDF writers do. */
     charByChar?: boolean;
+    /** Room numbers printed bare under the name, without a box. */
+    bareRoomNumbers?: boolean;
   } = {},
 ): Promise<Uint8Array> {
   const poche = options.walls === 'poche';
   pens = options.onePen ? { wall: 0.24, thin: 0.24 } : { wall: 0.7, thin: 0.25 };
   piece = options.pieces ?? 0;
   byChar = !!options.charByChar;
+  bareRooms = !!options.bareRoomNumbers;
   const doc = await PDFDocument.create();
   doc.setTitle('Takeoff sample plan');
   const font = await doc.embedFont(StandardFonts.Helvetica);
@@ -58,6 +61,7 @@ const ink = rgb(0, 0, 0);
 let pens = { wall: 0.7, thin: 0.25 };
 let piece = 0;
 let byChar = false;
+let bareRooms = false;
 
 /** `poche`: walls as solid filled shapes with no outline, as some exports draw them. */
 function drawPlan(page: PDFPage, font: PDFFont, bold: PDFFont, units: Units, ceiling: boolean, poche = false) {
@@ -187,7 +191,7 @@ function drawPlan(page: PDFPage, font: PDFFont, bold: PDFFont, units: Units, cei
   ];
   for (const [name, num, x, y] of rooms) {
     text(name, x, y - 0.45, 7);
-    page.drawRectangle({ x: px(x) - 12, y: py(y + 0.05) - 6, width: 24, height: 12, borderColor: ink, borderWidth: pens.thin });
+    if (!bareRooms) page.drawRectangle({ x: px(x) - 12, y: py(y + 0.05) - 6, width: 24, height: 12, borderColor: ink, borderWidth: pens.thin });
     text(num, x, y + 0.05, 7);
   }
 
