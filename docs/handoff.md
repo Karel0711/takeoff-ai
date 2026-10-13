@@ -40,7 +40,12 @@ Where the project stands, for picking it up in a new session.
   pier between, faces stepping by up to 1.5 pt / 30% of thickness, thickness
   within 35%) meet in the middle and carry types straight through, and so do
   two collinear walls ending at one junction (A2.0 EW1 71.4 vs 73.5, was 63.6).
-  A2.3 (roof) is still off: roof hatching reads as walls there. EW7A/EW7B on A2.2 (5 and 6 m in the workbook) have no tags
+  A2.3 (roof) is still off. The roof deck hatch lines are about 17 pt (0.6 m) apart, inside
+  wall-thickness range, so the EW6B tag's run carries on along a hatch-line pair across the deck
+  (about 8.7 m). The EW6A over-count comes from the parapet line pair along the north edge, which
+  carries the run past the tagged stretch. A ladder test (a pair with a third and fourth parallel
+  line at the same spacing is hatching) would drop the EW6B stretch, but EW6B is then short of
+  the workbook, so check which roof edges the estimator counts before changing it. EW7A/EW7B on A2.2 (5 and 6 m in the workbook) have no tags
   on the sheet.
   Earlier notes: Centreline lengths by
   wall type from vector linework and type tags. Against the estimator's ACC
