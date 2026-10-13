@@ -14,7 +14,7 @@ Where the project stands, for picking it up in a new session.
     1.2 MP there, so the sheet's text layer carries the small print.
   - Run locally (`npm run dev`): uses the user's Anthropic API key from
     **AI settings**, `claude-opus-5-5`, structured outputs.
-- **Fill room (done, awaiting comparison with Autodesk areas):** one-click room
+- **Fill room (done; the estimator checked it against their Autodesk Takeoff areas: exact):** one-click room
   areas from PDF vector linework (`src/fill/`). On A2.1 at 1:100 every labelled
   room fills; closed rooms snap to the wall lines with 0.0 mm edge error, e.g.
   Staff Office 10.57 m², Staff Room 56.72, Elevator 5.49, Storage 23.30, BF WR
@@ -76,8 +76,8 @@ the `downloads` capability).
      addendum documents is a future feature.
 2. ~~Match the Excel export to the estimator's bid workbook layout~~ (done;
    formulas verified by recalculating an export in LibreOffice).
-3. Compare Fill room areas with the estimator's Autodesk Takeoff areas for the
-   same rooms; tune the opening rules if open-plan spaces split differently.
+3. ~~Compare Fill room areas with the estimator's Autodesk Takeoff areas~~
+   (done: they match).
 4. Finish schedules into room types; then automatic wall and room takeoff
    (wall tags + PDF vector geometry), checked against the bid quantities.
 5. REA: analyse Autodesk Takeoff from a HAR capture recorded by the user (the
