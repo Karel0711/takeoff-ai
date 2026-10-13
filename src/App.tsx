@@ -11,7 +11,7 @@ import { RoomFinishesDialog } from './components/RoomFinishesDialog';
 import { QuickStartDialog } from './components/QuickStartDialog';
 import { TypeLibraryDialog } from './components/TypeLibraryDialog';
 import { LegendDialog, type LegendChoice } from './components/LegendDialog';
-import { readLegendAsync, type LegendRow } from './fill/legend';
+import { findLegendAreas, readLegendAsync, type LegendRow } from './fill/legend';
 import { guessDivision } from './divisionGuess';
 import { ProjectsPanel } from './components/ProjectsPanel';
 import { ScalePicker } from './components/ScalePicker';
@@ -850,6 +850,12 @@ export function App() {
       await new Promise((r) => setTimeout(r, 30));
       const [texts, segs] = await Promise.all([pageTexts(page), segmentsOf(page)]);
       const rows = await readLegendAsync(texts, segs, box, (i, n) => setBusy(`Reading the legend… symbol ${i + 1} of ${n}`));
+      // Hatch swatches: the areas hatched the same way (the walls need the sheet's scale).
+      if (sheet.metersPerPoint && rows.some((r) => r.kind === 'area')) {
+        setBusy('Reading the legend… hatches');
+        await new Promise((r) => setTimeout(r, 0));
+        findLegendAreas(rows, segs, box, sheet.width, sheet.height, sheet.metersPerPoint);
+      }
       if (!rows.length) {
         setToast({ text: 'No legend lines in that box. Box the symbols together with their labels.', undo: false });
         return;
@@ -883,13 +889,17 @@ export function App() {
         division: guessDivision(c.label),
         items: [{ id: newId(), ...item }],
       });
+      if (c.kind === 'area') {
+        for (const a of c.row.areas ?? []) added.push({ id: newId(), sheetId, typeId: id, points: a.points, holes: [] });
+        return;
+      }
       if (c.kind !== 'count') return;
       const places = c.row.found?.length ? c.row.found.map((f) => f.at) : (c.row.tagged ?? []).map((t) => [t.cx, t.cy] as Pt);
       for (const at of places) added.push({ id: newId(), sheetId, typeId: id, points: [at], holes: [] });
     });
     commit((q) => ({ ...q, types: [...q.types, ...types], measurements: [...q.measurements, ...added] }), 'Legend');
     setActiveTypeId(types[0].id);
-    setToast({ text: `Added ${types.length} type${types.length === 1 ? '' : 's'} from the legend${added.length ? `, ${added.length} counted` : ''}`, undo: true });
+    setToast({ text: `Added ${types.length} type${types.length === 1 ? '' : 's'} from the legend${added.length ? ` with ${added.length} takeoff${added.length === 1 ? '' : 's'}` : ''}`, undo: true });
     // Then the legend's symbols on the rest of the set, as their own change.
     const symbols = choices.flatMap((c, n) => (c.kind === 'count' && c.row.sample ? [{ sample: c.row.sample, typeId: types[n].id }] : []));
     if (everywhere && symbols.length) void countEverywhere(symbols, sheetId, `Added ${types.length} type${types.length === 1 ? '' : 's'}. `);

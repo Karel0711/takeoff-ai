@@ -72,7 +72,9 @@ export function LegendDialog({ sheetName, rows, multiSheet, onAdd, onClose }: Pr
                     </select>
                   </td>
                   <td className="num">
-                    {d.kind !== 'count'
+                    {d.kind === 'area' && r.areas?.length
+                      ? `${r.areas.length} area${r.areas.length === 1 ? '' : 's'} hatched like this`
+                      : d.kind !== 'count'
                       ? 'add, then fill or trace'
                       : n
                         ? `${n} found${r.found?.length ? '' : ` by tag ${r.tag}`}`

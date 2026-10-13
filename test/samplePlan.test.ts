@@ -1,6 +1,6 @@
 import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { describe, expect, it } from 'vitest';
-import { readLegend } from '../src/fill/legend';
+import { findLegendAreas, readLegend } from '../src/fill/legend';
 import { buildWallModel } from '../src/fill/roomFill';
 import { findSimilar } from '../src/fill/similar';
 import { fillRooms, findDoorTags, findRoomLabels } from '../src/fill/rooms';
@@ -95,13 +95,16 @@ describe('sample plan', () => {
     const segs = extractSegments(ops.fnArray, ops.argsArray, vp.transform as never);
     const texts = await pageTexts(page);
 
-    const legend = readLegend(texts, segs, [730, 195, 905, 300]);
+    const legend = readLegend(texts, segs, [725, 195, 905, 340]);
     expect(legend.map((r) => [r.label, r.kind])).toEqual([
       ['ACT-1 ACOUSTIC TILE, 2X4 GRID', 'area'],
       ['GWB-1 PAINTED GYPSUM BOARD', 'area'],
       ['DOWNLIGHT', 'count'],
     ]);
     expect(legend[2].found?.length).toBe(22);
+    // The GWB swatch is a stipple dense enough to sample: it finds the lobby and storage.
+    findLegendAreas(legend, segs, [725, 195, 905, 340], vp.width, vp.height, mpp);
+    expect((legend[1].areas ?? []).map((a) => +(a.area * mpp * mpp).toFixed(1)).sort()).toEqual([30.7, 62.9]);
 
     const model = buildWallModel(segs, mpp);
     const rooms = fillRooms(model, findRoomLabels(texts, segs), vp.width, vp.height);

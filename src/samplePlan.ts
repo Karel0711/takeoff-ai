@@ -302,29 +302,35 @@ function drawPlan(page: PDFPage, font: PDFFont, bold: PDFFont, units: Units, cei
     ];
     for (const [x, y] of lights) light(px(x), py(y));
 
-    // Ceiling legend, between the plan and the title block (in sheet points).
-    const lx = 745;
+    // Ceiling legend, between the plan and the title block (in sheet points). Swatches show
+    // each hatch at the plan's own spacing, as legends do.
+    const lx = 732;
     let ly = H - 210;
     page.drawText('CEILING LEGEND:', { x: lx, y: ly, size: 8, font: bold, color: ink });
     const swatch = (fill: (x0: number, y0: number, x1: number, y1: number) => void) => {
-      const [x0, y0, x1, y1] = [lx, ly - 7, lx + 34, ly + 7];
+      const [x0, y0, x1, y1] = [lx, ly - 18, lx + 56, ly + 18];
       page.drawRectangle({ x: x0, y: y0, width: x1 - x0, height: y1 - y0, borderColor: ink, borderWidth: pens.thin });
       fill(x0, y0, x1, y1);
     };
-    const row = (label: string) => page.drawText(label, { x: lx + 50, y: ly - 2.5, size: 6.5, font, color: ink });
-    ly -= 26;
+    const row = (label: string) => page.drawText(label, { x: lx + 66, y: ly - 2.5, size: 6.5, font, color: ink });
+    ly -= 36;
     swatch((x0, y0, x1, y1) => {
-      page.drawLine({ start: { x: (x0 + x1) / 2, y: y0 }, end: { x: (x0 + x1) / 2, y: y1 }, thickness: GRID, color: ink });
-      page.drawLine({ start: { x: x0, y: (y0 + y1) / 2 }, end: { x: x1, y: (y0 + y1) / 2 }, thickness: GRID, color: ink });
+      for (let x = x0 + 0.5 * K; x < x1; x += 1.2 * K) page.drawLine({ start: { x, y: y0 }, end: { x, y: y1 }, thickness: GRID, color: ink });
+      for (let y = y0 + 0.3 * K; y < y1; y += 0.6 * K) page.drawLine({ start: { x: x0, y }, end: { x: x1, y }, thickness: GRID, color: ink });
     });
     row('ACT-1 ACOUSTIC TILE, 2X4 GRID');
-    ly -= 26;
+    ly -= 46;
     swatch((x0, y0, x1, y1) => {
-      for (let y = y0 + 2.5; y < y1 - 1; y += 3) for (let x = x0 + 2.5; x < x1 - 1; x += 3) dot(x + ((x * 7 + y * 3) % 2) - 0.5, y);
+      let n = 0;
+      for (let y = y0 + 0.2 * K; y < y1 - 0.1 * K; y += 0.35 * K)
+        for (let x = x0 + 0.2 * K; x < x1 - 0.1 * K; x += 0.35 * K) {
+          n++;
+          dot(x + 0.12 * K * Math.sin(n * 12.9898), y + 0.12 * K * Math.cos(n * 78.233));
+        }
     });
     row('GWB-1 PAINTED GYPSUM BOARD');
-    ly -= 26;
-    light(lx + 17, ly);
+    ly -= 40;
+    light(lx + 28, ly);
     row('DOWNLIGHT');
   }
 

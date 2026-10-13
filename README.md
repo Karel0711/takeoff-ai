@@ -250,6 +250,9 @@ right. Tools sit in the title bar.
     Each line becomes a takeoff type (count, area or length, from its graphic:
     symbol, framed swatch or line type), and symbols are counted where the same
     symbol, or its tag (FH, HP), is drawn on the sheet (`src/fill/legend.ts`).
+    On a scaled sheet, a swatch whose hatch is dense enough to sample (a stipple)
+    also finds the areas hatched like it. Symbols can be counted on every other
+    sheet too.
     Site plans often draw plan symbols differently from the legend; those rows
     say so and are counted with Symbols.
 16. **Sample plan:** the welcome screen's *Try a sample plan* draws a small 1:100

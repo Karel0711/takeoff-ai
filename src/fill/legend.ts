@@ -1,5 +1,8 @@
 import type { Kind } from '../model';
 import type { PageText } from '../pageText';
+import { marksOf } from './marks';
+import { buildWallModel, type WallModel } from './roomFill';
+import { findPatternOn, samplePattern, type SimilarArea } from './similar';
 import { matchSymbol, sampleSymbol, type SymbolMatch, type SymbolSample } from './symbols';
 import type { Segment } from './vectors';
 
@@ -18,6 +21,39 @@ export interface LegendRow {
   /** A short tag drawn with the graphic (FH, HP), and where it appears on the sheet outside the legend. */
   tag?: string;
   tagged?: PageText[];
+  /** For hatch swatches: the areas on the sheet hatched the same way, outside the legend. */
+  areas?: SimilarArea[];
+}
+
+/**
+ * Finds the areas hatched like each swatch (a stipple or a hatch dense enough to sample
+ * inside the swatch's frame). Needs the sheet's scale for its walls.
+ */
+export function findLegendAreas(rows: LegendRow[], segs: Segment[], box: Box, sheetW: number, sheetH: number, metersPerPoint: number): void {
+  const [x0, y0, x1, y1] = norm(box);
+  let model: WallModel | null = null;
+  const marks = marksOf(segs);
+  for (const r of rows) {
+    if (r.kind !== 'area' || !r.graphic) continue;
+    // Inside the frame, clear of its lines.
+    const [gx0, gy0, gx1, gy1] = r.graphic;
+    const inset = 1.5;
+    if (gx1 - gx0 < 4 * inset || gy1 - gy0 < 4 * inset) continue;
+    const ring: [number, number][] = [
+      [gx0 + inset, gy0 + inset],
+      [gx1 - inset, gy0 + inset],
+      [gx1 - inset, gy1 - inset],
+      [gx0 + inset, gy1 - inset],
+    ];
+    const pattern = samplePattern(marks, ring, sheetW * sheetH);
+    if (!pattern) continue;
+    const found = findPatternOn(segs, () => (model ??= buildWallModel(segs, metersPerPoint)), pattern, sheetW, sheetH);
+    const centre = (pts: [number, number][]) => [pts.reduce((n, p) => n + p[0], 0) / pts.length, pts.reduce((n, p) => n + p[1], 0) / pts.length];
+    r.areas = found.areas.filter((a) => {
+      const [cx, cy] = centre(a.points);
+      return !(cx >= x0 && cx <= x1 && cy >= y0 && cy <= y1);
+    });
+  }
 }
 
 const norm = (b: Box): Box => [Math.min(b[0], b[2]), Math.min(b[1], b[3]), Math.max(b[0], b[2]), Math.max(b[1], b[3])];
