@@ -16,6 +16,8 @@ import { Viewer, type Tool } from './components/Viewer';
 import { WallTakeoffDialog } from './components/WallTakeoffDialog';
 import { exportWorkbook } from './exportExcel';
 import { segmentsOf, segmentsOnce, wallModelFor } from './fill/sheetWalls';
+import { canAskClaude, readSheetName } from './ai/sheetName';
+import { describeAiError } from './ai/readLegend';
 import { findSimilar, pointInRing } from './fill/similar';
 import { matchSymbol, sampleSymbol, type SymbolSample } from './fill/symbols';
 import { isHosted, saveFile } from './host';
@@ -489,6 +491,33 @@ export function App() {
     } finally {
       setBusy(null);
     }
+  }
+
+  /** Names the sheets drawn without a text layer ("Page 34") from their title blocks, with Claude. */
+  async function nameSheetsWithAi() {
+    const unnamed = project!.sheets.filter((x) => /^Page \d+$/.test(x.name));
+    if (!unnamed.length) return;
+    if (!(await canAskClaude())) {
+      setToast({ text: 'Reading sheet names needs Claude: add your API key in AI settings.', undo: false });
+      return;
+    }
+    const names = new Map<string, string>();
+    try {
+      for (const [i, x] of unnamed.entries()) {
+        setBusy(`Reading sheet names… ${i + 1} of ${unnamed.length}`);
+        const pg = await pdfs.get(x.docId)?.getPage(x.page);
+        if (!pg) continue;
+        const read = await readSheetName(pg);
+        if (read.number) names.set(x.id, read.number);
+      }
+    } catch (e) {
+      setToast({ text: describeAiError(e), undo: false });
+    } finally {
+      setBusy(null);
+    }
+    if (!names.size) return;
+    commit((p) => ({ ...p, sheets: p.sheets.map((x) => (names.has(x.id) ? { ...x, name: names.get(x.id)! } : x)) }), 'Name sheets');
+    setToast({ text: `Named ${names.size} sheet${names.size === 1 ? '' : 's'}: ${[...names.values()].join(', ')}`, undo: true });
   }
 
   /** Counts a sampled symbol on every other sheet, as one change. */
@@ -1080,6 +1109,9 @@ export function App() {
             [
               { label: 'History', hint: 'Every change', onSelect: () => setTab('history') },
               { label: 'Keyboard shortcuts', onSelect: () => setAiDialog('shortcuts') },
+              ...(project.sheets.some((x) => /^Page \d+$/.test(x.name))
+                ? [{ label: 'Name sheets with Claude…', hint: 'Sheets with no text', onSelect: () => void nameSheetsWithAi() }]
+                : []),
               ...(canUseServiceWorker() && !isInstalled() ? [{ label: 'Install as an app…', onSelect: () => void installApp() }] : []),
               ...(isHosted ? [] : [{ label: 'AI settings…', onSelect: () => setAiDialog('settings') }]),
             ],

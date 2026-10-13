@@ -93,7 +93,11 @@ undo/redo, and an activity log of every change.
   **Count on all sheets** (on the result) looks for the same symbol on every
   other sheet drawn at that scale: A6.1's CAN light finds 34 more on A6.2, about
   18 s for the 51-sheet set.
-- Next: sheet titles for sheets drawn without text, scale verification.
+- **Sheet names without text (done):** some sheets have their text drawn as
+  outlines (no text layer), so they come in as "Page 34". **More › Name sheets
+  with Claude…** reads each one's title block (the right and bottom strips) and
+  names it with its sheet number. Double-click a sheet to rename it by hand.
+- Next: scale verification.
 
 **Phase 3 — AI takeoff:** walls by type from the plan tags and PDF vector lines,
 rooms with finishes, all as suggestions you accept or correct.

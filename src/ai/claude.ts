@@ -87,6 +87,27 @@ export async function readAssemblyLegend(
   return { extraction: message.parsed_output, model: message.model };
 }
 
+/** Asks Claude a short question about some images and parses the JSON object it answers with. */
+export async function askClaudeJson<T>(prompt: string, images: Blob[], signal?: AbortSignal): Promise<T> {
+  const toBase64 = async (b: Blob) => {
+    const bytes = new Uint8Array(await b.arrayBuffer());
+    let bin = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    return btoa(bin);
+  };
+  const content: Anthropic.MessageParam['content'] = [
+    ...(await Promise.all(
+      images.map(async (b): Promise<Anthropic.ImageBlockParam> => ({ type: 'image', source: { type: 'base64', media_type: 'image/png', data: await toBase64(b) } })),
+    )),
+    { type: 'text', text: prompt },
+  ];
+  const message = await client().messages.create({ model: MODEL, max_tokens: 1000, messages: [{ role: 'user', content }] }, { signal });
+  const text = message.content.flatMap((c) => (c.type === 'text' ? [c.text] : [])).join('');
+  const json = /\{[\s\S]*\}/.exec(text)?.[0];
+  if (!json) throw new Error('Claude did not answer with the sheet name.');
+  return JSON.parse(json) as T;
+}
+
 /** Turns an API failure into a message a user can act on. */
 export function describeError(error: unknown): string {
   if (error instanceof Anthropic.AuthenticationError) return 'The API key was rejected. Check it in AI settings.';
