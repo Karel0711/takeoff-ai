@@ -17,6 +17,7 @@ import { WallTakeoffDialog } from './components/WallTakeoffDialog';
 import { exportWorkbook } from './exportExcel';
 import { segmentsOf, wallModelFor } from './fill/sheetWalls';
 import { findSimilar, pointInRing } from './fill/similar';
+import { findSymbols } from './fill/symbols';
 import { isHosted, saveFile } from './host';
 import { newId, newProject, type Project, type Pt, type Sheet, type TakeoffType, type Units } from './model';
 import { inspectPage, openPdf, type PDFDocumentProxy, type PDFPageProxy } from './pdf';
@@ -43,6 +44,7 @@ const TOOLS: { id: Tool; label: string; icon: IconName; key: string; help: strin
   { id: 'measure', label: 'Measure', icon: 'measure', key: 'M', help: 'Measure with the chosen takeoff type' },
   { id: 'fill', label: 'Fill room', icon: 'fill', key: 'R', help: 'Click inside a room to take off its area' },
   { id: 'cutout', label: 'Cutout', icon: 'cutout', key: 'C', help: 'Cut a hole out of the selected area' },
+  { id: 'symbol', label: 'Count symbols', icon: 'count', key: 'S', help: 'Drag a box around one symbol to count every copy on the sheet' },
 ];
 
 export function App() {
@@ -454,6 +456,36 @@ export function App() {
     setToast({ text: `Deleted ${type?.name.split(' – ')[0] ?? 'type'}${count ? ` and ${count} takeoff${count === 1 ? '' : 's'}` : ''}`, undo: true });
   }
 
+  /** Counts every copy of the symbol in the box, as the active count type. */
+  async function countSymbols(box: [number, number, number, number]) {
+    if (!page || !sheet || activeType?.kind !== 'count') return;
+    setBusy('Looking for this symbol…');
+    try {
+      await new Promise((r) => setTimeout(r, 30));
+      const found = findSymbols(await segmentsOf(page), box);
+      if (!found.length) {
+        setToast({ text: 'Nothing to match in that box. Drag it around one symbol’s linework.', undo: false });
+        return;
+      }
+      // Copies already counted as this type are left alone.
+      const span = Math.max(Math.abs(box[2] - box[0]), Math.abs(box[3] - box[1]));
+      const counted = project!.measurements.filter((m) => m.sheetId === sheet.id && m.typeId === activeType.id).map((m) => m.points[0]);
+      const fresh = found.filter((f) => !counted.some((p) => Math.hypot(p[0] - f.at[0], p[1] - f.at[1]) < span / 2));
+      if (!fresh.length) {
+        setToast({ text: `All ${found.length} copies of this symbol are already counted.`, undo: false });
+        return;
+      }
+      const added = fresh.map((f) => ({ id: newId(), sheetId: sheet.id, typeId: activeType.id, points: [f.at], holes: [] }));
+      commit((p) => ({ ...p, measurements: [...p.measurements, ...added] }), 'Count symbols');
+      setToast({
+        text: `Counted ${added.length} ${activeType.name.split(' – ')[0]}${found.length > added.length ? ` (${found.length - added.length} already counted)` : ''}`,
+        undo: true,
+      });
+    } finally {
+      setBusy(null);
+    }
+  }
+
   /** Adds every area on the sheet hatched like the given one, as the same type. */
   async function addSimilar(id: string) {
     const m = project!.measurements.find((x) => x.id === id);
@@ -502,7 +534,7 @@ export function App() {
   const chooseType = (t: TakeoffType) => {
     setActiveTypeId(t.id);
     setSelectedId(null);
-    if (tool === 'select' || tool === 'calibrate' || (tool === 'fill' && t.kind !== 'area') || tool === 'cutout') setTool('measure');
+    if (tool === 'select' || tool === 'calibrate' || (tool === 'fill' && t.kind !== 'area') || (tool === 'symbol' && t.kind !== 'count') || tool === 'cutout') setTool('measure');
   };
 
   const filteredSheets = project.sheets.filter((s) => s.name.toLowerCase().includes(sheetFilter.toLowerCase()));
@@ -512,10 +544,11 @@ export function App() {
     !page ||
     (id === 'measure' && !activeType) ||
     (id === 'fill' && activeType?.kind !== 'area') ||
+    (id === 'symbol' && activeType?.kind !== 'count') ||
     (id === 'cutout' && selectedType?.kind !== 'area');
   const toolTitle = (t: (typeof TOOLS)[number]) =>
     `${t.help} (${t.key})${
-      t.id === 'measure' && !activeType ? ' — choose a takeoff type first' : t.id === 'fill' && activeType?.kind !== 'area' ? ' — choose an area type first' : t.id === 'cutout' && selectedType?.kind !== 'area' ? ' — select an area first' : ''
+      t.id === 'measure' && !activeType ? ' — choose a takeoff type first' : t.id === 'fill' && activeType?.kind !== 'area' ? ' — choose an area type first' : t.id === 'symbol' && activeType?.kind !== 'count' ? ' — choose a count type first' : t.id === 'cutout' && selectedType?.kind !== 'area' ? ' — select an area first' : ''
     }`;
 
   return (
@@ -752,6 +785,7 @@ export function App() {
           onDelete={(id) => deleteMeasurements([id])}
           onCalibrate={(mpp, label) => sheet && updateSheet(sheet.id, { metersPerPoint: mpp, scaleLabel: label, scaleSource: 'calibrated' }, 'Calibrate')}
           onToolDone={() => setTool('select')}
+          onFindSymbols={(box) => void countSymbols(box)}
         />
 
         {project.sheets.length === 0 && (
@@ -1083,6 +1117,9 @@ function toolHint(tool: Tool, type: TakeoffType | null, sheet: Sheet | null): st
       return 'Click points · Double-click or Return to finish · Shift keeps lines straight · Esc cancels';
     case 'calibrate':
       return 'Click both ends of a dimension you know, then type its length';
+    case 'symbol':
+      if (type?.kind !== 'count') return 'Choose a count type on the left';
+      return 'Drag a box around one symbol · every copy on this sheet is counted, turned or not';
     case 'cutout':
       return 'Draw the hole inside the selected area · Double-click or Return to finish';
     case 'fill':

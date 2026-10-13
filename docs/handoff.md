@@ -75,6 +75,11 @@ Where the project stands, for picking it up in a new session.
   so wall pen detection now keeps every paired pen ≥55% of the heaviest and
   relaxes the paired share to 40% when no pen reaches 50% (the 1.44 pen also
   draws the sheet border).
+- **Count symbols:** `src/fill/symbols.ts`. Takes the lines inside the dragged
+  box as the sample, picks its rarest long line (by length and pen) as the
+  anchor, and at every sheet line matching the anchor (4 quarter turns, both
+  ends) checks that ≥85% of the sample's lines are there too (endpoint
+  tolerance 1% of the box, min 0.35 pt). A6.1 CAN light: 32 found, 0.3 s.
 - **Interface (redesigned):** light, Mac-style (system font, segmented tools,
   source-list sidebar, inspector with Quantities / Takeoffs / History). State
   changes go through `commit()` in `App.tsx`, which keeps undo/redo stacks and

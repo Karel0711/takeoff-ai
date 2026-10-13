@@ -83,6 +83,11 @@ undo/redo, and an activity log of every change.
   walls, part-hatched rooms (bulkheads, bands) as the hatched part. On the
   sample set's A6.1, one GWB-ceiling room finds 79.6 m² of GWB ceiling against
   81.7 m² in the bid workbook (A6.2: 112.9 against 127.2 m²).
+- **Count symbols (done):** pick a count type, choose **Count symbols** (S) and
+  drag a box around one symbol (a light fixture, a toilet, a receptacle). Every
+  copy on the sheet drawn with the same lines and pens, turned or not, is
+  counted. On A6.1 one box around a CAN light counts all 32 in about 0.3 s.
+  Copies already counted as that type are skipped, so it can be run again.
 - Next: sheet titles for sheets drawn without text, scale verification.
 
 **Phase 3 — AI takeoff:** walls by type from the plan tags and PDF vector lines,
@@ -175,9 +180,11 @@ right. Tools sit in the title bar.
 6. **Find areas hatched like this**: select a hatched area (a GWB ceiling, an
    ACT grid, a tile floor) and click it on the selection card to add every
    other area on the sheet drawn with the same hatch.
-7. **Cutout** (C): select an area, then draw the hole.
-8. Hover a type on the left to edit (pencil) or delete (bin) it.
-9. **Export** saves the takeoff to Excel, including the activity log.
+7. **Count symbols** (S): pick a count type and drag a box around one symbol to
+   count every copy on the sheet.
+8. **Cutout** (C): select an area, then draw the hole.
+9. Hover a type on the left to edit (pencil) or delete (bin) it.
+10. **Export** saves the takeoff to Excel, including the activity log.
 
 Deleting: select a takeoff and press Delete, use **Delete takeoff** on the
 selection card, or open **Takeoffs** in the inspector to delete one row, a whole

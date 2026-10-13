@@ -8,7 +8,7 @@ import { askText, notify } from './Dialogs';
 import { Icon } from './Icons';
 import { fillRoom, type WallModel } from '../fill/roomFill';
 
-export type Tool = 'select' | 'measure' | 'calibrate' | 'cutout' | 'fill';
+export type Tool = 'select' | 'measure' | 'calibrate' | 'cutout' | 'fill' | 'symbol';
 
 const FILL_FAILURES = {
   'on-wall': 'That click landed on a wall. Click inside the room.',
@@ -44,6 +44,8 @@ interface Props {
   onDelete: (id: string) => void;
   onCalibrate: (metersPerPoint: number, label: string) => void;
   onToolDone: () => void;
+  /** Count by symbol: the box dragged around one symbol (x0, y0, x1, y1). */
+  onFindSymbols: (box: [number, number, number, number]) => void;
 }
 
 /** Longest edge of the low-resolution page bitmap used for instant pan and zoom. */
@@ -59,6 +61,8 @@ export function Viewer(props: Props) {
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [view, setView] = useState<View>({ zoom: 0.3, x: 0, y: 0 });
   const [draft, setDraft] = useState<Pt[]>([]);
+  /** The box being dragged with Count symbols. */
+  const [band, setBand] = useState<{ a: Pt; b: Pt } | null>(null);
   const [hover, setHover] = useState<{ pt: Pt; sx: number; sy: number } | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const base = useRef<{ canvas: HTMLCanvasElement; pageRef: PDFPageProxy } | null>(null);
@@ -276,6 +280,13 @@ export function Viewer(props: Props) {
   };
 
   const onPointerDown = (e: PointerEvent<SVGSVGElement>) => {
+    if (tool === 'symbol' && e.button === 0 && !spaceHeld.current && sheet) {
+      e.preventDefault();
+      const { pt } = toPt(e);
+      setBand({ a: pt, b: pt });
+      svgRef.current!.setPointerCapture(e.pointerId);
+      return;
+    }
     const background = e.target === svgRef.current || (e.target as Element).classList.contains('bg');
     if (e.button === 1 || spaceHeld.current || (tool === 'select' && e.button === 0 && background)) {
       e.preventDefault();
@@ -285,6 +296,11 @@ export function Viewer(props: Props) {
   };
 
   const onPointerMove = (e: PointerEvent<SVGSVGElement>) => {
+    if (band) {
+      const { pt } = toPt(e);
+      setBand((b) => (b ? { ...b, b: pt } : b));
+      return;
+    }
     const p = pan.current;
     if (p) {
       const dx = e.clientX - p.sx;
@@ -298,6 +314,14 @@ export function Viewer(props: Props) {
   };
 
   const onPointerUp = () => {
+    if (band) {
+      const { a, b } = band;
+      setBand(null);
+      suppressClick.current = true;
+      // A box a few screen pixels across is a stray click, not a symbol.
+      if (Math.abs(b[0] - a[0]) * view.zoom > 4 && Math.abs(b[1] - a[1]) * view.zoom > 4) props.onFindSymbols([a[0], a[1], b[0], b[1]]);
+      return;
+    }
     if (pan.current) {
       suppressClick.current = pan.current.moved;
       pan.current = null;
@@ -483,6 +507,21 @@ export function Viewer(props: Props) {
             );
           })}
 
+          {band && (
+            <rect
+              className="band"
+              x={Math.min(band.a[0], band.b[0])}
+              y={Math.min(band.a[1], band.b[1])}
+              width={Math.abs(band.b[0] - band.a[0])}
+              height={Math.abs(band.b[1] - band.a[1])}
+              fill={activeType?.color ?? '#0a84ff'}
+              fillOpacity={0.12}
+              stroke={activeType?.color ?? '#0a84ff'}
+              strokeWidth={1.5}
+              strokeDasharray="5 3"
+              vectorEffect="non-scaling-stroke"
+            />
+          )}
           {draft.length > 0 && drawKind && (
             <g className="draft">
               {drawKind === 'area' && hover && draft.length >= 2 && (
