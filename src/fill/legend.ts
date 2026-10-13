@@ -45,7 +45,9 @@ export function findLegendAreas(rows: LegendRow[], segs: Segment[], box: Box, sh
       [gx1 - inset, gy1 - inset],
       [gx0 + inset, gy1 - inset],
     ];
-    const pattern = samplePattern(marks, ring, sheetW * sheetH);
+    // A swatch is a deliberate sample of its hatch: a grid at plan scale may show only two
+    // lines each way in it.
+    const pattern = samplePattern(marks, ring, sheetW * sheetH, { minLines: 2, minWeight: 8 });
     if (!pattern) continue;
     const found = findPatternOn(segs, () => (model ??= buildWallModel(segs, metersPerPoint)), pattern, sheetW, sheetH);
     const centre = (pts: [number, number][]) => [pts.reduce((n, p) => n + p[0], 0) / pts.length, pts.reduce((n, p) => n + p[1], 0) / pts.length];

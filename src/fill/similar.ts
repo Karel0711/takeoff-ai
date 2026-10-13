@@ -48,7 +48,8 @@ export interface Pattern {
  * small shape, by pen) that is many times denser inside it than across the sheet.
  * Lines count by length, so long hatch and grid lines weigh as much as dots.
  */
-export function samplePattern(marks: Mark[], sample: Pt[], sheetArea: number): Pattern | null {
+export function samplePattern(marks: Mark[], sample: Pt[], sheetArea: number, options: { minLines?: number; minWeight?: number } = {}): Pattern | null {
+  const { minLines = 4, minWeight = 12 } = options;
   const area = Math.abs(ringArea(sample));
   if (area <= 0) return null;
   const xs = sample.map((p) => p[0]);
@@ -72,7 +73,7 @@ export function samplePattern(marks: Mark[], sample: Pt[], sheetArea: number): P
   let best: string | null = null;
   let score = 0;
   for (const [key, e] of inside) {
-    if (e.n < (key.includes(' line') ? 4 : 12) || e.w < 12) continue;
+    if (e.n < (key.includes(' line') ? minLines : 12) || e.w < minWeight) continue;
     const l = lift(key);
     if (l < 6) continue;
     if (e.w * Math.log(l) > score) {
@@ -87,7 +88,7 @@ export function samplePattern(marks: Mark[], sample: Pt[], sheetArea: number): P
   if (angle !== undefined) {
     // A grid: the same pen's lines across the first set.
     const across = `${pen} line${(Number(angle) + 90) % 180}`;
-    if (inside.has(across) && inside.get(across)!.n >= 3 && lift(across) >= 4) keys.push(across);
+    if (inside.has(across) && inside.get(across)!.n >= Math.min(3, minLines) && lift(across) >= 4) keys.push(across);
   }
   const spacing = best.includes(' line')
     ? area / Math.max(1, keys.reduce((n, k) => n + inside.get(k)!.length, 0))

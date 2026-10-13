@@ -105,6 +105,8 @@ describe('sample plan', () => {
     // The GWB swatch is a stipple dense enough to sample: it finds the lobby and storage.
     findLegendAreas(legend, segs, [725, 195, 905, 340], vp.width, vp.height, mpp);
     expect((legend[1].areas ?? []).map((a) => +(a.area * mpp * mpp).toFixed(1)).sort()).toEqual([30.7, 62.9]);
+    // The ACT swatch shows only two grid lines each way, enough for a swatch.
+    expect((legend[0].areas ?? []).map((a) => +(a.area * mpp * mpp).toFixed(1)).sort()).toEqual([30.7, 30.7, 30.7]);
 
     const model = buildWallModel(segs, mpp);
     const rooms = fillRooms(model, findRoomLabels(texts, segs), vp.width, vp.height);
