@@ -1215,6 +1215,18 @@ export function App() {
             totals={totalFor(editingType.id)?.vars}
             onChange={updateType}
             onDelete={() => deleteType(editingType.id)}
+            onDuplicate={() => {
+              const t = editingType;
+              const copy: TakeoffType = {
+                ...t,
+                id: newId(),
+                name: `${t.name} (copy)`,
+                color: PALETTE[project.types.length % PALETTE.length],
+                items: t.items.map((it) => ({ ...it, id: newId() })),
+              };
+              commit((p) => ({ ...p, types: [...p.types, copy] }), 'Duplicate type');
+              setEditingTypeId(copy.id);
+            }}
             onClose={() => setEditingTypeId(null)}
           />
         ) : (

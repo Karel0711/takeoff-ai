@@ -10,6 +10,8 @@ interface Props {
   totals: Vars | undefined;
   onChange: (type: TakeoffType) => void;
   onDelete: () => void;
+  /** Makes a copy of this type, with its assembly, to edit into a similar one. */
+  onDuplicate: () => void;
   onClose: () => void;
 }
 
@@ -22,7 +24,7 @@ const VARS_HELP: [keyof Vars, string][] = [
 ];
 
 /** Edits a takeoff type: name, kind, colour, height, estimate grouping and its assembly items. */
-export function TypeEditor({ type, units, totals, onChange, onDelete, onClose }: Props) {
+export function TypeEditor({ type, units, totals, onChange, onDelete, onDuplicate, onClose }: Props) {
   const set = (patch: Partial<TakeoffType>) => onChange({ ...type, ...patch });
   const vars = totals ?? { L: 0, H: type.height, A: 0, P: 0, N: 0 };
 
@@ -144,6 +146,9 @@ export function TypeEditor({ type, units, totals, onChange, onDelete, onClose }:
         </p>
       </div>
 
+      <button className="wide" onClick={onDuplicate}>
+        <Icon name="plus" size={16} /> Duplicate type
+      </button>
       <button className="destructive wide" onClick={onDelete}>
         <Icon name="trash" size={16} /> Delete type and its takeoffs
       </button>
