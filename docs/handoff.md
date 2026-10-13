@@ -123,6 +123,39 @@ Where the project stands, for picking it up in a new session.
     room boundaries (A2.1 Staff Room 56.72 → 56.65 m², A2.2 unchanged); a
     grid-direction mix test for hatch matching (lost a real ACT area, kept the
     false one).
+- **Added in the second overnight session:**
+  - **Marked-up PDF** (`src/markupPdf.ts`, Export → Marked-up PDF): pdf-lib
+    copies each sheet with takeoffs from the original drawing (one
+    `copyPages` per document, so shared resources copy once) and draws the
+    takeoffs in PDF user space through the inverse of pdf.js's scale-1
+    viewport transform (handles /Rotate and CropBox offsets), with a legend
+    per sheet and summary pages first. Owner-password (encrypted) sets fall
+    back to a JPEG of the page. pdf-lib loads only on export.
+  - **Typical floors:** `Sheet.repeat` multiplies a sheet's shares in
+    `contributions()` (only there). Excel division rows show "A2.2 ×3", the
+    Measurements sheet keeps each takeoff as drawn with a Sheet counts column.
+  - **Text search:** the sheet search also searches every sheet's text layer
+    (cached per page) and outlines hits (`highlights`, `focus.box` in Viewer).
+  - **Type library** (`src/typeLibrary.ts`, + → From the library…): trade
+    assemblies with formulas in both unit systems; a test evaluates them all.
+  - **Read a legend** (`src/fill/legend.ts`): label column = the left edge
+    most text shares; wrapped lines (closer than 1.8× text height) join a row;
+    each row's graphic is the linework left of the labels in its band.
+    Framed swatch → area, long thin → linear, else symbol (exact
+    `matchSymbol` on the sheet, else its tag text, e.g. FH). On the Kelso
+    site plan (A1.1) the rows read correctly but plan symbols are different
+    blocks from the legend's, so counts there are by tag only (1 hydrant).
+  - **Sample set** (`src/samplePlan.ts`, welcome → Try a sample plan): A1.01
+    floor plan (rooms, door tags, W1/EW1 tags, dimensions, finish schedule)
+    and A2.01 ceiling plan (ACT grid, GWB stipple, 22 downlights, legend), in
+    metric 1:100 or imperial 1/8" = 1'-0". `test/samplePlan.test.ts` runs the
+    readers on it with exact expected quantities: the first regression test
+    that needs no client drawings.
+  - **Imperial scale notes** (1/8" = 1'-0", 1" = 20') are detected from title
+    blocks; the scale check reads mm and feet-inch dimensions whatever the
+    project units; imperial starter types are named in inches.
+  - Scanned sheets (no text, almost no linework) get a notice that the
+    automatic tools need CAD-exported PDFs.
 - **Interface (redesigned):** light, Mac-style (system font, segmented tools,
   source-list sidebar, inspector with Quantities / Takeoffs / History). State
   changes go through `commit()` in `App.tsx`, which keeps undo/redo stacks and
