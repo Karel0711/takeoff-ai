@@ -203,7 +203,9 @@ right. Tools sit in the title bar.
      fills each room to the inside face of its walls, and adds the ones you pick
      as named areas ("112 RECEIVING & GEN. STORAGE") on the area type you
      choose. Room numbers repeated on a second plan count once; tags in one open
-     space share it.
+     space share it. A room that doesn't close offers **try wider openings**
+     (closing gaps up to 8 m for that room only, flagged to check): on A2.2 that
+     recovers 3 of the 9 open rooms.
    - **Door tags** on a plan: counts every door tag (a door number in an oval,
      circle or hexagon) as a door named by its number; tags with a letter
      prefix (S114A screens) are counted under their own type. A2.1: 15 doors and

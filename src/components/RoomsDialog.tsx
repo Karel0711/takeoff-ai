@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 import { findRoomLabels, fillRoomsAsync, type FoundRoom } from '../fill/rooms';
+import { fillRoom } from '../fill/roomFill';
+import { ringArea } from '../geometry';
 import { segmentsOf, wallModelFor } from '../fill/sheetWalls';
 import { newId, type Measurement, type Pt, type Sheet, type TakeoffType, type Units } from '../model';
 import { pageTexts } from '../pageText';
@@ -67,6 +69,36 @@ export function RoomsDialog({ page, sheet, units, types, earlier, palette, maxOp
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  /** Rooms being retried with wider openings, and ones a retry could not close either. */
+  const [retrying, setRetrying] = useState<Set<number>>(new Set());
+  const [stillOpen, setStillOpen] = useState<Set<number>>(new Set());
+
+  /**
+   * Retries one unclosed room closing openings up to 8 m (an open counter, a wide
+   * archway). The result is shown for checking before it is added.
+   */
+  async function retryWider(i: number) {
+    if (state.phase !== 'done') return;
+    setRetrying((s) => new Set(s).add(i));
+    try {
+      const model = await wallModelFor(page, sheet, Math.max(8, maxOpening * 2));
+      await new Promise((r) => setTimeout(r, 0));
+      const room = state.rooms[i];
+      const res = fillRoom(model, room.labels.map((l) => l.at), sheet.width, sheet.height, 2);
+      if (res.ok) {
+        const rooms = state.rooms.map((r, j) => (j === i ? { ...r, points: res.points, reason: undefined, area: Math.abs(ringArea(res.points)), wider: true } : r));
+        setState({ ...state, rooms });
+        setPicked((s) => new Set(s).add(i));
+      } else setStillOpen((s) => new Set(s).add(i));
+    } finally {
+      setRetrying((s) => {
+        const next = new Set(s);
+        next.delete(i);
+        return next;
+      });
+    }
+  }
 
   const area = (r: FoundRoom) => `${formatQty(toArea(r.area * mpp * mpp, units))} ${areaUnit(units)}`;
 
@@ -186,7 +218,20 @@ export function RoomsDialog({ page, sheet, units, types, earlier, palette, maxOp
                           onChange={(e) => setNames((m) => new Map(m).set(i, e.target.value))}
                         />
                       </td>
-                      <td className="num">{r.points ? area(r) : <span className="muted">Not closed, draw by hand</span>}</td>
+                      <td className="num">
+                        {r.points ? (
+                          <>
+                            {area(r)}
+                            {(r as FoundRoom & { wider?: boolean }).wider && <div className="field-hint">wider openings closed, check it</div>}
+                          </>
+                        ) : stillOpen.has(i) ? (
+                          <span className="muted">Not closed, draw by hand</span>
+                        ) : (
+                          <button className="link-button" disabled={retrying.has(i)} onClick={() => void retryWider(i)}>
+                            {retrying.has(i) ? 'Trying…' : 'Not closed · try wider openings'}
+                          </button>
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
