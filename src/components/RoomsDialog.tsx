@@ -139,7 +139,7 @@ export function RoomsDialog({ page, sheet, units, types, earlier, palette, maxOp
               space share it. Found in {(state.ms / 1000).toFixed(1)} s.
             </p>
             {state.rooms.length === 0 ? (
-              <p className="warn">No room tags found on this sheet. Room tags are a room number in a rectangle, usually under the room name.</p>
+              <p className="warn">No room tags found on this sheet. A room tag is a room number, in a box or on its own, under the room name.</p>
             ) : (
               <table className="wall-table rooms-table">
                 <thead>

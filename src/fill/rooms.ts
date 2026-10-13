@@ -58,23 +58,42 @@ export function findRoomLabels(texts: PageText[], segs: Segment[]): RoomLabel[] 
       break;
     }
     if (!box) continue;
-    // The room name: text lines stacked just above the box, centred over it.
     const cx = (box.x0 + box.x1) / 2;
-    const above = texts
-      .filter((o) => o !== t && !ROOM_NUMBER.test(o.str) && !TAG_LIKE.test(o.str) && /[A-Za-z]/.test(o.str))
-      .filter((o) => o.cy < box.y0 && o.cy > box.y0 - 4 * Math.max(o.h, 5) && Math.abs(o.cx - cx) < Math.max(o.w / 2, box.x1 - box.x0) + 4)
-      .sort((a, b) => a.cy - b.cy);
-    // Keep only the block of lines that runs down to the box without a gap.
-    const block: PageText[] = [];
-    let bottom = box.y0;
-    for (const o of [...above].reverse()) {
-      if (bottom - o.cy > 2.4 * Math.max(o.h, 5)) break;
-      block.unshift(o);
-      bottom = o.cy;
-    }
-    out.push({ number: t.str, name: block.map((o) => o.str).join(' '), at: [cx, (box.y0 + box.y1) / 2] });
+    out.push({ number: t.str, name: nameAbove(texts, t, cx, box.y0, box.x1 - box.x0), at: [cx, (box.y0 + box.y1) / 2] });
+  }
+  if (out.length) return out;
+
+  // No boxed tags on the sheet: many sets print the room number bare, under the room
+  // name. Take numbers with a name directly above them that are not in any symbol
+  // (door and window numbers sit in ovals and hexagons).
+  for (const t of texts) {
+    if (!/^[A-Z]?\d{3,4}[A-Z]?$/.test(t.str)) continue;
+    const name = nameAbove(texts, t, t.cx, t.cy - t.h / 2, t.w);
+    if (!name) continue;
+    const r = Math.max(t.w, t.h) * 0.5 + 14;
+    const local = dedupe(index.query(t.cx - r, t.cy - r, t.cx + r, t.cy + r).map((i) => lines[i]));
+    const enclosed = [...new Set(local.map((s) => s.width))].some((pen) => symbolLoop(local.filter((s) => s.width === pen), t.cx, t.cy).length > 0);
+    if (enclosed) continue;
+    out.push({ number: t.str, name, at: [t.cx, t.cy] });
   }
   return out;
+}
+
+/** The room name: text lines stacked just above `top`, centred over `cx`, with no gap between them. */
+function nameAbove(texts: PageText[], t: PageText, cx: number, top: number, width: number): string {
+  const above = texts
+    .filter((o) => o !== t && !ROOM_NUMBER.test(o.str) && !TAG_LIKE.test(o.str) && /[A-Za-z]/.test(o.str))
+    .filter((o) => o.cy < top && o.cy > top - 4 * Math.max(o.h, 5) && Math.abs(o.cx - cx) < Math.max(o.w / 2, width) + 4)
+    .sort((a, b) => a.cy - b.cy);
+  // Keep only the block of lines that runs down to the number without a gap.
+  const block: PageText[] = [];
+  let bottom = top;
+  for (const o of [...above].reverse()) {
+    if (bottom - o.cy > 2.4 * Math.max(o.h, 5)) break;
+    block.unshift(o);
+    bottom = o.cy;
+  }
+  return block.map((o) => o.str).join(' ');
 }
 
 /** Fills one tag's room, within a window around the tag. */

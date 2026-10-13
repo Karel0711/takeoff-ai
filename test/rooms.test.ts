@@ -59,6 +59,16 @@ describe('room takeoff', () => {
     expect(rooms.map((r) => r.area * MPP * MPP)).toEqual([expect.closeTo(20, 2), expect.closeTo(11.2, 2)]);
   });
 
+  it('takes bare room numbers under a name when no room number is boxed', () => {
+    const bare = [...walls, ...oval(5.3, 1)];
+    const labels = findRoomLabels(texts, bare);
+    // 201 sits in a door oval, and W2 is a type tag: neither is a room.
+    expect(labels.map((l) => [l.number, l.name])).toEqual([
+      ['112', 'RECEIVING & STORAGE'],
+      ['116', 'STAFF OFFICE'],
+    ]);
+  });
+
   it('keeps one copy of a room tagged again on a second plan', () => {
     const again = [...lines, ...tagBox(20, 2.5)];
     const labels = findRoomLabels([...texts, text('112', 20, 2.5)], again);

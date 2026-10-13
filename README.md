@@ -195,7 +195,7 @@ right. Tools sit in the title bar.
    - **Read assembly types** on a legend sheet (Claude reads every type).
    - **Wall takeoff** on a plan: measures every tagged wall by type; check the
      lengths and where each type goes, then **Add**.
-   - **Rooms** on a plan: finds every room tag (number in a box, name above),
+   - **Rooms** on a plan: finds every room tag (a number in a box, or a bare number when the sheet has no boxed tags, with the name above),
      fills each room to the inside face of its walls, and adds the ones you pick
      as named areas ("112 RECEIVING & GEN. STORAGE") on the area type you
      choose. Room numbers repeated on a second plan count once; tags in one open
