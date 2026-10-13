@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type MouseEvent, type Pointer
 import { centroid, orthoSnap, polylineLength, ringArea, ringToPath } from '../geometry';
 import type { Measurement, Pt, Sheet, TakeoffType, Units } from '../model';
 import type { PDFPageProxy } from '../pdf';
+import type { PageText } from '../pageText';
 import { measurementVars, primaryOf, primaryUnit } from '../quantities';
 import { areaUnit, equivalentScale, formatQty, lengthUnit, parseLength, toArea, toLength } from '../units';
 import { askText, notify } from './Dialogs';
@@ -45,7 +46,10 @@ interface Props {
   onCalibrate: (metersPerPoint: number, label: string) => void;
   onToolDone: () => void;
   /** A takeoff to bring into view; a new `n` asks again for the same one. */
-  focus: { id: string; n: number } | null;
+  /** Bring a takeoff (by id) or a box on the sheet into view; n changes on every request. */
+  focus: { id?: string; box?: [number, number, number, number]; n: number } | null;
+  /** Text found by the sheet search, outlined on the sheet. */
+  highlights?: PageText[];
   /** Trace line: a click on a drawn line, and how near (sheet points) counts as on it. */
   onTrace: (at: Pt, reach: number) => void;
   /** Count by symbol: the box dragged around one symbol (x0, y0, x1, y1). */
@@ -114,11 +118,11 @@ export function Viewer(props: Props) {
   useEffect(() => {
     const f = props.focus;
     if (!f || f.n === shownFocus.current || !sheet || !size.w) return;
-    const m = measurements.find((x) => x.id === f.id);
-    if (!m) return;
+    const m = f.id ? measurements.find((x) => x.id === f.id) : undefined;
+    if (!m && !f.box) return;
     shownFocus.current = f.n;
-    const xs = m.points.map((p) => p[0]);
-    const ys = m.points.map((p) => p[1]);
+    const xs = m ? m.points.map((p) => p[0]) : [f.box![0], f.box![2]];
+    const ys = m ? m.points.map((p) => p[1]) : [f.box![1], f.box![3]];
     const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
     // A count is a point: show the area around it.
     const bw = Math.max(x1 - x0, 80);
@@ -518,6 +522,19 @@ export function Viewer(props: Props) {
         onAuxClick={(e) => e.preventDefault()}
       >
         <g transform={`translate(${view.x} ${view.y}) scale(${z})`}>
+          {props.highlights?.map((t, i) => (
+            <rect
+              key={`hl${i}`}
+              className="text-hit"
+              x={t.cx - t.w / 2 - 3 / z}
+              y={t.cy - t.h / 2 - 3 / z}
+              width={t.w + 6 / z}
+              height={t.h + 6 / z}
+              rx={3 / z}
+              strokeWidth={2 / z}
+              transform={t.angle ? `rotate(${(t.angle * 180) / Math.PI} ${t.cx} ${t.cy})` : undefined}
+            />
+          ))}
           {sheet && measurements.map((shown) => {
             const m = edit && edit.id === shown.id ? { ...shown, points: edit.points } : shown;
             const type = typeById.get(m.typeId);

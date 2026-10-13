@@ -237,6 +237,9 @@ right. Tools sit in the title bar.
 12. **Typical floors:** More → *Count this sheet more than once…* makes a sheet's
     takeoffs count ×N (one plan drawn for several floors). The sheet list shows
     ×N, and the quantities, Excel and PDF legend include it.
+13. **Search sheets and text:** the sheet search also finds text drawn on the
+    sheets (room names, tags, notes). Matching sheets show how many hits; open
+    one to see them outlined, and click it again for the next hit.
 
 Editing: select a takeoff to show its points. Drag a corner to move it, drag
 the dot in the middle of an edge to add a point there, Option-click a corner

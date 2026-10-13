@@ -508,6 +508,14 @@ input[type='checkbox'] {
 .row-sub.scale-unset {
   color: var(--warn);
 }
+.repeat-tag,
+.found-tag {
+  color: var(--text-2);
+  font-weight: 600;
+}
+.found-tag {
+  color: #b77900;
+}
 .check-dot {
   display: inline-block;
   width: 6px;
@@ -588,6 +596,11 @@ input[type='checkbox'] {
   filter: drop-shadow(0 2px 10px rgba(0, 0, 0, 0.12));
 }
 .viewer .shape {
+  pointer-events: none;
+}
+.viewer .text-hit {
+  fill: rgba(255, 204, 0, 0.3);
+  stroke: #f5a300;
   pointer-events: none;
 }
 .viewer .shape.interactive {

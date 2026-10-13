@@ -28,7 +28,7 @@ import { traceLine } from './fill/trace';
 import { checkScale, type ScaleCheck } from './scaleCheck';
 import { sheetImage } from './sheetImage';
 import { compareSheets } from './compareSheets';
-import { pageTexts } from './pageText';
+import { pageTexts, type PageText } from './pageText';
 import { isHosted, saveFile } from './host';
 import { defaultTypes, newId, newProject, type Project, type Pt, type Sheet, type TakeoffType, type Units } from './model';
 import { inspectPage, openPdf, type PDFDocumentProxy, type PDFPageProxy } from './pdf';
@@ -98,7 +98,11 @@ export function App() {
   const [activeTypeId, setActiveTypeId] = useState<string | null>(null);
   const [editingTypeId, setEditingTypeId] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [focus, setFocus] = useState<{ id: string; n: number } | null>(null);
+  const [focus, setFocus] = useState<{ id?: string; box?: [number, number, number, number]; n: number } | null>(null);
+  /** Text runs per drawing page, read once for the sheet search. */
+  const textCache = useRef(new Map<string, PageText[]>());
+  const [textHits, setTextHits] = useState<{ q: string; hits: Map<string, PageText[]> } | null>(null);
+  const hitTurn = useRef(0);
   const [comparison, setComparison] = useState<{ url: string; blob: Blob; name: string } | null>(null);
   const [tool, setTool] = useState<Tool>('select');
   const [busy, setBusy] = useState<string | null>(null);
@@ -215,6 +219,38 @@ export function App() {
     const t = window.setTimeout(() => setToast(null), 6000);
     return () => window.clearTimeout(t);
   }, [toast]);
+
+  // The sheet search also finds text drawn on the sheets: room names, tags, notes.
+  const sheetList = project?.sheets;
+  useEffect(() => {
+    const q = sheetFilter.trim().toLowerCase();
+    if (q.length < 2 || !sheetList) {
+      setTextHits(null);
+      return;
+    }
+    let stop = false;
+    const t = window.setTimeout(async () => {
+      const hits = new Map<string, PageText[]>();
+      for (const s of sheetList) {
+        if (stop) return;
+        const key = `${s.docId}:${s.page}`;
+        let texts = textCache.current.get(key);
+        if (!texts) {
+          const pg = await pdfsRef.current.get(s.docId)?.getPage(s.page);
+          if (!pg) continue;
+          texts = await pageTexts(pg).catch(() => []);
+          textCache.current.set(key, texts);
+        }
+        const found = texts.filter((x) => x.str.toLowerCase().includes(q));
+        if (found.length) hits.set(s.id, found);
+      }
+      if (!stop) setTextHits({ q, hits });
+    }, 250);
+    return () => {
+      stop = true;
+      window.clearTimeout(t);
+    };
+  }, [sheetFilter, sheetList]);
 
   const totals = useMemo(() => (project ? typeTotals(project) : []), [project]);
   const sheetTotals = useMemo(
@@ -1058,7 +1094,9 @@ export function App() {
     if (tool === 'select' || tool === 'calibrate' || (tool === 'fill' && t.kind !== 'area') || (tool === 'symbol' && t.kind !== 'count') || (tool === 'trace' && t.kind !== 'linear') || tool === 'cutout') setTool('measure');
   };
 
-  const filteredSheets = project.sheets.filter((s) => s.name.toLowerCase().includes(sheetFilter.toLowerCase()));
+  const query = sheetFilter.trim().toLowerCase();
+  const hitsOn = (id: string) => (textHits && textHits.q === query ? textHits.hits.get(id) : undefined);
+  const filteredSheets = project.sheets.filter((s) => s.name.toLowerCase().includes(query) || hitsOn(s.id));
   const totalFor = (typeId: string) => totals.find((t) => t.type.id === typeId);
   const scaleState = !sheet ? 'none' : !sheet.metersPerPoint ? 'unset' : sheet.scaleSource === 'detected' ? 'check' : 'set';
   const toolDisabled = (id: Tool) =>
@@ -1211,7 +1249,7 @@ export function App() {
           {project.sheets.length > 8 && (
             <label className="search">
               <Icon name="search" size={14} />
-              <input id="sheet-filter" placeholder="Search sheets" value={sheetFilter} onChange={(e) => setSheetFilter(e.target.value)} />
+              <input id="sheet-filter" placeholder="Search sheets and text" value={sheetFilter} onChange={(e) => setSheetFilter(e.target.value)} />
             </label>
           )}
           <ul className="source-list">
@@ -1225,6 +1263,15 @@ export function App() {
                     onClick={() => {
                       setSheetId(s.id);
                       setSelectedId(null);
+                      // Text found on the sheet: show it, the next one on each further click.
+                      const hits = hitsOn(s.id);
+                      if (hits) {
+                        hitTurn.current = s.id === sheetId ? hitTurn.current + 1 : 0;
+                        const t = hits[hitTurn.current % hits.length];
+                        // With the drawing around it.
+                        const r = Math.max(t.w, t.h) / 2 + 120;
+                        setFocus((f) => ({ box: [t.cx - r, t.cy - r, t.cx + r, t.cy + r], n: (f?.n ?? 0) + 1 }));
+                      }
                     }}
                     onDoubleClick={async () => {
                       const name = await askText('Rename sheet', { initial: s.name });
@@ -1238,6 +1285,7 @@ export function App() {
                       <span className={`row-sub scale-${state}`}>
                         {state === 'check' && <span className="check-dot" title="Read from the sheet; check it against a dimension" />}
                         {s.metersPerPoint ? s.scaleLabel : 'No scale'}
+                        {hitsOn(s.id) ? <span className="found-tag"> · {hitsOn(s.id)!.length} found</span> : null}
                         {s.repeat ? <span className="repeat-tag" title={`Takeoffs on this sheet count ${s.repeat} times`}> · ×{s.repeat}</span> : null}
                       </span>
                     </span>
@@ -1248,6 +1296,8 @@ export function App() {
             })}
           </ul>
           {project.sheets.length === 0 && <p className="source-empty">Drawings you add appear here, one row per sheet.</p>}
+          {query.length >= 2 && textHits?.q !== query && <p className="source-empty">Searching the drawings…</p>}
+          {query.length >= 2 && textHits?.q === query && !filteredSheets.length && <p className="source-empty">No sheet or drawing text matches “{sheetFilter.trim()}”.</p>}
         </section>
 
         <section className="source types">
@@ -1318,6 +1368,7 @@ export function App() {
           onFindSymbols={(box) => void countSymbols(box)}
           onTrace={(at, reach) => void traceAt(at, reach)}
           focus={focus}
+          highlights={sheet ? hitsOn(sheet.id) : undefined}
         />
 
         {project.sheets.length === 0 && (
