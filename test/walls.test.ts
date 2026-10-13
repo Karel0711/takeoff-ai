@@ -139,6 +139,15 @@ describe('wall takeoff', () => {
     expect(lengthsByType(cut.runs, MPP).get('W1')?.length).toBeCloseTo(4.1, 2);
   });
 
+  it('keeps two exterior types tagged on one wall (a screen wall over the wall below)', () => {
+    const a = tag('EW6A', 1.5, 1.5, [1.5, T]);
+    const b = tag('EW6B', 3.5, 1.5, [3.5, T]);
+    const res = wallTakeoff(lShape(), [...lShape(), ...a.segs, ...b.segs], [a.text, b.text], MPP);
+    const by = lengthsByType(res.runs, MPP);
+    expect(by.get('EW6A')?.length).toBeGreaterThan(4.8);
+    expect(by.get('EW6B')?.length).toBeGreaterThan(4.8);
+  });
+
   it('sorts tags into kinds that do not compete', () => {
     expect(tagKind('EW3A')).toBe('exterior');
     expect(tagKind('FR1')).toBe('furring');

@@ -175,7 +175,7 @@ export function wallTakeoff(
   // Types from tags: each tag labels the piece of wall it points at.
   const tags = resolveTags(texts, allSegments);
   const unmatched: WallTag[] = [];
-  const tagged = pieces.map(() => new Map<string, { code: string; d: number }>());
+  const tagged = pieces.map(() => new Map<string, { codes: string[]; d: number }>());
   for (const tag of tags) {
     // Follow each leader out from the tag; the first point that lands on a wall is
     // what it points at, and the leader that gets there soonest wins. A tag with
@@ -223,8 +223,12 @@ export function wallTakeoff(
     }
     // Two tags of one kind on one piece: the one pointing more squarely at it wins.
     const kind = tagKind(tag.code);
+    // Exterior and foundation walls can stack (a screen wall over the wall below, both
+    // tagged on one line); for partitions the tag pointing more squarely wins.
     const prev = tagged[best.id].get(kind);
-    if (!prev || bestD < prev.d) tagged[best.id].set(kind, { code: tag.code, d: bestD });
+    if (prev && (kind === 'exterior' || kind === 'foundation') && !prev.codes.includes(tag.code)) {
+      tagged[best.id].set(kind, { codes: [...prev.codes, tag.code], d: Math.min(prev.d, bestD) });
+    } else if (!prev || bestD < prev.d) tagged[best.id].set(kind, { codes: [tag.code], d: bestD });
   }
 
   // Carry each kind along connected pieces of similar thickness; nearest tag wins.
@@ -241,16 +245,16 @@ export function wallTakeoff(
   }
   const followsWall = (kind: string) => kind === 'exterior' || kind === 'foundation';
   const kinds = new Set(tagged.flatMap((m) => [...m.keys()]));
-  const carried = pieces.map(() => new Map<string, string>());
+  const carried = pieces.map(() => new Map<string, string[]>());
   for (const kind of kinds) {
     const best = pieces.map(() => Infinity);
-    const code: (string | null)[] = pieces.map(() => null);
+    const code: (string[] | null)[] = pieces.map(() => null);
     const queue: number[] = [];
     pieces.forEach((_, i) => {
       const t = tagged[i].get(kind);
       if (t) {
         best[i] = 0;
-        code[i] = t.code;
+        code[i] = t.codes;
         queue.push(i);
       }
     });
@@ -279,8 +283,8 @@ export function wallTakeoff(
     });
   }
   for (const p of pieces) {
-    const own = [...tagged[p.id].values()].map((t) => t.code);
-    const more = [...carried[p.id].values()];
+    const own = [...tagged[p.id].values()].flatMap((t) => t.codes);
+    const more = [...carried[p.id].values()].flat();
     p.tags = [...own, ...more];
     p.how = own.length ? 'tag' : more.length ? 'carried' : null;
   }

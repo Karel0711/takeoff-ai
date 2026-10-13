@@ -25,20 +25,24 @@ export function lightWall(path: Pt[], index: SegmentIndex, tmax: number, walls: 
   const onLeader = (x: number, y: number) =>
     path.slice(1).some((p, i) => distToSeg(x, y, { x1: path[i][0], y1: path[i][1], x2: p[0], y2: p[1], width: 0, filled: false }) < 0.3);
   let l0: Segment | null = null;
-  for (const reach of [1.5, tmax / 2]) {
-    let best = reach;
-    for (const i of index.query(end[0] - reach, end[1] - reach, end[0] + reach, end[1] + reach)) {
-      const s = segs[i];
-      if (s.filled || len(s) < 3 || (onLeader(s.x1, s.y1) && onLeader(s.x2, s.y2))) continue;
-      // Within reach, prefer a line crossing the leader's last stretch.
-      const crossing = Math.abs((lx * (s.y2 - s.y1) - ly * (s.x2 - s.x1)) / len(s)) >= 0.5;
-      const d = distToSeg(end[0], end[1], s) + (crossing ? 0 : 0.5);
-      if (d < best) {
-        best = d;
-        l0 = s;
+  // Nearest line crossing the leader's last stretch; a line running alongside it only
+  // when none crosses within reach.
+  search: for (const reach of [1.5, tmax / 2]) {
+    for (const crossingOnly of [true, false]) {
+      let best = reach;
+      for (const i of index.query(end[0] - reach, end[1] - reach, end[0] + reach, end[1] + reach)) {
+        const s = segs[i];
+        if (s.filled || len(s) < 3 || (onLeader(s.x1, s.y1) && onLeader(s.x2, s.y2))) continue;
+        const crossing = Math.abs((lx * (s.y2 - s.y1) - ly * (s.x2 - s.x1)) / len(s)) >= 0.5;
+        if (crossingOnly !== crossing) continue;
+        const d = distToSeg(end[0], end[1], s);
+        if (d < best) {
+          best = d;
+          l0 = s;
+        }
       }
+      if (l0) break search;
     }
-    if (l0) break;
   }
   if (!l0) return null;
   const L0 = len(l0);
