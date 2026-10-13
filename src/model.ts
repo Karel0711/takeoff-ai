@@ -1,8 +1,19 @@
+import type { ExtractedAssembly } from './ai/schema';
+
 export type Units = 'metric' | 'imperial';
 export type Kind = 'area' | 'linear' | 'count';
 
 /** A point in sheet space: PDF points (1/72 in) from the page's top-left corner. */
 export type Pt = [number, number];
+
+export interface SavedLegendRead {
+  assemblies: ExtractedAssembly[];
+  /** Type tags printed on the sheet, for the coverage check. */
+  printed: string[];
+  answeredBy: string;
+  readAt: string;
+  seconds: number;
+}
 
 export interface Doc {
   id: string;
@@ -25,6 +36,8 @@ export interface Sheet {
   scaleSource: ScaleSource | null;
   /** Scale notations found on the sheet, offered as one-click choices. */
   scaleHints: string[];
+  /** The last AI reading of this sheet's assembly legend, kept so it can be reviewed again without re-running. */
+  aiAssemblies?: SavedLegendRead;
 }
 
 /**

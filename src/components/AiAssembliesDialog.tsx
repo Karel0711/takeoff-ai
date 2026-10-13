@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { aiRoute, describeAiError, readLegend, type AiRoute } from '../ai/readLegend';
 import type { ExtractedAssembly } from '../ai/schema';
 import { buildTakeoffType, findAssemblyCodes } from '../assemblyBuilder';
-import type { Sheet, TakeoffType, Units } from '../model';
+import type { SavedLegendRead, Sheet, TakeoffType, Units } from '../model';
 import { readAnswerKey, type ExpectedAssembly } from '../eval/answerKey';
 import { scoreExtraction, type ScoreReport } from '../eval/score';
 import { saveFile } from '../host';
@@ -17,6 +17,8 @@ interface Props {
   existingTypes: TakeoffType[];
   /** Types to add; a type whose id matches an existing type replaces it. */
   onApply: (types: TakeoffType[]) => void;
+  /** Keeps the result on the sheet so it can be reopened without another AI run. */
+  onSaveResult: (result: SavedLegendRead) => void;
   onClose: () => void;
   onOpenSettings: () => void;
 }
@@ -24,7 +26,7 @@ interface Props {
 type State =
   | { phase: 'idle' }
   | { phase: 'running'; step: string; started: number }
-  | { phase: 'done'; assemblies: ExtractedAssembly[]; printed: string[]; answeredBy: string; seconds: number }
+  | ({ phase: 'done' } & SavedLegendRead)
   | { phase: 'error'; message: string };
 
 const CATEGORY_LABEL: Record<ExtractedAssembly['category'], string> = {
@@ -41,9 +43,10 @@ const codeOf = (typeName: string) => typeName.split(' – ')[0].trim();
 /** The last answer-key workbook loaded, kept for this visit so each sheet can be scored without re-picking it. */
 let answerKey: { name: string; key: ExpectedAssembly[] } | null = null;
 
-export function AiAssembliesDialog({ page, sheet, units, existingTypes, onApply, onClose, onOpenSettings }: Props) {
-  const [state, setState] = useState<State>({ phase: 'idle' });
-  const [selected, setSelected] = useState<Set<string>>(new Set());
+export function AiAssembliesDialog({ page, sheet, units, existingTypes, onApply, onSaveResult, onClose, onOpenSettings }: Props) {
+  const saved = sheet.aiAssemblies;
+  const [state, setState] = useState<State>(saved ? { phase: 'done', ...saved } : { phase: 'idle' });
+  const [selected, setSelected] = useState<Set<string>>(() => new Set(saved?.assemblies.map((a) => a.code) ?? []));
   const [height, setHeight] = useState(units === 'metric' ? 3 : 10);
   const [, tick] = useState(0);
   const abort = useRef<AbortController | null>(null);
@@ -73,6 +76,8 @@ export function AiAssembliesDialog({ page, sheet, units, existingTypes, onApply,
 
   useEffect(() => {
     void aiRoute().then(setRoute);
+    if (saved && answerKey) scoreWith(answerKey, saved.assemblies);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const existingByCode = new Map(existingTypes.map((t) => [codeOf(t.name), t]));
@@ -102,7 +107,15 @@ export function AiAssembliesDialog({ page, sheet, units, existingTypes, onApply,
       const assemblies = extraction.assemblies;
       setSelected(new Set(assemblies.map((a) => a.code)));
       if (answerKey) scoreWith(answerKey, assemblies);
-      setState({ phase: 'done', assemblies, printed, answeredBy, seconds: Math.round((Date.now() - started) / 1000) });
+      const result: SavedLegendRead = {
+        assemblies,
+        printed,
+        answeredBy,
+        readAt: new Date().toISOString(),
+        seconds: Math.round((Date.now() - started) / 1000),
+      };
+      onSaveResult(result);
+      setState({ phase: 'done', ...result });
     } catch (e) {
       if (abort.current?.signal.aborted) {
         setState({ phase: 'idle' });
@@ -216,7 +229,7 @@ export function AiAssembliesDialog({ page, sheet, units, existingTypes, onApply,
           <strong>
             Found {state.assemblies.length} type{state.assemblies.length === 1 ? '' : 's'}
           </strong>{' '}
-          in {state.seconds} s
+          in {state.seconds} s · read {new Date(state.readAt).toLocaleString()}
           {state.printed.length > 0 && (
             <>
               {' '}
@@ -248,6 +261,9 @@ export function AiAssembliesDialog({ page, sheet, units, existingTypes, onApply,
             />
             <button onClick={() => keyInput.current?.click()}>
               {score ? 'Score against another workbook…' : 'Score against bid workbook…'}
+            </button>
+            <button onClick={() => void run()} title="Ask Claude to read this sheet again">
+              Read again
             </button>
             <button
               onClick={() =>

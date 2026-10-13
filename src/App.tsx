@@ -335,7 +335,7 @@ export function App() {
                 disabled={!page}
                 title="Read wall, floor, roof and ceiling types from this sheet into takeoff types"
               >
-                ✦ Read assembly types
+                {sheet.aiAssemblies ? '✦ Assembly types (AI result saved)' : '✦ Read assembly types'}
               </button>
               {sheet.scaleSource === 'detected' && (
                 <span className="hint warn-text" title="Read from the sheet's text. Check it against a known dimension.">
@@ -390,6 +390,7 @@ export function App() {
               return { ...p, types: [...kept, ...added] };
             })
           }
+          onSaveResult={(result) => updateSheet(sheet.id, { aiAssemblies: result })}
           onClose={() => setAiDialog(null)}
           onOpenSettings={() => setAiDialog('settings')}
         />
