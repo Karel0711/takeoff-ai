@@ -206,11 +206,16 @@ export function App() {
 
   // The scale picker checks the sheet's scale against its dimension strings, once per sheet.
   const [scaleCheck, setScaleCheck] = useState<{ sheetId: string; result: ScaleCheck | null } | null>(null);
+  // It also runs on its own, shortly after a sheet with a scale read from its title block
+  // opens, so a scale its dimensions confirm stops asking to be checked.
   useEffect(() => {
-    if (popover !== 'scale' || !page || !sheet || scaleCheck?.sheetId === sheet.id) return;
+    if (!page || !sheet || scaleCheck?.sheetId === sheet.id) return;
+    if (popover !== 'scale' && sheet.scaleSource !== 'detected') return;
     let live = true;
     const units: Units = sheet.scaleLabel ? (/^\s*1\s*:/.test(sheet.scaleLabel) ? 'metric' : 'imperial') : project!.units;
-    void Promise.all([pageTexts(page), segmentsOf(page)])
+    const wait = popover === 'scale' ? Promise.resolve() : new Promise((r) => setTimeout(r, 800));
+    void wait
+      .then(() => (live ? Promise.all([pageTexts(page), segmentsOf(page)]) : Promise.reject(new Error('moved on'))))
       .then(([texts, segs]) => {
         if (!live) return;
         const result = checkScale(texts, segs, units);
