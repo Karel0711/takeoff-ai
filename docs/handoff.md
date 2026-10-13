@@ -110,6 +110,19 @@ Where the project stands, for picking it up in a new session.
     files), **sheet image** (`src/sheetImage.ts`), **Quick start**,
     **duplicate type**, Quantities per sheet.
   - Segment and wall-model caches keep the four most recent sheets.
+  - **Revisions** (`offerRevision` in App): new sheets matching an existing
+    sheet's name and page size take over its takeoffs; the old one is renamed
+    "(superseded)". `compareSheets.ts` renders both at ~3000 px and colours
+    ink only on the old (red), only on the new (blue), on both (grey).
+  - **Door tags on all sheets**: only tags inside the sheet's room-number range
+    (±20) count, and other sheets need ≥4 of them, which leaves out level
+    markers (4000, 8570) on sections and elevations.
+  - **Stops at doors** per wall type (`stopAtDoors` option, saved as
+    `TakeoffType.stopsAtDoors`).
+  - Tried and dropped (made verified results worse): glass-partition pairs as
+    room boundaries (A2.1 Staff Room 56.72 → 56.65 m², A2.2 unchanged); a
+    grid-direction mix test for hatch matching (lost a real ACT area, kept the
+    false one).
 - **Interface (redesigned):** light, Mac-style (system font, segmented tools,
   source-list sidebar, inspector with Quantities / Takeoffs / History). State
   changes go through `commit()` in `App.tsx`, which keeps undo/redo stacks and
