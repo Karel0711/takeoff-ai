@@ -2132,3 +2132,7 @@ button.link-button:hover {
 .library-actions {
   justify-content: flex-end;
 }
+.scale-banner.info-banner {
+  background: #f2f6fd;
+  color: #1d3f72;
+}

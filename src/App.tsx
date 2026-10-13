@@ -172,6 +172,25 @@ export function App() {
 
   const sheet = project?.sheets.find((s) => s.id === sheetId) ?? null;
 
+  // A sheet with almost no linework is a scanned image: the automatic tools can't read it.
+  const [scanned, setScanned] = useState<{ sheetId: string; dismissed: boolean } | null>(null);
+  useEffect(() => {
+    if (!page || !sheet) return;
+    let live = true;
+    const id = sheet.id;
+    // Text first, which is cheap: a sheet with text is not a scan.
+    void pageTexts(page)
+      .then(async (texts) => (texts.length > 5 ? Infinity : (await segmentsOf(page)).length))
+      .then((n) => {
+        if (live) setScanned((cur) => (n < 30 ? (cur?.sheetId === id ? cur : { sheetId: id, dismissed: false }) : null));
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page, sheet?.id]);
+
   // The scale picker checks the sheet's scale against its dimension strings, once per sheet.
   const [scaleCheck, setScaleCheck] = useState<{ sheetId: string; result: ScaleCheck | null } | null>(null);
   useEffect(() => {
@@ -1440,6 +1459,16 @@ export function App() {
             </span>
             <button className="primary small-button" onClick={() => setPopover('scale')}>
               Set scale
+            </button>
+          </div>
+        )}
+        {page && sheet?.metersPerPoint && scanned?.sheetId === sheet.id && !scanned.dismissed && (
+          <div className="scale-banner info-banner" role="status">
+            <span>
+              <b>Scanned sheet.</b> It’s an image, so Fill, Trace, Symbols and Automate can’t read it. Measure by hand (M).
+            </span>
+            <button className="small-button" onClick={() => setScanned({ sheetId: sheet.id, dismissed: true })}>
+              OK
             </button>
           </div>
         )}
