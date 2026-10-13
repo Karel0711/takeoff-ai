@@ -118,9 +118,68 @@ export function wallTakeoff(
       }
     }
   });
+  // A wall broken by a pier or a step in its faces carries on: free ends facing each
+  // other on nearly one line, a short way apart, meet in the middle.
+  const joined = new Set(moves.map((m) => `${runs.indexOf(m.run)}${m.end}`));
+  const continues: { r1: number; end1: 'a' | 'b'; r2: number; end2: 'a' | 'b' }[] = [];
+  runs.forEach((r, ri) => {
+    for (const end of ['a', 'b'] as const) {
+      if (joined.has(`${ri}${end}`)) continue;
+      const e = r[end];
+      const o = end === 'a' ? r.b : r.a;
+      const L = dist(e, o);
+      const ux = (e[0] - o[0]) / L;
+      const uy = (e[1] - o[1]) / L;
+      let best: { r2: number; end2: 'a' | 'b'; gap: number } | null = null;
+      runs.forEach((r2, r2i) => {
+        if (r2i <= ri) return;
+        for (const end2 of ['a', 'b'] as const) {
+          if (joined.has(`${r2i}${end2}`)) continue;
+          const e2 = r2[end2];
+          const o2 = end2 === 'a' ? r2.b : r2.a;
+          const L2 = dist(e2, o2);
+          // Pointing back at this end, on nearly the same line.
+          if (((o2[0] - e2[0]) * ux + (o2[1] - e2[1]) * uy) / L2 < 0.998) continue;
+          const gap = (e2[0] - e[0]) * ux + (e2[1] - e[1]) * uy;
+          const off = Math.abs((e2[0] - e[0]) * -uy + (e2[1] - e[1]) * ux);
+          const thin = Math.min(r.thickness, r2.thickness);
+          if (gap < -1 || gap > Math.max(2, 2 * Math.max(r.thickness, r2.thickness)) || off > Math.max(1.5, 0.3 * thin)) continue;
+          if (Math.abs(r.thickness - r2.thickness) / Math.max(r.thickness, r2.thickness) > 0.35) continue;
+          if (!best || gap < best.gap) best = { r2: r2i, end2, gap };
+        }
+      });
+      if (!best) continue;
+      const b = best as { r2: number; end2: 'a' | 'b'; gap: number };
+      const e2 = runs[b.r2][b.end2];
+      const mid: Pt = [(e[0] + e2[0]) / 2, (e[1] + e2[1]) / 2];
+      moves.push({ run: r, end, to: mid }, { run: runs[b.r2], end: b.end2, to: mid });
+      joined.add(`${ri}${end}`).add(`${b.r2}${b.end2}`);
+      continues.push({ r1: ri, end1: end, r2: b.r2, end2: b.end2 });
+    }
+  });
   // Tags are matched against each wall as drawn, before its ends reach into junctions.
   const drawn = runs.map((r) => ({ ...r, a: [...r.a] as Pt, b: [...r.b] as Pt }));
   for (const m of moves) m.run[m.end] = m.to;
+  // Two walls on one line that both end at one junction (a wall meeting them there from
+  // the side) continue each other through it.
+  runs.forEach((r, ri) => {
+    for (const end of ['a', 'b'] as const) {
+      const e = r[end];
+      const o = end === 'a' ? r.b : r.a;
+      const L = dist(e, o);
+      runs.forEach((r2, r2i) => {
+        if (r2i <= ri) return;
+        for (const end2 of ['a', 'b'] as const) {
+          const e2 = r2[end2];
+          const o2 = end2 === 'a' ? r2.b : r2.a;
+          if (dist(e, e2) > Math.max(2, Math.min(r.thickness, r2.thickness) / 2)) continue;
+          const dot = ((e[0] - o[0]) * (e2[0] - o2[0]) + (e[1] - o[1]) * (e2[1] - o2[1])) / (L * dist(e2, o2));
+          if (dot > -0.998) continue;
+          if (!continues.some((c) => (c.r1 === ri && c.end1 === end) || (c.r2 === r2i && c.end2 === end2))) continues.push({ r1: ri, end1: end, r2: r2i, end2 });
+        }
+      });
+    }
+  });
 
   // Walls crossing each other split each other too.
   for (let i = 0; i < runs.length; i++) {
@@ -164,6 +223,7 @@ export function wallTakeoff(
     const end2 = dist(r2.a, c.at) <= dist(r2.b, c.at) ? 'a' : 'b';
     links.push([pieceAtEnd(c.r1, c.end1), pieceAtEnd(c.r2, end2), 'corner']);
   }
+  for (const c of continues) links.push([pieceAtEnd(c.r1, c.end1), pieceAtEnd(c.r2, c.end2), 'straight']);
   // A wall running into the side of another: an untagged one is most likely the same type.
   for (const t of carry === 'wall+tees' ? tees : []) {
     const stem = pieceAtEnd(t.r1, t.end1);

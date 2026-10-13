@@ -160,6 +160,16 @@ describe('wall takeoff', () => {
     expect(by.get('FR2')?.length).toBeCloseTo(2.84, 1);
   });
 
+  it('carries an exterior type along a wall broken by a pier and stepping slightly', () => {
+    const t1 = 0.3;
+    const t2 = 0.34;
+    // Two lengths of one foundation wall, 0.3 m apart at a pier, the second a little thicker.
+    const walls = [...wall([0, 0], [5, 0]), ...wall([0, t1], [5, t1]), ...wall([5.3, -0.02], [10, -0.02]), ...wall([5.3, t2 - 0.02], [10, t2 - 0.02])];
+    const t = tag('EW1', 8, 1.5, [8, t2 - 0.02]);
+    const res = wallTakeoff(walls, [...walls, ...t.segs], [t.text], MPP);
+    expect(lengthsByType(res.runs, MPP).get('EW1')?.length).toBeCloseTo(10, 1);
+  });
+
   it('sorts tags into kinds that do not compete', () => {
     expect(tagKind('EW3A')).toBe('exterior');
     expect(tagKind('FR1')).toBe('furring');

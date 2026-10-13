@@ -27,7 +27,7 @@ Where the project stands, for picking it up in a new session.
   then edges snapped to the drawn lines. First click reads the sheet's operator
   list (~3–6 s), then 0.1–2 s per room.
 - **Wall takeoff:** `src/walls/`. Latest score across A2.0–A2.3 against the
-  workbook: 12.0% total difference (A2.0 9%, A2.1 9%, A2.2 15%, A2.3 22%);
+  workbook: 10.7% total difference (A2.0 2%, A2.1 8%, A2.2 15%, A2.3 22%);
   re-score with the per-sheet keys after any change to the carry rules (each
   rule change was kept only if the four-sheet total improved). Rules now: walls
   join across breaks up to 2.5× thickness; thick walls meet round corner
@@ -36,7 +36,11 @@ Where the project stands, for picking it up in a new session.
   into a column goes to the furring wrapped round it (a ring of walls ≤ 6 m
   round, found by rays from the piece it lands on), and a wrap side on a
   furring line that runs past the column carries both types (A2.1 FR2 24.2 vs
-  24.6 m, was 11.7). EW7A/EW7B on A2.2 (5 and 6 m in the workbook) have no tags
+  24.6 m, was 11.7). Free wall ends facing each other on nearly one line (a
+  pier between, faces stepping by up to 1.5 pt / 30% of thickness, thickness
+  within 35%) meet in the middle and carry types straight through, and so do
+  two collinear walls ending at one junction (A2.0 EW1 71.4 vs 73.5, was 63.6).
+  A2.3 (roof) is still off: roof hatching reads as walls there. EW7A/EW7B on A2.2 (5 and 6 m in the workbook) have no tags
   on the sheet.
   Earlier notes: Centreline lengths by
   wall type from vector linework and type tags. Against the estimator's ACC
