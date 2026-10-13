@@ -8,7 +8,10 @@
     "preview": "vite preview",
     "typecheck": "tsc",
     "test": "vitest run",
-    "build:artifact": "tsc && vite build && node scripts/artifact-page.mjs"
+    "build:artifact": "tsc && vite build && node scripts/artifact-page.mjs",
+    "desktop": "vite build && electron .",
+    "desktop:mac": "tsc && vite build && electron-builder --mac --publish never",
+    "desktop:win": "tsc && vite build && electron-builder --win --publish never"
   },
   "license": "MIT",
   "dependencies": {
@@ -26,10 +29,15 @@
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.2",
+    "electron": "^44.7.0",
+    "electron-builder": "^26.15.3",
     "typescript": "^7.0.2",
     "vite": "^8.3.4",
     "vitest": "^5.0.4"
   },
   "private": true,
-  "type": "module"
+  "type": "module",
+  "main": "electron/main.cjs",
+  "productName": "Takeoff AI",
+  "author": "MMA Construction"
 }

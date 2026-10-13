@@ -13,6 +13,8 @@ import { newId, type Project } from './model';
  *   activity:<id>     ActivityEvent[]
  *   pdf:<docId>       ArrayBuffer
  *   starter-types     { units, types }    the user's own starting set of takeoff types
+ *   sync:<id>         SyncMark           the last write to or read from the shared projects
+ *                                        folder (desktop app)
  */
 export interface ProjectSummary {
   id: string;
@@ -41,12 +43,12 @@ const safely = async <T>(op: () => Promise<T>, fallback: T): Promise<T> => {
   }
 };
 
-export const summarize = (p: Project, createdAt?: string): ProjectSummary => ({
+export const summarize = (p: Project, createdAt?: string, updatedAt?: string): ProjectSummary => ({
   id: p.id!,
   name: p.name,
   units: p.units,
   createdAt: createdAt ?? new Date().toISOString(),
-  updatedAt: new Date().toISOString(),
+  updatedAt: updatedAt ?? new Date().toISOString(),
   sheets: p.sheets.length,
   takeoffs: p.measurements.length,
 });
@@ -83,21 +85,51 @@ export const loadCurrentProject = () =>
 
 export const loadProjectById = (id: string) => safely(() => get<Project>(projectKey(id)), undefined);
 
-/** Saves a project and refreshes its entry in the index. */
-export const saveProject = (project: Project) =>
+/** Told about every project saved with a change, and every project deleted (the desktop app's shared folder). */
+export interface StorageHooks {
+  saved: (id: string) => void;
+  deleted: (id: string) => void;
+}
+let hooks: StorageHooks | null = null;
+export const setStorageHooks = (h: StorageHooks | null) => {
+  hooks = h;
+};
+
+/**
+ * Saves a project and refreshes its entry in the index. A save that changes nothing (the
+ * autosave after opening a project) leaves its date alone, so it doesn't count as an edit.
+ * `fromFolder`: a copy read from the shared folder, saved with that time (this computer's
+ * clock, when it was read) and not sent back.
+ */
+export const saveProject = (project: Project, opts: { fromFolder?: string } = {}) =>
   safely(async () => {
     if (!project.id) return;
-    await set(projectKey(project.id), project);
     const index = (await get<ProjectSummary[]>(INDEX)) ?? [];
     const old = index.find((s) => s.id === project.id);
-    await set(INDEX, [...index.filter((s) => s.id !== project.id), summarize(project, old?.createdAt)]);
-    await set(CURRENT, project.id);
+    const stored = old ? await get<Project>(projectKey(project.id)) : undefined;
+    const unchanged = stored !== undefined && JSON.stringify(stored) === JSON.stringify(project);
+    if (!unchanged) {
+      await set(projectKey(project.id), project);
+      await set(INDEX, [...index.filter((s) => s.id !== project.id), summarize(project, old?.createdAt, opts.fromFolder)]);
+    }
+    if (!opts.fromFolder) await set(CURRENT, project.id);
+    if (!unchanged && !opts.fromFolder) hooks?.saved(project.id);
   }, undefined);
+
+/** The folder copy's savedAt (from whichever computer wrote it), and this computer's clock at the time. */
+export interface SyncMark {
+  savedAt: string;
+  at: string;
+}
+export const getSyncMark = (id: string) => safely(() => get<SyncMark>(`sync:${id}`), undefined);
+export const setSyncMark = (id: string, mark: SyncMark) => safely(() => set(`sync:${id}`, mark), undefined);
 
 /** Deletes a project, its activity log and its drawings. */
 export const deleteProject = (project: Project) =>
   safely(async () => {
     if (!project.id) return;
+    hooks?.deleted(project.id);
+    await del(`sync:${project.id}`);
     for (const d of project.docs) await del(pdfKey(d.id));
     await del(projectKey(project.id));
     await del(activityKey(project.id));

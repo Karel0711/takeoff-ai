@@ -6,6 +6,8 @@ import { Icon } from './Icons';
 interface Props {
   currentId: string | undefined;
   persisted: boolean;
+  /** Desktop app: the shared projects folder, e.g. "iCloud Drive › Takeoff AI". */
+  folder?: string;
   onOpen: (id: string) => void;
   onNew: (units: Units) => void;
   onDelete: (id: string) => void;
@@ -28,7 +30,7 @@ const size = (bytes: number) =>
   bytes > 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : bytes > 1e6 ? `${Math.round(bytes / 1e6)} MB` : `${Math.max(1, Math.round(bytes / 1e3))} KB`;
 
 /** Every project saved in this browser, with new, open, delete and project files. */
-export function ProjectsPanel({ currentId, persisted, onOpen, onNew, onDelete, onDuplicate, onSaveFile, onOpenFile, onBackupAll }: Props) {
+export function ProjectsPanel({ currentId, persisted, folder, onOpen, onNew, onDelete, onDuplicate, onSaveFile, onOpenFile, onBackupAll }: Props) {
   const [projects, setProjects] = useState<ProjectSummary[] | null>(null);
   const [space, setSpace] = useState<{ usage: number; quota: number } | null>(null);
   useEffect(() => {
@@ -40,7 +42,9 @@ export function ProjectsPanel({ currentId, persisted, onOpen, onNew, onDelete, o
     <div className="projects-panel">
       <div className="pop-head">
         <div className="pop-title">Projects</div>
-        <div className="pop-sub">Saved in this browser on this computer{persisted ? ', kept until you delete them' : ''}.</div>
+        <div className="pop-sub">
+          {folder ? `Saved on this computer and in ${folder}, for your other computer.` : `Saved in this browser on this computer${persisted ? ', kept until you delete them' : ''}.`}
+        </div>
       </div>
       <ul className="project-list">
         {projects === null && <li className="muted project-empty">Loading…</li>}

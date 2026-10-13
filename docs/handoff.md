@@ -223,6 +223,22 @@ Where the project stands, for picking it up in a new session.
       Only `typeTotals().primary/unit` change; the Excel export reads items.
     - Not done: the sample's starter types (W1/FR1, Floor finish, Ceiling) sit
       unused beside the types read from the sample.
+- **Box select** (`src/boxSelect.ts`, Viewer `band.select`): B or Shift-drag in
+  Select; left-to-right drags take what is wholly inside, right-to-left what the
+  box touches (lines tested segment by segment, areas also when the box sits
+  inside them). App keeps `multiIds` per sheet; a bar offers Delete and Clear.
+- **Desktop app** (`electron/`): `main.cjs` serves `dist` under `app://takeoff/`
+  (a standard, secure scheme, so IndexedDB persists) and exposes only the
+  projects folder through `preload.cjs`; `folder.cjs` does the disk work (paths
+  checked to stay inside the folder, atomic writes). `src/folderSync.ts` syncs
+  this computer's database with the folder: sync marks hold the folder copy's
+  savedAt and this computer's clock at sync time, so the two computers' clocks
+  are never compared; a conflict keeps both. `saveProject` skips saves that
+  change nothing (the autosave after opening), which would otherwise bounce a
+  project between computers. Tested with two Electron profiles sharing a folder
+  (Playwright `_electron` under xvfb): carry over, edit back, live reload while
+  both are open (within one 45 s poll), first-launch prompt. Mac and Windows
+  installers come from `.github/workflows/desktop.yml` (Releases).
 - **Interface (redesigned):** light, Mac-style (system font, segmented tools,
   source-list sidebar, inspector with Quantities / Takeoffs / History). State
   changes go through `commit()` in `App.tsx`, which keeps undo/redo stacks and

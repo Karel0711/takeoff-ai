@@ -1,0 +1,76 @@
+# Builds the desktop app (Mac .dmg, Windows installer) from main and attaches them to a
+# GitHub Release, newest first under Releases. Run by hand from the Actions tab too.
+name: Desktop
+
+on:
+  push:
+    branches: [main]
+  # Pull requests that touch the packaging build it too (without releasing).
+  pull_request:
+    paths:
+      - electron/**
+      - electron-builder.yml
+      - package.json
+      - package-lock.json
+      - .github/workflows/desktop.yml
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest
+            target: --mac
+            files: release/*.dmg
+          - os: windows-latest
+            target: --win
+            files: release/*.exe
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npx tsc && npx vite build
+      - run: npx electron-builder ${{ matrix.target }} --publish never
+        env:
+          # No signing certificate: ad-hoc on Mac (see electron-builder.yml), unsigned on Windows.
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ runner.os }}
+          path: ${{ matrix.files }}
+          if-no-files-found: error
+
+  release:
+    if: github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: desktop-${{ github.run_number }}
+          name: Takeoff AI desktop ${{ github.run_number }}
+          target_commitish: ${{ github.sha }}
+          make_latest: true
+          files: out/*
+          body: |
+            Built from ${{ github.sha }}.
+
+            **Mac:** download `Takeoff-AI-Mac-arm64.dmg` (Apple silicon: M1 and later) or `Takeoff-AI-Mac-x64.dmg` (Intel), open it and drag Takeoff AI to Applications. The first time, macOS says it can't check the app: open System Settings › Privacy & Security and click **Open Anyway**.
+
+            **Windows:** download `Takeoff-AI-Windows-Setup.exe` and run it. If SmartScreen warns, click **More info › Run anyway**.
+
+            In the app, **More › Keep projects in iCloud Drive…** on each computer shares projects between them.

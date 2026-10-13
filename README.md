@@ -176,6 +176,33 @@ packages, heights), then **More › Use these types for new projects**. New
 projects in the same units start with them instead of the built-in set;
 **Reset types for new projects** goes back to the built-in set.
 
+### Desktop app (Mac and Windows)
+
+The same app, packaged with Electron (`electron/`, `electron-builder.yml`).
+`.github/workflows/desktop.yml` builds it on every change to `main` and attaches
+the files to a GitHub Release (Releases, on the repository page):
+
+- **Mac:** `Takeoff-AI-Mac-arm64.dmg` (Apple silicon) or `Takeoff-AI-Mac-x64.dmg`
+  (Intel). Drag it to Applications. It is ad-hoc signed (no Apple developer
+  account), so the first launch needs System Settings › Privacy & Security ›
+  **Open Anyway**.
+- **Windows:** `Takeoff-AI-Windows-Setup.exe`. SmartScreen may warn: More info ›
+  Run anyway.
+
+**Shared projects folder:** **More › Keep projects in iCloud Drive…** (any synced
+folder works: OneDrive, Dropbox, Google Drive) on each computer. Each project is
+kept there as a folder (`meta.json`, `project.json`, `drawings/*.pdf`) as well
+as in the app's own database. Saves go out a moment after each change; the
+other computer brings them in at launch, every 45 s and whenever its window
+comes to the front, and reloads the open project when it changed only there. A
+project edited on both computers before they synced keeps both: the other
+computer's version comes in as "… (from the other computer)". Deleting a
+project moves its folder to the Trash. Logic and tests: `src/folderSync.ts`,
+`test/folderSync.test.ts`.
+
+Locally: `npm run desktop` runs it; `npm run desktop:mac` / `desktop:win` build
+the installers (Mac builds need a Mac).
+
 ### Publishing it for your team
 
 `.github/workflows/app.yml` checks every change and, on `main`, publishes the

@@ -38,28 +38,14 @@ import { isHosted, saveFile } from './host';
 import { defaultTypes, newId, newProject, type Kind, type Measurement, type Project, type Pt, type Sheet, type TakeoffType, type Units } from './model';
 import { inspectPage, openPdf, type PDFDocumentProxy, type PDFPageProxy } from './pdf';
 import { typeTotals } from './quantities';
-import {
-  clearStarterTypes,
-  deleteProject,
-  listProjects,
-  type ProjectSummary,
-  loadActivity,
-  loadCurrentProject,
-  deletePdf,
-  loadPdf,
-  loadProjectById,
-  loadStarterTypes,
-  persistStorage,
-  saveActivity,
-  savePdf,
-  saveProject,
-  saveStarterTypes,
-} from './storage';
+import { clearStarterTypes, deleteProject, listProjects, type ProjectSummary, loadActivity, loadCurrentProject, deletePdf, loadPdf, loadProjectById, loadStarterTypes, persistStorage, saveActivity, savePdf, saveProject, saveStarterTypes, setStorageHooks, getSyncMark, setSyncMark } from './storage';
 import { readProjectFiles, writeBackup, writeProjectFile } from './projectFile';
 import { canUseServiceWorker, isInstalled, onLaunchFiles, promptInstall, registerServiceWorker } from './pwa';
 import { ringArea } from './geometry';
 import { scoringOn, setScoringOn } from './scoring';
 import { getApiKey } from './ai/claude';
+import { desktopApi, folderLabel } from './desktop';
+import { FolderSync, type PullResult } from './folderSync';
 import { formatQty, parseScale } from './units';
 
 const PALETTE = ['#0a84ff', '#ff9f0a', '#30d158', '#bf5af2', '#ff375f', '#64d2ff', '#ffd60a', '#ac8e68', '#5e5ce6', '#ff6961'];
@@ -147,6 +133,16 @@ export function App() {
   const [popover, setPopover] = useState<'scale' | 'more' | 'automate' | 'projects' | 'copy' | 'export' | 'newtype' | null>(null);
   const [tab, setTab] = useState<InspectorTab>('quantities');
   const [persisted, setPersisted] = useState(false);
+  /** Desktop app: the shared projects folder (iCloud Drive), and its sync. */
+  const [syncFolder, setSyncFolder] = useState<string | null>(null);
+  const folderSync = useRef<FolderSync | null>(null);
+  /** From now on, keeps projects in `folder` too: each save is sent there, each delete trashed there. */
+  function startFolderSync(folder: string) {
+    const sync = new FolderSync(desktopApi!, { listProjects, loadProjectById, saveProject, loadActivity, saveActivity, loadPdf, savePdf, getSyncMark, setSyncMark });
+    folderSync.current = sync;
+    setSyncFolder(folder);
+    setStorageHooks({ saved: (id) => sync.pushSoon(id), deleted: (id) => void sync.remove(id) });
+  }
   const projectFileInput = useRef<HTMLInputElement>(null);
   const projectsButton = useRef<HTMLButtonElement>(null);
   /** Fill closes wall openings up to this width (metres); wider ones count as open. */
@@ -186,9 +182,32 @@ export function App() {
 
   useEffect(() => {
     (async () => {
+      // Desktop app: bring in what changed on the other computer before opening anything.
+      const folder = desktopApi ? await desktopApi.getFolder().catch(() => null) : null;
+      if (folder) {
+        startFolderSync(folder);
+        await folderSync.current!.pull().catch(() => undefined);
+      }
       const saved = (await loadCurrentProject()) ?? newProject('metric');
       await openProjectState(saved.id ? saved : { ...saved, id: newId() });
       setPersisted(await persistStorage());
+      // Desktop app, first launch: offer the shared folder once.
+      if (desktopApi && !folder) {
+        let asked = false;
+        try {
+          asked = localStorage.getItem('takeoff-ai.folderAsked') === '1';
+          localStorage.setItem('takeoff-ai.folderAsked', '1');
+        } catch {
+          // Storage blocked: ask again next time.
+        }
+        if (!asked)
+          setToast({
+            text: 'Keep your projects in iCloud Drive to open them on your other computer too',
+            undo: false,
+            sticky: true,
+            action: { label: 'Choose folder', run: () => void chooseProjectsFolderRef.current() },
+          });
+      }
     })();
     registerServiceWorker((apply) =>
       setToast({ text: 'A new version of Takeoff AI is ready', undo: false, sticky: true, action: { label: 'Restart', run: apply } }),
@@ -463,6 +482,61 @@ export function App() {
     }
     void listProjects().then((list) => setOtherProjects(list.filter((x) => x.id !== projectRef.current?.id)));
   }, [popover]);
+
+  // Desktop app: every so often, and on coming back to the window, bring in the other computer's changes.
+  const sheetIdRef = useRef(sheetId);
+  sheetIdRef.current = sheetId;
+  useEffect(() => {
+    if (!syncFolder) return;
+    const run = async () => {
+      const sync = folderSync.current;
+      if (!sync) return;
+      let res: PullResult;
+      try {
+        res = await sync.pull();
+      } catch {
+        return;
+      }
+      const openId = projectRef.current?.id;
+      // Changed only on the other computer, so nothing here is lost: show the new version.
+      if (openId && res.updated.includes(openId)) {
+        const fresh = await loadProjectById(openId);
+        if (fresh) {
+          const keep = sheetIdRef.current;
+          await openProjectState(fresh);
+          if (keep && fresh.sheets.some((s) => s.id === keep)) setSheetId(keep);
+          setToast({ text: 'Updated with changes from your other computer', undo: false });
+        }
+      }
+      const clash = res.conflicts.find((c) => c.id === openId) ?? res.conflicts[0];
+      if (clash) setToast({ text: `Changed on both computers: the other computer’s version is kept as “${clash.name}”`, undo: false, sticky: true });
+    };
+    const timer = window.setInterval(() => void run(), 45000);
+    const onFocus = () => void run();
+    window.addEventListener('focus', onFocus);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('focus', onFocus);
+    };
+  }, [syncFolder, openProjectState]);
+
+  /** Desktop app: picks the shared projects folder, then sends this computer's projects there and brings in the other's. */
+  async function chooseProjectsFolder() {
+    if (!desktopApi) return;
+    const folder = await desktopApi.chooseFolder().catch(() => null);
+    if (!folder) return;
+    startFolderSync(folder);
+    try {
+      const res = await folderSync.current!.pull();
+      await folderSync.current!.pushMissing();
+      const n = res.added.length;
+      setToast({ text: `Projects are kept in ${folderLabel(folder)}${n ? ` · ${n} brought in from your other computer` : ''}`, undo: false });
+    } catch (e) {
+      setToast({ text: `That folder couldn’t be used: ${e instanceof Error ? e.message : String(e)}`, undo: false });
+    }
+  }
+  const chooseProjectsFolderRef = useRef(chooseProjectsFolder);
+  chooseProjectsFolderRef.current = chooseProjectsFolder;
 
   if (!project) return <div className="loading">Opening your project…</div>;
 
@@ -1984,6 +2058,7 @@ export function App() {
           <ProjectsPanel
             currentId={project.id}
             persisted={persisted}
+            folder={syncFolder ? folderLabel(syncFolder) : undefined}
             onOpen={(id) => {
               setPopover(null);
               void switchProject(id);
@@ -2161,6 +2236,14 @@ export function App() {
                 : []),
               ...(canUseServiceWorker() && !isInstalled() ? [{ label: 'Install as an app…', onSelect: () => void installApp() }] : []),
               ...(isHosted ? [] : [{ label: 'AI settings…', onSelect: () => setAiDialog('settings') }]),
+              ...(desktopApi
+                ? syncFolder
+                  ? [
+                      { label: 'Show projects folder', hint: folderLabel(syncFolder), onSelect: () => void desktopApi!.revealFolder() },
+                      { label: 'Change projects folder…', onSelect: () => void chooseProjectsFolder() },
+                    ]
+                  : [{ label: 'Keep projects in iCloud Drive…', hint: 'Other computer', onSelect: () => void chooseProjectsFolder() }]
+                : []),
             ],
             project.docs.map((d) => ({ label: `Remove ${d.name}…`, danger: true, onSelect: () => void removeDrawings(d.id) })),
             [
