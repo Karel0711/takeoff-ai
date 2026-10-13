@@ -244,8 +244,9 @@ export function AiAssembliesDialog({ page, sheet, units, existingTypes, onApply,
           <span className="muted"> · answered by {state.answeredBy}</span>
           {missed.length > 0 && (
             <div className="warn">
-              Printed on the sheet but not returned: {missed.join(', ')}. Some may be references to types on other
-              sheets; otherwise run it again or add them by hand.
+              In the sheet's text but not returned: {missed.join(', ')}. These may be references to other sheets or
+              types removed by an addendum (their text often stays in the file). Check the drawing; if one is real,
+              run it again or add it by hand.
             </div>
           )}
           {unprinted.length > 0 && (

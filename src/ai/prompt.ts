@@ -19,7 +19,7 @@ You receive the sheet as image tiles (left to right, top to bottom, slightly ove
  */
 export function legendRequest(sheetName: string, lines: string[], printedTags: string[] = []): string {
   const checklist = printedTags.length
-    ? `\n\nThese type tags appear in the sheet's text: ${printedTags.join(', ')}. Return an entry for each one that is defined on this sheet; a tag that only appears as a reference inside another type's notes is not a type of its own.`
+    ? `\n\nThese type tags appear in the sheet's text: ${printedTags.join(', ')}. Return an entry for each one that is defined on this sheet. Leave out a tag that only appears as a reference inside another type's notes, and a type that is struck out, clouded as deleted or otherwise shown as removed (addenda often remove types but leave their text in the file).`
     : '';
   return `Sheet ${sheetName}. Text layer:\n\n${lines.join('\n')}${checklist}\n\nExtract every assembly type on this sheet.`;
 }

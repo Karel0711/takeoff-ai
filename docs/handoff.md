@@ -49,8 +49,10 @@ the `downloads` capability).
      categories. The estimator also checked it against the drawing. Two fixes came
      out of it: the scorer accepts a layer split at "W/" (W7B/W7C framing with
      insulation), and "2 LAYERS" of board now doubles the board quantity (W1B).
-   - **First real run, A0.2:** 23 of 25 types. Missed EW1C (retaining wall) and
-     R1 option 2 (two alternatives under one tag). 15/15 framing spacings; every
+   - **Real runs, A0.2:** 23 types, which the estimator confirmed is complete: EW1C
+     and R1 option 2 were removed by the latest addendum (their text stays in the
+     PDF, so the tag check lists them; the AI correctly left them out). The
+     workbook still lists them because it predates that addendum. First run notes: 15/15 framing spacings; every
      overall thickness the AI gave matches the dimension printed on the drawing.
      The workbook differs from the drawing on wood siding (Addendum 7: 17.5mm
      siding replaced the 10mm veneer on EW3B/EW4B/EW5B/EW6A/EW6C) and on five
