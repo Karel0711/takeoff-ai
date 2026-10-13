@@ -1,0 +1,157 @@
+import type { Pt } from '../model';
+import type { Segment } from './vectors';
+
+export interface SymbolMatch {
+  /** Centre of the matched symbol, in sheet points. */
+  at: Pt;
+  /** Quarter turns from the sample (0–3); 4–7 are the same turns of its mirror image. */
+  turn: number;
+  /** Share of the sample's lines found at this place (0–1). */
+  score: number;
+}
+
+type Line = { x1: number; y1: number; x2: number; y2: number; width: number };
+
+const len = (s: Line) => Math.hypot(s.x2 - s.x1, s.y2 - s.y1);
+
+/** Turns a point by quarter turns about the origin (sheet y points down). */
+const rot = (x: number, y: number, turn: number): [number, number] => {
+  // Turns 4–7 mirror the symbol left to right first (a left-hand door is a right-hand one flipped).
+  const mx = turn >= 4 ? -x : x;
+  const q = turn % 4;
+  return q === 0 ? [mx, y] : q === 1 ? [-y, mx] : q === 2 ? [-mx, -y] : [y, -mx];
+};
+
+/** Segments bucketed by midpoint for quick lookups around a point. */
+class Index {
+  private cells = new Map<string, Line[]>();
+  constructor(
+    lines: Line[],
+    private size: number,
+  ) {
+    for (const s of lines) {
+      const k = this.key((s.x1 + s.x2) / 2, (s.y1 + s.y2) / 2);
+      const list = this.cells.get(k);
+      if (list) list.push(s);
+      else this.cells.set(k, [s]);
+    }
+  }
+  private key(x: number, y: number) {
+    return `${Math.floor(x / this.size)},${Math.floor(y / this.size)}`;
+  }
+  near(x: number, y: number): Line[] {
+    const cx = Math.floor(x / this.size);
+    const cy = Math.floor(y / this.size);
+    const out: Line[] = [];
+    for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) for (const s of this.cells.get(`${cx + i},${cy + j}`) ?? []) out.push(s);
+    return out;
+  }
+}
+
+/** Whether a sheet line has the same ends as a (moved, turned) sample line. */
+const same = (s: Line, ax: number, ay: number, bx: number, by: number, width: number, tol: number) =>
+  Math.abs(s.width - width) <= 0.02 + width * 0.05 &&
+  ((Math.hypot(s.x1 - ax, s.y1 - ay) <= tol && Math.hypot(s.x2 - bx, s.y2 - by) <= tol) ||
+    (Math.hypot(s.x1 - bx, s.y1 - by) <= tol && Math.hypot(s.x2 - ax, s.y2 - ay) <= tol));
+
+export const MAX_SAMPLE_LINES = 400;
+
+/** A symbol taken from a sheet: its lines about its centre, ready to look for elsewhere. */
+export interface SymbolSample {
+  lines: Line[];
+  /** The box's longer side, in points. */
+  span: number;
+}
+
+/** The lines drawn wholly inside `box` (x0, y0, x1, y1), about the box centre; null when there are too few. */
+export function sampleSymbol(segs: Segment[], box: [number, number, number, number]): SymbolSample | null {
+  const [x0, y0, x1, y1] = [Math.min(box[0], box[2]), Math.min(box[1], box[3]), Math.max(box[0], box[2]), Math.max(box[1], box[3])];
+  const cx = (x0 + x1) / 2;
+  const cy = (y0 + y1) / 2;
+  const inBox = (x: number, y: number) => x >= x0 && x <= x1 && y >= y0 && y <= y1;
+  // Lines too short to tell apart (dots, chord pieces under a point) are left out.
+  const lines = segs.filter((s) => len(s) >= 0.4 && inBox(s.x1, s.y1) && inBox(s.x2, s.y2));
+  // A symbol is a few dozen lines; a box round a whole room is not a symbol.
+  if (lines.length < 2 || lines.length > MAX_SAMPLE_LINES) return null;
+  return {
+    lines: lines.map((s) => ({ x1: s.x1 - cx, y1: s.y1 - cy, x2: s.x2 - cx, y2: s.y2 - cy, width: s.width })),
+    span: Math.max(x1 - x0, y1 - y0),
+  };
+}
+
+/**
+ * Finds every copy of the symbol drawn inside `box`: the same lines, in the same pens,
+ * at the same size, moved, turned by quarter turns or mirrored. CAD blocks repeat exactly, so a
+ * copy must have nearly all of the sample's lines.
+ */
+export function findSymbols(segs: Segment[], box: [number, number, number, number], minScore = 0.85): SymbolMatch[] {
+  const sample = sampleSymbol(segs, box);
+  return sample ? matchSymbol(sample, segs, minScore) : [];
+}
+
+/** Every copy of a sampled symbol among a sheet's segments. */
+export function matchSymbol(sample: SymbolSample, segs: Segment[], minScore = 0.85): SymbolMatch[] {
+  const rel = sample.lines;
+  const span = sample.span;
+  const lines: Line[] = segs.filter((s) => len(s) >= 0.4);
+  const tol = Math.max(0.35, span * 0.01);
+  const index = new Index(lines, Math.max(4, span / 2));
+
+  // Anchor: the sample line whose length and pen are rarest on the sheet.
+  const count = (a: Line) => lines.filter((s) => Math.abs(s.width - a.width) <= 0.02 + a.width * 0.05 && Math.abs(len(s) - len(a)) <= tol).length;
+  const longest = [...rel].sort((a, b) => len(b) - len(a)).slice(0, 6);
+  const anchor = longest.reduce((a, b) => (count(b) < count(a) ? b : a));
+  const aLen = len(anchor);
+  const candidates = lines.filter((s) => Math.abs(s.width - anchor.width) <= 0.02 + anchor.width * 0.05 && Math.abs(len(s) - aLen) <= tol);
+
+  const found: SymbolMatch[] = [];
+  // Places already matched, on a grid one symbol wide, so a copy is counted once.
+  const placed = new Map<string, Pt[]>();
+  const taken = (x: number, y: number) => {
+    const gx = Math.floor(x / span);
+    const gy = Math.floor(y / span);
+    for (let i = -1; i <= 1; i++)
+      for (let j = -1; j <= 1; j++) for (const p of placed.get(`${gx + i},${gy + j}`) ?? []) if (Math.hypot(p[0] - x, p[1] - y) < span / 2) return true;
+    return false;
+  };
+  for (let turn = 0; turn < 8; turn++) {
+    const turned = rel.map((s) => {
+      const [ax, ay] = rot(s.x1, s.y1, turn);
+      const [bx, by] = rot(s.x2, s.y2, turn);
+      return { ax, ay, bx, by, width: s.width };
+    });
+    const [pax, pay] = rot(anchor.x1, anchor.y1, turn);
+    const [pbx, pby] = rot(anchor.x2, anchor.y2, turn);
+    for (const c of candidates) {
+      // The candidate's ends match the anchor's either way round: two possible places.
+      for (const [ox, oy] of [
+        [c.x1 - pax, c.y1 - pay],
+        [c.x1 - pbx, c.y1 - pby],
+      ]) {
+        if (!same(c, pax + ox, pay + oy, pbx + ox, pby + oy, anchor.width, tol)) continue;
+        if (taken(ox, oy)) continue;
+        let hits = 0;
+        for (let i = 0; i < turned.length; i++) {
+          const t = turned[i];
+          const ax = t.ax + ox;
+          const ay = t.ay + oy;
+          const bx = t.bx + ox;
+          const by = t.by + oy;
+          if (index.near((ax + bx) / 2, (ay + by) / 2).some((s) => same(s, ax, ay, bx, by, t.width, tol))) hits++;
+          // Stop early once a match is out of reach.
+          if (hits + (turned.length - i - 1) < minScore * turned.length) break;
+        }
+        const score = hits / turned.length;
+        if (score >= minScore) {
+          found.push({ at: [ox, oy], turn, score });
+          const k = `${Math.floor(ox / span)},${Math.floor(oy / span)}`;
+          const list = placed.get(k);
+          if (list) list.push([ox, oy]);
+          else placed.set(k, [[ox, oy]]);
+        }
+      }
+    }
+    // A symmetric symbol matches itself again turned: those places are already found.
+  }
+  return found;
+}

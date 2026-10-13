@@ -1,0 +1,442 @@
+import { LineCapStyle, PDFDocument, StandardFonts, degrees, rgb, type PDFPage, type PDFFont } from 'pdf-lib';
+import type { Units } from './model';
+
+/**
+ * A small floor plan drawn the way CAD exports are (vector linework, real text, a title
+ * block with its scale), so a new user can try every tool before opening their own set.
+ * Five rooms with tags, doors with tags, tagged walls and dimension strings: at 1:100 in
+ * millimetres, or in imperial at 1/8" = 1'-0" in feet and inches (the same plan, 60' × 36'-8").
+ * Then its floor finish plan (porcelain tile grid, carpet stipple, sealed concrete hatch,
+ * with a finish legend) and its reflected ceiling plan (an ACT grid, a GWB stipple,
+ * downlights and a ceiling legend).
+ */
+export async function samplePlanPdf(
+  units: Units = 'metric',
+  options: {
+    walls?: 'lines' | 'poche';
+    /** Draw every line in one pen, as a PDF printed without lineweights. */
+    onePen?: boolean;
+    /** The page's /Rotate, as plotters often save sheets. */
+    rotate?: 0 | 90 | 180 | 270;
+    /** Wall lines broken into pieces this long (plan units), as some exports explode them. */
+    pieces?: number;
+    /** Plan text written one character at a time, as some PDF writers do. */
+    charByChar?: boolean;
+    /** Room numbers printed bare under the name, without a box. */
+    bareRoomNumbers?: boolean;
+  } = {},
+): Promise<Uint8Array> {
+  const poche = options.walls === 'poche';
+  const style: Style = {
+    pens: options.onePen ? { wall: 0.24, thin: 0.24 } : { wall: 0.7, thin: 0.25 },
+    piece: options.pieces ?? 0,
+    byChar: !!options.charByChar,
+    bareRooms: !!options.bareRoomNumbers,
+  };
+  const doc = await PDFDocument.create();
+  doc.setTitle('Takeoff sample plan');
+  const font = await doc.embedFont(StandardFonts.Helvetica);
+  const bold = await doc.embedFont(StandardFonts.HelveticaBold);
+  for (const kind of ['floor', 'ceiling', 'finish'] as const) {
+    const page = doc.addPage([W, H]);
+    drawPlan(page, font, bold, units, kind, poche, style);
+    if (options.rotate) page.setRotation(degrees(options.rotate));
+  }
+  return doc.save();
+}
+
+const W = 1224;
+const H = 792;
+/**
+ * The plan is laid out in units of one metre (metric) or 3'-4" (imperial, so walls come out
+ * 10" and 6", doors 3'-0"). Points per unit: 1 m at 1:100, or 3.333' at 1/8" = 1'-0" (9 pt a foot).
+ */
+const FT_PER_UNIT = 10 / 3;
+/** A length in feet as written on drawings: 18'-4". */
+const feetInches = (ft: number) => {
+  const inches = Math.round(ft * 12);
+  return `${Math.floor(inches / 12)}'-${inches % 12}"`;
+};
+const OX = 110;
+const OY = 150;
+const ink = rgb(0, 0, 0);
+/** How the sample is drawn: pens (one for all without lineweights), exploded walls, text, room tags. */
+interface Style {
+  pens: { wall: number; thin: number };
+  /** Wall lines broken into pieces this long (0: whole). */
+  piece: number;
+  byChar: boolean;
+  bareRooms: boolean;
+}
+
+/** `poche`: walls as solid filled shapes with no outline, as some exports draw them. */
+function drawPlan(page: PDFPage, font: PDFFont, bold: PDFFont, units: Units, kind: 'floor' | 'finish' | 'ceiling', poche: boolean, style: Style) {
+  const ceiling = kind === 'ceiling';
+  const { pens, piece, byChar, bareRooms } = style;
+  const metric = units === 'metric';
+  const K = metric ? 72 / 0.0254 / 100 : 9 * FT_PER_UNIT;
+  const label = (len: number) => (metric ? String(Math.round(len * 1000)) : feetInches(len * FT_PER_UNIT));
+  const scale = metric ? '1:100' : '1/8" = 1\'-0"';
+  // Plan metres to PDF points (PDF y runs up from the bottom).
+  const px = (x: number) => OX + x * K;
+  const py = (y: number) => H - (OY + y * K);
+  const line = (x1: number, y1: number, x2: number, y2: number, thickness = pens.wall) => {
+    const n = piece && thickness === pens.wall ? Math.max(1, Math.ceil(Math.hypot(x2 - x1, y2 - y1) / piece)) : 1;
+    for (let i = 0; i < n; i++) {
+      const [a, b] = [i / n, (i + 1) / n];
+      page.drawLine({ start: { x: px(x1 + (x2 - x1) * a), y: py(y1 + (y2 - y1) * a) }, end: { x: px(x1 + (x2 - x1) * b), y: py(y1 + (y2 - y1) * b) }, thickness, color: ink });
+    }
+  };
+  /** A straight wall face from `a` to `b` along a fixed x or y, skipping the gaps. */
+  const face = (vertical: boolean, at: number, a: number, b: number, gaps: [number, number][] = []) => {
+    if (poche) return;
+    let from = a;
+    for (const [g0, g1] of [...gaps].sort((p, q) => p[0] - q[0])) {
+      if (g0 > from) (vertical ? line(at, from, at, g0) : line(from, at, g0, at));
+      from = Math.max(from, g1);
+    }
+    if (b > from) (vertical ? line(at, from, at, b) : line(from, at, b, at));
+  };
+  const text = (str: string, x: number, y: number, size: number, f = font, rotate = 0) => {
+    const w = f.widthOfTextAtSize(str, size);
+    // Centred on (x, y) in plan metres.
+    if (rotate) page.drawText(str, { x: px(x) + size * 0.35, y: py(y) - w / 2, size, font: f, color: ink, rotate: degrees(rotate) });
+    else if (byChar) {
+      let cx = px(x) - w / 2;
+      for (const ch of str) {
+        page.drawText(ch, { x: cx, y: py(y) - size * 0.35, size, font: f, color: ink });
+        cx += f.widthOfTextAtSize(ch, size);
+      }
+    } else page.drawText(str, { x: px(x) - w / 2, y: py(y) - size * 0.35, size, font: f, color: ink });
+  };
+
+  // Exterior walls, 250 thick, centred on 0–18 × 0–11, with the entry at the bottom.
+  const t = 0.125;
+  const entry: [number, number] = [8.1, 9.9];
+  face(false, -t, -t, 18 + t);
+  face(false, 11 + t, -t, 18 + t, [entry]);
+  face(true, -t, -t, 11 + t);
+  face(true, 18 + t, -t, 11 + t);
+  // Inside faces, open where partitions meet them.
+  const p = 0.075;
+  face(false, t, t, 18 - t, [
+    [6 - p, 6 + p],
+    [12 - p, 12 + p],
+  ]);
+  face(false, 11 - t, t, 18 - t, [[6 - p, 6 + p], [12 - p, 12 + p], entry]);
+  face(true, t, t, 11 - t, [[5.5 - p, 5.5 + p]]);
+  face(true, 18 - t, t, 11 - t, [[5.5 - p, 5.5 + p]]);
+  if (!poche) for (const x of entry) line(x, 11 - t, x, 11 + t);
+
+  // Partitions, 150 thick: two across the building, and one splitting each side.
+  const doorsAt: [number, number][] = [
+    [2, 2.9],
+    [7.5, 8.4],
+  ];
+  for (const x of [6, 12]) {
+    const outer = x === 6 ? x - p : x + p;
+    const inner = x === 6 ? x + p : x - p;
+    face(true, outer, t, 11 - t, [...doorsAt, [5.5 - p, 5.5 + p]]);
+    face(true, inner, t, 11 - t, doorsAt);
+    for (const [d0, d1] of poche ? [] : doorsAt) {
+      line(x - p, d0, x + p, d0);
+      line(x - p, d1, x + p, d1);
+    }
+  }
+  if (poche) {
+    const solid = (x0: number, y0: number, x1: number, y1: number) =>
+      page.drawRectangle({ x: px(x0), y: py(y1), width: (x1 - x0) * K, height: (y1 - y0) * K, color: ink });
+    solid(-t, -t, 18 + t, t);
+    solid(-t, 11 - t, entry[0], 11 + t);
+    solid(entry[1], 11 - t, 18 + t, 11 + t);
+    // Side walls between the top and bottom ones, so the pieces only meet, not overlap.
+    solid(-t, t, t, 11 - t);
+    solid(18 - t, t, 18 + t, 11 - t);
+    for (const x of [6, 12]) {
+      solid(x - p, t, x + p, doorsAt[0][0]);
+      solid(x - p, doorsAt[0][1], x + p, doorsAt[1][0]);
+      solid(x - p, doorsAt[1][1], x + p, 11 - t);
+    }
+    solid(t, 5.5 - p, 6 - p, 5.5 + p);
+    solid(12 + p, 5.5 - p, 18 - t, 5.5 + p);
+  }
+  face(false, 5.5 - p, t, 6 - p);
+  face(false, 5.5 + p, t, 6 - p);
+  face(false, 5.5 - p, 12 + p, 18 - t);
+  face(false, 5.5 + p, 12 + p, 18 - t);
+
+  // Doors: leaf and swing into the lobby, in a thin pen.
+  const swing = (hx: number, hy: number, dir: 1 | -1) => {
+    line(hx, hy, hx + 0.9 * dir, hy, pens.thin);
+    const r = 0.9 * K;
+    const cx = px(hx);
+    const cy = py(hy);
+    // Quarter arc from the leaf's end to the opening's far jamb (SVG y runs down from the origin).
+    page.drawSvgPath(`M ${(dir * r).toFixed(2)} 0 A ${r.toFixed(2)} ${r.toFixed(2)} 0 0 ${dir === 1 ? 1 : 0} 0 ${r.toFixed(2)}`, {
+      x: cx,
+      y: cy,
+      borderColor: ink,
+      borderWidth: pens.thin,
+    });
+  };
+  if (!ceiling) {
+    for (const [d0] of doorsAt) {
+      swing(6 + p, d0, 1);
+      swing(12 - p, d0, -1);
+    }
+    // Entry: a pair of leaves swinging out.
+    line(entry[0], 11 + t, entry[0], 11 + t + 0.9, pens.thin);
+    line(entry[1], 11 + t, entry[1], 11 + t + 0.9, pens.thin);
+  }
+
+  // Room tags: the name over its number in a box.
+  const rooms: [string, string, number, number][] = [
+    ['LOBBY', '101', 9, 4.2],
+    ['OFFICE', '102', 3, 2.75],
+    ['OFFICE', '103', 3, 8.25],
+    ['MEETING ROOM', '104', 15, 2.75],
+    ['STORAGE', '105', 15, 8.25],
+  ];
+  for (const [name, num, x, y] of rooms) {
+    text(name, x, y - 0.45, 7);
+    if (!bareRooms) page.drawRectangle({ x: px(x) - 12, y: py(y + 0.05) - 6, width: 24, height: 12, borderColor: ink, borderWidth: pens.thin });
+    text(num, x, y + 0.05, 7);
+  }
+
+  // Door tags: the number in an oval beside each door.
+  const doorTags: [string, number, number][] = [
+    ['102', 7.1, 3.4],
+    ['103', 7.1, 8.9],
+    ['104', 10.9, 3.4],
+    ['105', 10.9, 8.9],
+    ['101', 9, 12.1],
+  ];
+  for (const [num, x, y] of kind === 'floor' ? doorTags : []) {
+    page.drawEllipse({ x: px(x), y: py(y), xScale: 11, yScale: 7, borderColor: ink, borderWidth: pens.thin });
+    text(num, x, y, 6);
+  }
+
+  // Wall tags: the type in a diamond, with a leader to the wall.
+  const wallTag = (tag: string, x: number, y: number, toX: number) => {
+    const r = 10;
+    const cx = px(x);
+    const cy = py(y);
+    const pts: [number, number][] = [
+      [cx, cy + r],
+      [cx + r, cy],
+      [cx, cy - r],
+      [cx - r, cy],
+    ];
+    pts.forEach((a, i) => {
+      const b = pts[(i + 1) % 4];
+      page.drawLine({ start: { x: a[0], y: a[1] }, end: { x: b[0], y: b[1] }, thickness: pens.thin, color: ink });
+    });
+    const side = toX > x ? r : -r;
+    page.drawLine({ start: { x: cx + side, y: cy }, end: { x: px(toX), y: cy }, thickness: pens.thin, color: ink });
+    text(tag, x, y, 6);
+  };
+  if (kind === 'floor') {
+    wallTag('W1', 4.3, 1.1, 6 - p);
+    wallTag('W1', 13.7, 9.9, 12 + p);
+    wallTag('W1', 3.2, 4.4, 1.2);
+    wallTag('EW1', -1.7, 3.2, -t);
+    // The leader for the third tag ends on the 5.5 m partition: turn it down to it.
+    page.drawLine({ start: { x: px(1.2), y: py(4.4) }, end: { x: px(1.2), y: py(5.5 - p) }, thickness: pens.thin, color: ink });
+  }
+
+  if (kind === 'floor') {
+    // Room finish schedule, between the plan and the title block (in sheet points), ruled
+    // by rows only so its room numbers are not boxed like room tags.
+    const cols: [string, number][] = [
+      ['NO.', 708],
+      ['ROOM NAME', 728],
+      ['FLOOR', 790],
+      ['BASE', 820],
+      ['WALLS', 846],
+      ['CEILING', 872],
+    ];
+    const rows: string[][] = [
+      ['101', 'LOBBY', 'POR-1', 'RB-1', 'PT-2', 'GWB-1'],
+      ['102', 'OFFICE', 'CPT-1', 'RB-1', 'PT-1', 'ACT-1'],
+      ['103', 'OFFICE', 'CPT-1', 'RB-1', 'PT-1', 'ACT-1'],
+      ['104', 'MEETING ROOM', 'CPT-1', 'RB-1', 'PT-1', 'ACT-1'],
+      ['105', 'STORAGE', 'SC-1', 'RB-1', 'PT-1', 'GWB-1'],
+    ];
+    let sy = H - 330;
+    page.drawText('ROOM FINISH SCHEDULE', { x: 708, y: sy + 16, size: 7, font: bold, color: ink });
+    const rule = (y: number) => page.drawLine({ start: { x: 704, y }, end: { x: 900, y }, thickness: pens.thin, color: ink });
+    rule(sy + 11);
+    for (const [h, x] of cols) page.drawText(h, { x, y: sy, size: 5, font: bold, color: ink });
+    rule(sy - 4);
+    for (const r of rows) {
+      sy -= 13;
+      r.forEach((cell, i) => page.drawText(cell, { x: cols[i][1], y: sy, size: 5, font, color: ink }));
+      rule(sy - 4);
+    }
+  }
+
+  if (kind === 'finish') {
+    const HATCH = 0.18;
+    const seg = (x1: number, y1: number, x2: number, y2: number) =>
+      page.drawLine({ start: { x: x1, y: y1 }, end: { x: x2, y: y2 }, thickness: HATCH, color: ink });
+    const dotAt = (x: number, y: number) => page.drawLine({ start: { x, y }, end: { x, y }, thickness: 0.7, color: ink, lineCap: LineCapStyle.Round });
+    // Each finish's hatch over a box in sheet points (x0, y0 at the bottom left, PDF y up).
+    const tile = (x0: number, y0: number, x1: number, y1: number) => {
+      for (let x = x0 + 0.3 * K; x < x1; x += 0.3 * K) seg(x, y0, x, y1);
+      for (let y = y0 + 0.3 * K; y < y1; y += 0.3 * K) seg(x0, y, x1, y);
+    };
+    const carpet = (x0: number, y0: number, x1: number, y1: number) => {
+      let n = 0;
+      for (let y = y0 + 0.15 * K; y < y1 - 0.05 * K; y += 0.25 * K)
+        for (let x = x0 + 0.15 * K; x < x1 - 0.05 * K; x += 0.25 * K) {
+          n++;
+          dotAt(x + 0.07 * K * Math.sin(n * 4.1), y + 0.07 * K * Math.cos(n * 7.7));
+        }
+    };
+    // Sealed concrete: lines at 45°, clipped to the box.
+    const concrete = (x0: number, y0: number, x1: number, y1: number) => {
+      const step = 0.5 * K;
+      for (let c = x0 - (y1 - y0) + step; c < x1; c += step) {
+        const ax = Math.max(x0, c);
+        const ay = y0 + (ax - c);
+        const bx = Math.min(x1, c + (y1 - y0));
+        const by = y0 + (bx - c);
+        if (bx > ax) seg(ax, ay, bx, by);
+      }
+    };
+    // Room interiors (plan units): x0, y0, x1, y1.
+    const room = (fill: typeof tile, x0: number, y0: number, x1: number, y1: number) => fill(px(x0), py(y1), px(x1), py(y0));
+    room(tile, 6 + p, t, 12 - p, 11 - t);
+    room(carpet, t, t, 6 - p, 5.5 - p);
+    room(carpet, t, 5.5 + p, 6 - p, 11 - t);
+    room(carpet, 12 + p, t, 18 - t, 5.5 - p);
+    room(concrete, 12 + p, 5.5 + p, 18 - t, 11 - t);
+
+    // Finish legend with plan-scale swatches.
+    const lx = 732;
+    let ly = H - 210;
+    page.drawText('FLOOR FINISH LEGEND:', { x: lx, y: ly, size: 8, font: bold, color: ink });
+    const swatch = (fill: typeof tile, label: string) => {
+      ly -= 46;
+      page.drawRectangle({ x: lx, y: ly - 18, width: 56, height: 36, borderColor: ink, borderWidth: pens.thin });
+      fill(lx, ly - 18, lx + 56, ly + 18);
+      page.drawText(label, { x: lx + 66, y: ly - 2.5, size: 6.5, font, color: ink });
+    };
+    swatch(tile, 'POR-1 PORCELAIN TILE 300X300');
+    swatch(carpet, 'CPT-1 CARPET TILE');
+    swatch(concrete, 'SC-1 SEALED CONCRETE');
+  }
+
+  if (ceiling) {
+    const GRID = 0.18;
+    // ACT: a 2×4 grid (1.2 × 0.6) in the offices and the meeting room.
+    const act = (x0: number, y0: number, x1: number, y1: number) => {
+      for (let x = x0 + 0.5; x < x1; x += 1.2) line(x, y0, x, y1, GRID);
+      for (let y = y0 + 0.3; y < y1; y += 0.6) line(x0, y, x1, y, GRID);
+    };
+    act(t, t, 6 - p, 5.5 - p);
+    act(t, 5.5 + p, 6 - p, 11 - t);
+    act(12 + p, t, 18 - t, 5.5 - p);
+    // GWB: a stipple of dots in the lobby and storage, placed on a jittered grid.
+    const dot = (x: number, y: number) =>
+      page.drawLine({ start: { x, y }, end: { x, y }, thickness: 0.9, color: ink, lineCap: LineCapStyle.Round });
+    const stipple = (x0: number, y0: number, x1: number, y1: number) => {
+      let n = 0;
+      for (let y = y0 + 0.2; y < y1 - 0.1; y += 0.35)
+        for (let x = x0 + 0.2; x < x1 - 0.1; x += 0.35) {
+          n++;
+          // A fixed scatter: the same sample every time.
+          dot(px(x + 0.12 * Math.sin(n * 12.9898)), py(y + 0.12 * Math.cos(n * 78.233)));
+        }
+    };
+    stipple(6 + p, t, 12 - p, 11 - t);
+    stipple(12 + p, 5.5 + p, 18 - t, 11 - t);
+    // Downlights: a circle with a cross, one block repeated.
+    const light = (x: number, y: number) => {
+      page.drawCircle({ x, y, size: 4.5, borderColor: ink, borderWidth: pens.thin });
+      page.drawLine({ start: { x: x - 3, y }, end: { x: x + 3, y }, thickness: pens.thin, color: ink });
+      page.drawLine({ start: { x, y: y - 3 }, end: { x, y: y + 3 }, thickness: pens.thin, color: ink });
+    };
+    const lights: [number, number][] = [
+      [7.5, 1.5], [10.5, 1.5], [7.5, 6.5], [10.5, 6.5], [7.5, 9], [10.5, 9], [7.5, 3.4], [10.5, 3.4],
+      [1.7, 1.4], [4.1, 1.4], [1.7, 4.1], [4.1, 4.1],
+      [1.7, 6.9], [4.1, 6.9], [1.7, 9.6], [4.1, 9.6],
+      [13.7, 1.4], [16.1, 1.4], [13.7, 4.1], [16.1, 4.1],
+      [13.7, 8.2], [16.1, 8.2],
+    ];
+    for (const [x, y] of lights) light(px(x), py(y));
+
+    // Ceiling legend, between the plan and the title block (in sheet points). Swatches show
+    // each hatch at the plan's own spacing, as legends do.
+    const lx = 732;
+    let ly = H - 210;
+    page.drawText('CEILING LEGEND:', { x: lx, y: ly, size: 8, font: bold, color: ink });
+    const swatch = (fill: (x0: number, y0: number, x1: number, y1: number) => void) => {
+      const [x0, y0, x1, y1] = [lx, ly - 18, lx + 56, ly + 18];
+      page.drawRectangle({ x: x0, y: y0, width: x1 - x0, height: y1 - y0, borderColor: ink, borderWidth: pens.thin });
+      fill(x0, y0, x1, y1);
+    };
+    const row = (label: string) => page.drawText(label, { x: lx + 66, y: ly - 2.5, size: 6.5, font, color: ink });
+    ly -= 36;
+    swatch((x0, y0, x1, y1) => {
+      for (let x = x0 + 0.5 * K; x < x1; x += 1.2 * K) page.drawLine({ start: { x, y: y0 }, end: { x, y: y1 }, thickness: GRID, color: ink });
+      for (let y = y0 + 0.3 * K; y < y1; y += 0.6 * K) page.drawLine({ start: { x: x0, y }, end: { x: x1, y }, thickness: GRID, color: ink });
+    });
+    row('ACT-1 ACOUSTIC TILE, 2X4 GRID');
+    ly -= 46;
+    swatch((x0, y0, x1, y1) => {
+      let n = 0;
+      for (let y = y0 + 0.2 * K; y < y1 - 0.1 * K; y += 0.35 * K)
+        for (let x = x0 + 0.2 * K; x < x1 - 0.1 * K; x += 0.35 * K) {
+          n++;
+          dot(x + 0.12 * K * Math.sin(n * 12.9898), y + 0.12 * K * Math.cos(n * 78.233));
+        }
+    });
+    row('GWB-1 PAINTED GYPSUM BOARD');
+    ly -= 40;
+    light(lx + 28, ly);
+    row('DOWNLIGHT');
+  }
+
+  // Dimension strings in millimetres: one line per dimension, ticks at the ends.
+  const dim = (x1: number, x2: number, y: number, label: string) => {
+    line(x1, y, x2, y, pens.thin);
+    for (const x of [x1, x2]) {
+      line(x - 0.12, y + 0.12, x + 0.12, y - 0.12, pens.thin);
+      line(x, y - 0.25, x, y + 0.25, pens.thin);
+    }
+    text(label, (x1 + x2) / 2, y - 0.22, 6);
+  };
+  for (const y of [-1.2, 12.9]) {
+    dim(0, 6, y, label(6));
+    dim(6, 12, y, label(6));
+    dim(12, 18, y, label(6));
+  }
+  dim(0, 18, -2.2, label(18));
+  dim(0, 18, 13.9, label(18));
+  // Vertical dimensions on the right.
+  const vdim = (y1: number, y2: number, x: number, label: string) => {
+    line(x, y1, x, y2, pens.thin);
+    for (const y of [y1, y2]) line(x - 0.25, y, x + 0.25, y, pens.thin);
+    text(label, x - 0.22, (y1 + y2) / 2, 6, font, 90);
+  };
+  vdim(0, 5.5, 19.4, label(5.5));
+  vdim(5.5, 11, 19.4, label(5.5));
+  vdim(0, 11, 20.4, label(11));
+
+  // Plan title.
+  page.drawText(ceiling ? 'REFLECTED CEILING PLAN' : kind === 'finish' ? 'FLOOR FINISH PLAN' : 'FLOOR PLAN', { x: px(0), y: py(15.4), size: 11, font: bold, color: ink });
+  page.drawText(scale, { x: px(0), y: py(15.4) - 13, size: 8, font, color: ink });
+
+  // Title block along the right edge.
+  const tb = 0.74 * W;
+  page.drawRectangle({ x: 24, y: 24, width: W - 48, height: H - 48, borderColor: ink, borderWidth: 1 });
+  page.drawLine({ start: { x: tb, y: 24 }, end: { x: tb, y: H - 24 }, thickness: 1, color: ink });
+  const tx = tb + 16;
+  page.drawText('TAKEOFF SAMPLE PROJECT', { x: tx, y: H - 70, size: 12, font: bold, color: ink });
+  page.drawText('A sample drawing for trying the app.', { x: tx, y: H - 88, size: 8, font, color: ink });
+  page.drawText('Not a real building.', { x: tx, y: H - 100, size: 8, font, color: ink });
+  page.drawText(ceiling ? 'SAMPLE CEILING PLAN' : kind === 'finish' ? 'SAMPLE FINISH PLAN' : 'SAMPLE FLOOR PLAN', { x: tx, y: 150, size: 11, font: bold, color: ink });
+  page.drawText(`SCALE: ${scale}`, { x: tx, y: 132, size: 9, font, color: ink });
+  page.drawText(ceiling ? 'A2.01' : kind === 'finish' ? 'A1.02' : 'A1.01', { x: tx, y: 60, size: 30, font: bold, color: ink });
+}
