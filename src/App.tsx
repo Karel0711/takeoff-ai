@@ -10,6 +10,7 @@ import { RoomsDialog } from './components/RoomsDialog';
 import { RoomFinishesDialog } from './components/RoomFinishesDialog';
 import { QuickStartDialog } from './components/QuickStartDialog';
 import { TypeLibraryDialog } from './components/TypeLibraryDialog';
+import { SheetPickDialog, type SheetPick } from './components/SheetPickDialog';
 import { LegendDialog, type LegendChoice } from './components/LegendDialog';
 import { findLegendAreas, readLegendAsync, type LegendRow } from './fill/legend';
 import { guessDivision } from './divisionGuess';
@@ -56,6 +57,7 @@ import {
 } from './storage';
 import { readProjectFiles, writeBackup, writeProjectFile } from './projectFile';
 import { canUseServiceWorker, isInstalled, onLaunchFiles, promptInstall, registerServiceWorker } from './pwa';
+import { ringArea } from './geometry';
 import { formatQty, parseScale } from './units';
 
 const PALETTE = ['#0a84ff', '#ff9f0a', '#30d158', '#bf5af2', '#ff375f', '#64d2ff', '#ffd60a', '#ac8e68', '#5e5ce6', '#ff6961'];
@@ -117,6 +119,8 @@ export function App() {
   const [aiDialog, setAiDialog] = useState<'assemblies' | 'settings' | 'walls' | 'rooms' | 'finishes' | 'shortcuts' | 'help' | 'library' | 'legend' | null>(null);
   /** Reading a legend: the next box dragged is the legend; then its rows, for the dialog. */
   const [legendPick, setLegendPick] = useState(false);
+  /** Results of a search on every sheet, waiting for the user to keep or leave out each sheet. */
+  const [sheetPick, setSheetPick] = useState<{ title: string; intro: string; rows: SheetPick[]; onAdd: (ids: string[]) => void } | null>(null);
   const legendPickRef = useRef(false);
   useEffect(() => {
     legendPickRef.current = legendPick;
@@ -1258,8 +1262,31 @@ export function App() {
       setToast({ text: 'No areas with this hatch on the other sheets.', undo: false });
       return;
     }
-    commit((q) => ({ ...q, measurements: [...q.measurements, ...added] }), 'Find similar');
-    setToast({ text: `Added ${added.length} more areas: ${perSheet.slice(0, 4).join(', ')}${perSheet.length > 4 ? '…' : ''}`, undo: true });
+    // Sheet by sheet, to keep or leave out: a detail sheet with no scale to compare can carry
+    // the same hatch for something else (a countertop's stipple).
+    const sheetsById = new Map(p.sheets.map((x) => [x.id, x]));
+    const rows = [...new Set(added.map((m) => m.sheetId))].map((id) => {
+      const x = sheetsById.get(id)!;
+      const mine = added.filter((m) => m.sheetId === id);
+      const m2 = x.metersPerPoint ? mine.reduce((n, m) => n + Math.abs(ringArea(m.points)) * x.metersPerPoint! ** 2, 0) : null;
+      const area = m2 === null ? '' : ` · ${formatQty(p.units === 'metric' ? m2 : m2 / 0.09290304)} ${p.units === 'metric' ? 'm²' : 'SF'}`;
+      return {
+        sheetId: id,
+        name: x.name,
+        found: `${mine.length} area${mine.length === 1 ? '' : 's'}${area}`,
+        note: x.metersPerPoint ? undefined : 'No scale set: check this sheet is a plan at the same scale.',
+      };
+    });
+    setSheetPick({
+      title: `Hatched like this on ${rows.length} other sheet${rows.length === 1 ? '' : 's'}`,
+      intro: `Areas with the same hatch as ${type.name}. Untick any sheet where it means something else.`,
+      rows,
+      onAdd: (ids) => {
+        const keep = added.filter((m) => ids.includes(m.sheetId));
+        commit((q) => ({ ...q, measurements: [...q.measurements, ...keep] }), 'Find similar');
+        setToast({ text: `Added ${keep.length} more areas on ${ids.length} sheet${ids.length === 1 ? '' : 's'}`, undo: true });
+      },
+    });
   }
 
   /** Counts a sampled symbol on every other sheet, as one change. */
@@ -2142,6 +2169,18 @@ export function App() {
             setAiDialog(null);
             setLegend(null);
             addLegendTypes(legend.sheetId, choices, everywhere);
+          }}
+        />
+      )}
+      {sheetPick && (
+        <SheetPickDialog
+          title={sheetPick.title}
+          intro={sheetPick.intro}
+          rows={sheetPick.rows}
+          onClose={() => setSheetPick(null)}
+          onAdd={(ids) => {
+            setSheetPick(null);
+            sheetPick.onAdd(ids);
           }}
         />
       )}

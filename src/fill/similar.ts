@@ -203,7 +203,9 @@ function findPattern(marks: Mark[], model: WallModel, pattern: Pattern, sheetW: 
     const dens = weight[id] / ptArea;
     // A space the coarse raster split off from a room already found is part of it.
     if (areas.some((a) => pointInRing(seed[id], a.points))) continue;
-    if (share >= 0.5 && dens >= 0.35 * density) {
+    // At about the sample's density: real matches on the Kelso RCPs run 0.56–1.07 of it; a
+    // stair's treads and stringers under an ACT grid sample came to 0.36.
+    if (share >= 0.5 && dens >= 0.45 * density) {
       const room = fillRoom(model, [seed[id]], sheetW, sheetH, 2);
       if (room.ok && !(sample && pointInRing([sx, sy], room.points))) areas.push({ points: room.points, area: Math.abs(ringArea(room.points)), how: 'room' });
     } else if (!lines && share >= 0.08) {
