@@ -9,7 +9,7 @@ import { readWallKey, scoreWalls, type WallKeyEntry } from '../eval/wallKey';
 import { formatQty, lengthUnit, toLength } from '../units';
 import { runsToLines, type TypeLines } from '../walls/runsToLines';
 import { sheetWallTakeoff } from '../walls/sheetWallTakeoff';
-import type { WallTakeoffResult } from '../walls/wallTakeoff';
+import { tagKind, type WallTakeoffResult } from '../walls/wallTakeoff';
 
 interface Props {
   page: PDFPageProxy;
@@ -51,12 +51,21 @@ export function WallTakeoffDialog({ page, sheet, units, types, earlier, palette,
   }, [legend]);
 
   const [throughDoors, setThroughDoors] = useState(true);
+  // Finish-only partition types (finishes don't run across a door) stop at doors from the start.
+  const [stopAt, setStopAt] = useState<Set<string>>(() => {
+    const finishOnly = (text: string) => /finish(es)?\s+only/i.test(text);
+    const out = new Set<string>();
+    for (const a of legend) if (finishOnly([a.title, ...a.notes].join(' '))) out.add(a.code.replace('-', ''));
+    for (const t of types) if (t.kind === 'linear' && finishOnly(`${t.name} ${t.assemblyTitle ?? ''} ${t.description ?? ''}`)) out.add(codeOf(t.name).replace('-', ''));
+    return out;
+  });
+  const stopKey = [...stopAt].sort().join(',');
 
   useEffect(() => {
     let live = true;
     setState({ phase: 'running' });
     const started = performance.now();
-    sheetWallTakeoff(page, sheet, maxOpening, throughDoors)
+    sheetWallTakeoff(page, sheet, maxOpening, throughDoors, [...stopAt])
       .then((result) => {
         if (!live) return;
         const lines = runsToLines(result.runs);
@@ -69,7 +78,7 @@ export function WallTakeoffDialog({ page, sheet, units, types, earlier, palette,
       live = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [throughDoors]);
+  }, [throughDoors, stopKey]);
 
   const lengths = useMemo(() => {
     const out = new Map<string, number>();
@@ -169,6 +178,7 @@ export function WallTakeoffDialog({ page, sheet, units, types, earlier, palette,
                     <th className="num">Length</th>
                     <th className="num">Lines</th>
                     <th>From</th>
+                    <th title="Partitions only: stop the length at door openings (finish-only types)">Stops at doors</th>
                     <th>Add to</th>
                   </tr>
                 </thead>
@@ -183,6 +193,24 @@ export function WallTakeoffDialog({ page, sheet, units, types, earlier, palette,
                       <td className="muted">
                         {l.tagged} tagged{l.carried ? ` · ${l.carried} carried` : ''}
                         {l.light ? ` · ${l.light} in light lines, check` : ''}
+                      </td>
+                      <td>
+                        {tagKind(l.code) === 'partition' && (
+                          <input
+                            type="checkbox"
+                            aria-label={`${l.code} stops at doors`}
+                            checked={!throughDoors || stopAt.has(l.code)}
+                            disabled={!throughDoors}
+                            onChange={(e) =>
+                              setStopAt((cur) => {
+                                const next = new Set(cur);
+                                if (e.target.checked) next.add(l.code);
+                                else next.delete(l.code);
+                                return next;
+                              })
+                            }
+                          />
+                        )}
                       </td>
                       <td>
                         <select value={choice.get(l.code) ?? SKIP} onChange={(e) => setChoice((m) => new Map(m).set(l.code, e.target.value))}>

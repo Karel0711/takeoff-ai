@@ -67,7 +67,11 @@ undo/redo, and an activity log of every change.
   them as linear measurements. A tag whose leader lands on a wall drawn in
   light lines (shown above or below, curtain walls) measures the line it points
   at, up to the walls that meet it, flagged "check". Partitions can be measured
-  through door openings or not (exterior walls always run through openings). **Score against bid
+  through door openings or not (exterior walls always run through openings), and
+  each partition type can be set to stop at doors on its own (**Stops at doors**
+  in the results; types the legend calls finishes-only start checked): with W2
+  stopped at doors, as the estimator measures it, the four-sheet difference is
+  8.2% (W2 26.0 vs 25.8 m on A2.1, 78.8 vs 80.9 m on A2.2). **Score against bid
   workbook…** compares lengths per type with the workbook's rows for that sheet.
 - **Room finishes (done):** **Automate › Room finishes** lists every room
   takeoff with a floor, base, walls and ceiling type each. The room's area

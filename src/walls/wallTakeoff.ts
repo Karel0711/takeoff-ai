@@ -41,6 +41,8 @@ export interface WallTakeoffOptions {
    */
   doors?: Pt[][];
   throughDoors?: boolean;
+  /** Partition types stopped at door openings even when the rest are measured through (finish-only types). */
+  stopAtDoors?: string[];
 }
 
 /** Kinds of wall tag. A wall has at most one of each; a tag's type spreads only within its kind. */
@@ -68,7 +70,7 @@ export function wallTakeoff(
   metersPerPoint: number,
   options: WallTakeoffOptions = {},
 ): WallTakeoffResult {
-  const { minThickness = 0.05, maxThickness = 0.65, tee = 'centre', carry = 'wall+tees', doors = [], throughDoors = true } = options;
+  const { minThickness = 0.05, maxThickness = 0.65, tee = 'centre', carry = 'wall+tees', doors = [], throughDoors = true, stopAtDoors = [] } = options;
   const pt = (m: number) => m / metersPerPoint;
   const found = findWallRuns(wallLines, pt(minThickness), pt(maxThickness)).filter(
     (r) => runLength(r) >= Math.max(pt(0.1), r.thickness * 0.5),
@@ -375,7 +377,8 @@ export function wallTakeoff(
     p.how = own.length ? 'tag' : more.length ? 'carried' : null;
   }
   // An opening another wall passes through is a junction, not a door.
-  const doorways = throughDoors
+  const cuts = (p: TypedRun) => isPartition(p.tags) && (!throughDoors || p.tags.some((t) => stopAtDoors.includes(t)));
+  const doorways = throughDoors && !stopAtDoors.length
     ? []
     : doors.filter((q) => {
         const cx = q.reduce((n, v) => n + v[0], 0) / q.length;
@@ -388,7 +391,7 @@ export function wallTakeoff(
           return along < 0.5 && distToRun([cx, cy], r) <= r.thickness / 2;
         });
       });
-  const measured = throughDoors ? pieces : pieces.flatMap((p) => (isPartition(p.tags) ? cutAtDoors(p, doorways) : [p]));
+  const measured = doorways.length ? pieces.flatMap((p) => (cuts(p) ? cutAtDoors(p, doorways) : [p])) : pieces;
   measured.forEach((p, i) => (p.id = i));
 
   // Tags pointing at walls not drawn with the wall pen ("BELOW", curtain walls): measure

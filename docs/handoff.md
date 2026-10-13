@@ -27,7 +27,7 @@ Where the project stands, for picking it up in a new session.
   then edges snapped to the drawn lines. First click reads the sheet's operator
   list (~3–6 s), then 0.1–2 s per room.
 - **Wall takeoff:** `src/walls/`. Latest score across A2.0–A2.3 against the
-  workbook: 10.7% total difference (A2.0 2%, A2.1 8%, A2.2 15%, A2.3 22%);
+  workbook: 10.7% total difference (A2.0 2%, A2.1 8%, A2.2 15%, A2.3 22%); 8.2% with W2 set to stop at doors (`CUT=W2 score4.sh`), which is how the estimator measures W2 but not W1;
   re-score with the per-sheet keys after any change to the carry rules (each
   rule change was kept only if the four-sheet total improved). Rules now: walls
   join across breaks up to 2.5× thickness; thick walls meet round corner
