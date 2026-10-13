@@ -7,6 +7,7 @@ import { Icon, type IconName } from './components/Icons';
 import { Inspector, type InspectorTab } from './components/Inspector';
 import { Menu, Popover } from './components/Popover';
 import { ScalePicker } from './components/ScalePicker';
+import { ShortcutsDialog } from './components/ShortcutsDialog';
 import { TypeEditor } from './components/TypeEditor';
 import { Viewer, type Tool } from './components/Viewer';
 import { WallTakeoffDialog } from './components/WallTakeoffDialog';
@@ -54,7 +55,7 @@ export function App() {
   const [busy, setBusy] = useState<string | null>(null);
   const [toast, setToast] = useState<Toast | null>(null);
   const [sheetFilter, setSheetFilter] = useState('');
-  const [aiDialog, setAiDialog] = useState<'assemblies' | 'settings' | 'walls' | null>(null);
+  const [aiDialog, setAiDialog] = useState<'assemblies' | 'settings' | 'walls' | 'shortcuts' | null>(null);
   const [popover, setPopover] = useState<'scale' | 'more' | null>(null);
   const [tab, setTab] = useState<InspectorTab>('quantities');
   /** Fill closes wall openings up to this width (metres); wider ones count as open. */
@@ -709,6 +710,7 @@ export function App() {
           groups={[
             [
               { label: 'History', hint: 'Every change', onSelect: () => setTab('history') },
+              { label: 'Keyboard shortcuts', onSelect: () => setAiDialog('shortcuts') },
               ...(isHosted ? [] : [{ label: 'AI settings…', onSelect: () => setAiDialog('settings') }]),
             ],
             project.docs.map((d) => ({ label: `Remove ${d.name}…`, danger: true, onSelect: () => void removeDrawings(d.id) })),
@@ -763,6 +765,7 @@ export function App() {
         />
       )}
       {aiDialog === 'settings' && <AiSettingsDialog onClose={() => setAiDialog(null)} />}
+      {aiDialog === 'shortcuts' && <ShortcutsDialog onClose={() => setAiDialog(null)} />}
       <DialogHost />
     </div>
   );

@@ -122,3 +122,25 @@ export function formatQty(value: number): string {
   const digits = Math.abs(value) >= 100 ? 0 : Math.abs(value) >= 10 ? 1 : 2;
   return value.toLocaleString(undefined, { maximumFractionDigits: digits, minimumFractionDigits: 0 });
 }
+
+/** A calibrated scale written as the nearest familiar notation, e.g. "≈ 1:200" or "≈ 1/8\" = 1'-0\"". */
+export function equivalentScale(metersPerPoint: number, units: Units): string {
+  const ratio = metersPerPoint / (0.0254 / 72);
+  if (units === 'metric') return `≈ 1:${ratio >= 20 ? Math.round(ratio) : Number(ratio.toFixed(1))}`;
+  // Paper inches per real foot.
+  const inchesPerFoot = 12 / ratio;
+  const sixteenths = Math.round(inchesPerFoot * 16);
+  if (sixteenths >= 1 && Math.abs(sixteenths / 16 - inchesPerFoot) / inchesPerFoot < 0.02) {
+    const whole = Math.floor(sixteenths / 16);
+    let num = sixteenths % 16;
+    let den = 16;
+    while (num && num % 2 === 0) {
+      num /= 2;
+      den /= 2;
+    }
+    const frac = num ? `${whole ? `${whole} ` : ''}${num}/${den}` : `${whole}`;
+    return `≈ ${frac}" = 1'-0"`;
+  }
+  return `≈ 1" = ${Math.round(ratio / 12)}'`;
+}
+

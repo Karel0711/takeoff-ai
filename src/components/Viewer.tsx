@@ -3,8 +3,9 @@ import { centroid, orthoSnap, polylineLength, ringArea, ringToPath } from '../ge
 import type { Measurement, Pt, Sheet, TakeoffType, Units } from '../model';
 import type { PDFPageProxy } from '../pdf';
 import { measurementVars, primaryOf, primaryUnit } from '../quantities';
-import { areaUnit, formatQty, lengthUnit, parseLength, toArea, toLength } from '../units';
+import { areaUnit, equivalentScale, formatQty, lengthUnit, parseLength, toArea, toLength } from '../units';
 import { askText, notify } from './Dialogs';
+import { Icon } from './Icons';
 import { fillRoom, type WallModel } from '../fill/roomFill';
 
 export type Tool = 'select' | 'measure' | 'calibrate' | 'cutout' | 'fill';
@@ -270,7 +271,7 @@ export function Viewer(props: Props) {
       await notify(`"${input}" is not a length this tool can read. ${example}.`);
       return;
     }
-    props.onCalibrate(meters / lengthPts, `Calibrated (${input.trim()})`);
+    props.onCalibrate(meters / lengthPts, equivalentScale(meters / lengthPts, units));
     props.onToolDone();
   };
 
@@ -507,9 +508,15 @@ export function Viewer(props: Props) {
       {!page && <div className="empty">Upload a drawing set to start.</div>}
       {status && <div className="status">{status}</div>}
       <div className="zoom-controls">
-        <button onClick={() => setView((v) => zoomAt(v, size, 1.25))}>+</button>
-        <button onClick={() => setView((v) => zoomAt(v, size, 0.8))}>−</button>
-        <button onClick={fit} title="Fit sheet (F)">Fit</button>
+        <button onClick={() => setView((v) => zoomAt(v, size, 0.8))} title="Zoom out" aria-label="Zoom out">
+          <Icon name="zoomOut" size={16} />
+        </button>
+        <button onClick={() => setView((v) => zoomAt(v, size, 1.25))} title="Zoom in" aria-label="Zoom in">
+          <Icon name="zoomIn" size={16} />
+        </button>
+        <button onClick={fit} title="Fit the sheet (F)" aria-label="Fit the sheet">
+          <Icon name="fit" size={16} />
+        </button>
       </div>
     </div>
   );

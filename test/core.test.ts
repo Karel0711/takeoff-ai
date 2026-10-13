@@ -125,3 +125,13 @@ describe('typeTotals', () => {
     expect(f.vars.P).toBeCloseTo(36 + 8);
   });
 });
+
+describe('equivalent scale', () => {
+  it('names a calibrated scale in familiar notation', async () => {
+    const { equivalentScale, parseScale } = await import('../src/units');
+    expect(equivalentScale(parseScale('1:200')!, 'metric')).toBe('≈ 1:200');
+    expect(equivalentScale(parseScale('1/8" = 1\'-0"')!, 'imperial')).toBe('≈ 1/8" = 1\'-0"');
+    expect(equivalentScale(parseScale('1 1/2" = 1\'-0"')!, 'imperial')).toBe('≈ 1 1/2" = 1\'-0"');
+    expect(equivalentScale(parseScale('1" = 20\'')!, 'imperial')).toBe('≈ 1" = 20\'');
+  });
+});

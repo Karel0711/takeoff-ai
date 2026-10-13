@@ -656,7 +656,7 @@ input[type='checkbox'] {
   left: 50%;
   bottom: 14px;
   transform: translateX(-50%);
-  max-width: calc(100% - 200px);
+  max-width: calc(100% - 340px);
   padding: 6px 14px;
   border-radius: 16px;
   background: rgba(255, 255, 255, 0.92);
@@ -1720,4 +1720,34 @@ table.items th {
   .modal-backdrop {
     animation: none;
   }
+}
+
+.shortcuts {
+  margin: 0;
+}
+.shortcuts > div {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line);
+}
+.shortcuts dt {
+  flex: 0 0 170px;
+}
+.shortcuts dd {
+  margin: 0;
+  color: var(--text-2);
+}
+kbd {
+  display: inline-block;
+  min-width: 22px;
+  padding: 1px 7px;
+  border: 1px solid var(--line-strong);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  background: var(--window);
+  font-family: var(--font);
+  font-size: 12px;
+  text-align: center;
 }
