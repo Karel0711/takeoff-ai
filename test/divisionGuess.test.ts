@@ -14,3 +14,14 @@ describe('division from an item name', () => {
     expect(guessDivision('PROPERTY BOUNDARY')).toBeUndefined();
   });
 });
+
+describe('division guesses that read past the first keyword', () => {
+  it('keeps trades apart', () => {
+    expect(guessDivision('PLUMBING FIXTURES')).toBe('20-25 Mechanical');
+    expect(guessDivision('ACOUSTIC WALL PANELS')).toBe('09 Finishes');
+    expect(guessDivision('TOILET PARTITIONS')).toBe('10 Specialties');
+    expect(guessDivision('DOOR HEADS')).toBe('08 Openings');
+    expect(guessDivision('LIGHT FIXTURE TYPE A')).toBe('26 Electrical');
+    expect(guessDivision('ELECTRICAL PANEL')).toBe('26 Electrical');
+  });
+});

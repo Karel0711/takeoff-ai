@@ -43,6 +43,7 @@ import {
   listProjects,
   loadActivity,
   loadCurrentProject,
+  deletePdf,
   loadPdf,
   loadProjectById,
   loadStarterTypes,
@@ -225,7 +226,10 @@ export function App() {
           // Not a user change: kept out of undo and history.
           const prev = projectRef.current;
           if (prev) {
-            const next = { ...prev, sheets: prev.sheets.map((x) => (x.id === sheet.id ? { ...x, scaleSource: 'verified' as const } : x)) };
+            const next = { ...prev, sheets: prev.sheets.map((x) =>
+              // Only if the scale is still the one that was checked (not recalibrated meanwhile).
+              x.id === sheet.id && x.scaleSource === 'detected' && x.metersPerPoint === sheet.metersPerPoint ? { ...x, scaleSource: 'verified' as const } : x,
+            ) };
             projectRef.current = next;
             setProject(next);
           }
@@ -572,9 +576,18 @@ export function App() {
       let name = `${p.name} (copy)`;
       for (let n = 2; names.has(name); n++) name = `${p.name} (copy ${n})`;
       const docIds = new Map(p.docs.map((d) => [d.id, newId()]));
+      // Storage writes don't throw (they're made safe for private windows), so each copy is
+      // read back: a full disk must not leave a copy with blank sheets.
+      const written: string[] = [];
       for (const [from, to] of docIds) {
         const data = await loadPdf(from);
-        if (data) await savePdf(to, data);
+        if (!data) continue;
+        await savePdf(to, data);
+        if (!(await loadPdf(to))) {
+          for (const id of written) await deletePdf(id);
+          throw new Error('There is not enough storage space on this computer to copy the drawings. Nothing was duplicated.');
+        }
+        written.push(to);
       }
       const copy: Project = {
         ...p,

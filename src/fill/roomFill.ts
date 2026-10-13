@@ -1,7 +1,7 @@
 import type { Pt } from '../model';
 import { drawSegments, fillHoles, floodFill, makeGrid, simplify, toSheet, traceBoundary, type Grid } from './raster';
 import type { Segment } from './vectors';
-import { bridgeGaps, detectWallPens, penStats, widthKey, type PenStats } from './walls';
+import { bridgeGaps, detectWallPens, penStats, wallShapedFills, widthKey, type PenStats } from './walls';
 
 export interface WallModel {
   /** Wall linework plus the lines that close door and window openings. */
@@ -64,10 +64,12 @@ export function buildWallModel(
   let chosen = pens?.length ? pens : detectWallPens(stats);
   if (!chosen.length) {
     // Walls exploded into short pieces pair poorly piece by piece: score joined runs.
+    // Strictly: a sheet of details joined into runs can pair nearly as well as walls.
     stats = penStats(segs, pt(0.06, 1.5), pt(0.7, 20), true);
-    chosen = detectWallPens(stats);
+    chosen = detectWallPens(stats, [0.5]);
   }
-  const walls = segs.filter((s) => chosen.includes(widthKey(s)));
+  const wallFill = chosen.includes('fill') ? wallShapedFills(segs, pt(0.06, 1.5), pt(0.7, 20)) : null;
+  const walls = segs.filter((s) => chosen.includes(widthKey(s)) && (!s.filled || wallFill?.has(s)));
   // Glazing and frames are drawn with lighter pens than walls, but heavier than hatching.
   const wallWidth = Math.min(...chosen.map(Number).filter((n) => !Number.isNaN(n)));
   const glazingLines = segs.filter((s) => !s.filled && !chosen.includes(widthKey(s)) && s.width >= wallWidth * 0.6);

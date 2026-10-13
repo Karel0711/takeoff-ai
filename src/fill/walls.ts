@@ -57,9 +57,11 @@ function overlap(a: Segment, b: Segment, ux: number, uy: number): number {
  */
 export function penStats(segs: Segment[], minGap: number, maxGap: number, join = false): PenStats[] {
   const byPen = new Map<string, Segment[]>();
+  const wallFill = wallShapedFills(segs, minGap, maxGap);
   for (const s of segs) {
-    // Filled shapes count together as one "pen": walls drawn as solid poché with no outline.
-    if (len(s) < 1) continue;
+    // Wall-shaped filled shapes count together as one "pen": walls drawn as solid poché
+    // with no outline. Broad fills (panels, shaded areas) are not walls.
+    if (len(s) < 1 || (s.filled && !wallFill.has(s))) continue;
     const k = widthKey(s);
     const list = byPen.get(k);
     if (list) list.push(s);
@@ -70,7 +72,8 @@ export function penStats(segs: Segment[], minGap: number, maxGap: number, join =
     // Some exports break lines at every crossing: then score the joined runs, not the pieces.
     // Only as a fallback: joined hatch rows pair like walls too.
     const list = join && pieces.length <= 50000 ? joinCollinear(pieces) : pieces;
-    const length = list.reduce((n, s) => n + len(s), 0);
+    // Against the pieces' length: joining overlapping duplicates must not raise the share.
+    const length = pieces.reduce((n, s) => n + len(s), 0);
     if (pieces.length < 20 || list.length > 50000) {
       out.push({ key, segments: list.length, length, paired: 0 });
       continue;
@@ -165,20 +168,85 @@ export function joinCollinear(segs: Segment[]): Segment[] {
  * Among pens with plenty of paired linework, take the heaviest, plus any pen at least
  * as heavy that pairs as well (some offices draw exterior walls heavier still).
  */
-export function detectWallPens(stats: PenStats[]): string[] {
-  const stroked = detectStrokedPens(stats);
+/**
+ * Filled shapes shaped like a run of wall: the narrow side a wall thickness, the long
+ * side at least three times it. A poché wall plan is mostly these; panels, shaded areas
+ * and lettering are not.
+ */
+export function wallShapedFills(segs: Segment[], minGap: number, maxGap: number): Set<Segment> {
+  const bySub = new Map<number, Segment[]>();
+  for (const s of segs) {
+    if (!s.filled || s.sub === undefined) continue;
+    const list = bySub.get(s.sub);
+    if (list) list.push(s);
+    else bySub.set(s.sub, [s]);
+  }
+  const out = new Set<Segment>();
+  let shaped = 0;
+  let all = 0;
+  for (const list of bySub.values()) {
+    const xs = list.flatMap((s) => [s.x1, s.x2]);
+    const ys = list.flatMap((s) => [s.y1, s.y2]);
+    const w = Math.max(...xs) - Math.min(...xs);
+    const h = Math.max(...ys) - Math.min(...ys);
+    const [narrow, long] = w < h ? [w, h] : [h, w];
+    const edge = list.reduce((n, s) => n + len(s), 0);
+    all += edge;
+    if (narrow >= minGap && narrow <= maxGap && long >= 3 * narrow) {
+      shaped += edge;
+      for (const s of list) out.add(s);
+    }
+  }
+  // A poché plan's fills are mostly walls; an elevation of shaded panels has a few
+  // narrow strips (joints) among broad fills, and is not a wall plan.
+  if (shaped < all * 0.5) return new Set();
+  // Panels and cladding strips tile, edge against edge; a wall's long sides face open
+  // room. Most long edges shared with a neighbouring fill means tiling, not walls.
+  // Edges bucketed by line (to half a point); a neighbour within 1.5 pt counts (a joint gap).
+  const lines = new Map<string, { a: number; b: number; sub: number }[]>();
+  const edges: { dir: string; at: number; a: number; b: number; sub: number }[] = [];
+  for (const s of out) {
+    const L = len(s);
+    const horizontal = Math.abs(s.y2 - s.y1) < 0.1;
+    const vertical = Math.abs(s.x2 - s.x1) < 0.1;
+    if (L < 4 || (!horizontal && !vertical)) continue;
+    const dir = horizontal ? 'h' : 'v';
+    const at = Math.round((horizontal ? s.y1 : s.x1) * 2);
+    const key = `${dir}${at}`;
+    const [a, b] = horizontal ? [Math.min(s.x1, s.x2), Math.max(s.x1, s.x2)] : [Math.min(s.y1, s.y2), Math.max(s.y1, s.y2)];
+    const e = { dir, at, a, b, sub: s.sub ?? -1 };
+    edges.push(e);
+    const list = lines.get(key);
+    if (list) list.push(e);
+    else lines.set(key, [e]);
+  }
+  let total = 0;
+  let shared = 0;
+  for (const e of edges) {
+    total += e.b - e.a;
+    let along = 0;
+    for (let d = -3; d <= 3; d++)
+      for (const o of lines.get(`${e.dir}${e.at + d}`) ?? []) if (o.sub !== e.sub) along += Math.max(0, Math.min(e.b, o.b) - Math.max(e.a, o.a));
+    shared += Math.min(e.b - e.a, along);
+  }
+  return total && shared > total * 0.5 ? new Set() : out;
+}
+
+/** The pens that draw walls; `shares` are the paired shares accepted, strictest first. */
+export function detectWallPens(stats: PenStats[], shares = [0.5, 0.4]): string[] {
+  const stroked = detectStrokedPens(stats, shares);
   if (stroked.length) return stroked;
   // No outlined walls: walls drawn as solid fills only (poché), when the fills pair like walls.
   const fill = stats.find((s) => s.key === 'fill');
   return fill && fill.paired > 0 && fill.paired / fill.length >= 0.4 ? ['fill'] : [];
 }
 
-function detectStrokedPens(stats: PenStats[]): string[] {
+function detectStrokedPens(stats: PenStats[], shares: number[]): string[] {
   const most = Math.max(0, ...stats.filter((s) => s.key !== 'fill').map((s) => s.paired));
   if (most === 0) return [];
   // Wall pens draw mostly in parallel pairs. A sheet border or title block in the same pen
   // can pull its share down, so a looser share is accepted when no pen passes.
-  for (const share of [0.5, 0.4]) {
+  for (const share of shares) {
     const candidates = stats.filter((s) => s.key !== 'fill' && s.paired >= most * 0.1 && s.paired / s.length >= share);
     if (!candidates.length) continue;
     const heaviest = candidates.reduce((a, b) => (Number(b.key) > Number(a.key) ? b : a));

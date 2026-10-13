@@ -81,3 +81,25 @@ describe('room takeoff', () => {
     expect(rooms.find((r) => r.labels[0].number === '112')?.points).not.toBeNull();
   });
 });
+
+describe('rooms drawn without lineweights', () => {
+  it('fills the tag’s own room when its box sits just above a wall', async () => {
+    const { buildWallModel } = await import('../src/fill/roomFill');
+    const { fillRooms, findRoomLabels } = await import('../src/fill/rooms');
+    const s = (x1: number, y1: number, x2: number, y2: number) => ({ x1, y1, x2, y2, width: 0.5, filled: false });
+    const rect = (x0: number, y0: number, x1: number, y1: number) => [s(x0, y0, x1, y0), s(x1, y0, x1, y1), s(x1, y1, x0, y1), s(x0, y1, x0, y0)];
+    // Two rooms, one above the other, a 4 pt partition between; everything in one pen.
+    const segs = [...rect(-6, -6, 206, 210), ...rect(0, 0, 200, 100), ...rect(0, 104, 200, 204), ...rect(90, 85, 114, 97), ...rect(90, 150, 114, 162)];
+    const texts = [
+      { str: 'ROOM A', cx: 102, cy: 75, w: 30, h: 5 },
+      { str: '101', cx: 102, cy: 91, w: 12, h: 5 },
+      { str: 'ROOM B', cx: 102, cy: 140, w: 30, h: 5 },
+      { str: '102', cx: 102, cy: 156, w: 12, h: 5 },
+    ];
+    const model = buildWallModel(segs, (100 * 0.0254) / 72, { pens: ['0.50'] });
+    const rooms = fillRooms(model, findRoomLabels(texts, segs), 400, 400);
+    // Each room on its own (without lineweights the tag box notches it a few percent).
+    expect(rooms.map((r) => r.labels.map((l) => l.number).join('+')).sort()).toEqual(['101', '102']);
+    for (const r of rooms) expect(r.area / 20000).toBeGreaterThan(0.9);
+  });
+});

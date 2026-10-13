@@ -139,6 +139,13 @@ function nameAbove(texts: PageText[], t: PageText, cx: number, top: number, widt
 }
 
 /** Fills one tag's room, within a window around the tag. */
+/** Whether an outline's extent covers a box: the room around a tag, not the one beyond a wall. */
+const spans = (pts: Pt[], [x0, y0, x1, y1]: [number, number, number, number]) => {
+  const xs = pts.map((p) => p[0]);
+  const ys = pts.map((p) => p[1]);
+  return Math.min(...xs) <= x0 && Math.max(...xs) >= x1 && Math.min(...ys) <= y0 && Math.max(...ys) >= y1;
+};
+
 /** Whether an outline lies within a box (give or take a point): the tag box itself. */
 const withinBox = (pts: Pt[], [x0, y0, x1, y1]: [number, number, number, number]) => pts.every(([x, y]) => x >= x0 - 1 && x <= x1 + 1 && y >= y0 - 1 && y <= y1 + 1);
 
@@ -160,7 +167,8 @@ function fillOne(model: WallModel, label: RoomLabel, sheetW: number, sheetH: num
       [x1 + w * 0.4, cy],
     ] as Pt[]) {
       const next = fillRoom(model, [seed], sheetW, sheetH, 2);
-      if (next.ok && !withinBox(next.points, label.box)) {
+      // The tag's own room spans its box; a seed that crossed a wall finds another room.
+      if (next.ok && !withinBox(next.points, label.box) && spans(next.points, label.box)) {
         res = next;
         break;
       }

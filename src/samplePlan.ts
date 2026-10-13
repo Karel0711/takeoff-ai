@@ -26,17 +26,19 @@ export async function samplePlanPdf(
   } = {},
 ): Promise<Uint8Array> {
   const poche = options.walls === 'poche';
-  pens = options.onePen ? { wall: 0.24, thin: 0.24 } : { wall: 0.7, thin: 0.25 };
-  piece = options.pieces ?? 0;
-  byChar = !!options.charByChar;
-  bareRooms = !!options.bareRoomNumbers;
+  const style: Style = {
+    pens: options.onePen ? { wall: 0.24, thin: 0.24 } : { wall: 0.7, thin: 0.25 },
+    piece: options.pieces ?? 0,
+    byChar: !!options.charByChar,
+    bareRooms: !!options.bareRoomNumbers,
+  };
   const doc = await PDFDocument.create();
   doc.setTitle('Takeoff sample plan');
   const font = await doc.embedFont(StandardFonts.Helvetica);
   const bold = await doc.embedFont(StandardFonts.HelveticaBold);
   for (const ceiling of [false, true]) {
     const page = doc.addPage([W, H]);
-    drawPlan(page, font, bold, units, ceiling, poche);
+    drawPlan(page, font, bold, units, ceiling, poche, style);
     if (options.rotate) page.setRotation(degrees(options.rotate));
   }
   return doc.save();
@@ -57,14 +59,18 @@ const feetInches = (ft: number) => {
 const OX = 110;
 const OY = 150;
 const ink = rgb(0, 0, 0);
-/** Wall and thin pen widths; one pen for both when drawn without lineweights. */
-let pens = { wall: 0.7, thin: 0.25 };
-let piece = 0;
-let byChar = false;
-let bareRooms = false;
+/** How the sample is drawn: pens (one for all without lineweights), exploded walls, text, room tags. */
+interface Style {
+  pens: { wall: number; thin: number };
+  /** Wall lines broken into pieces this long (0: whole). */
+  piece: number;
+  byChar: boolean;
+  bareRooms: boolean;
+}
 
 /** `poche`: walls as solid filled shapes with no outline, as some exports draw them. */
-function drawPlan(page: PDFPage, font: PDFFont, bold: PDFFont, units: Units, ceiling: boolean, poche = false) {
+function drawPlan(page: PDFPage, font: PDFFont, bold: PDFFont, units: Units, ceiling: boolean, poche: boolean, style: Style) {
+  const { pens, piece, byChar, bareRooms } = style;
   const metric = units === 'metric';
   const K = metric ? 72 / 0.0254 / 100 : 9 * FT_PER_UNIT;
   const label = (len: number) => (metric ? String(Math.round(len * 1000)) : feetInches(len * FT_PER_UNIT));
