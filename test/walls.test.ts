@@ -148,6 +148,18 @@ describe('wall takeoff', () => {
     expect(by.get('EW6B')?.length).toBeGreaterThan(4.8);
   });
 
+  it('gives a furring tag pointing into a column to the furring wrapped round it', () => {
+    const F = 0.06;
+    // Furring wrapped round a column: a ring of thin walls. The column between its inner
+    // faces reads as a thick wall too, and that is where the tag's leader ends.
+    const ring = [...wall([0, 0], [0.54, 0], [0.54, 1], [0, 1], [0, 0]), ...wall([F, F], [0.54 - F, F], [0.54 - F, 1 - F], [F, 1 - F], [F, F])];
+    const t = tag('FR2', -1.2, 0.5, [0.27, 0.5]);
+    const res = wallTakeoff(ring, [...ring, ...t.segs], [t.text], MPP);
+    const by = lengthsByType(res.runs, MPP);
+    // The ring's centreline: 2 × (0.48 + 0.94).
+    expect(by.get('FR2')?.length).toBeCloseTo(2.84, 1);
+  });
+
   it('sorts tags into kinds that do not compete', () => {
     expect(tagKind('EW3A')).toBe('exterior');
     expect(tagKind('FR1')).toBe('furring');

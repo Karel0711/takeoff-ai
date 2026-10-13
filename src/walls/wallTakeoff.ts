@@ -176,6 +176,8 @@ export function wallTakeoff(
   const tags = resolveTags(texts, allSegments);
   const unmatched: WallTag[] = [];
   const tagged = pieces.map(() => new Map<string, { codes: string[]; d: number }>());
+  /** Pieces of a furring wrap round a column: the wrap is the whole of that type there. */
+  const wrapped = new Set<number>();
   for (const tag of tags) {
     // Follow each leader out from the tag; the first point that lands on a wall is
     // what it points at, and the leader that gets there soonest wins. A tag with
@@ -229,6 +231,18 @@ export function wallTakeoff(
     if (prev && (kind === 'exterior' || kind === 'foundation') && !prev.codes.includes(tag.code)) {
       tagged[best.id].set(kind, { codes: [...prev.codes, tag.code], d: Math.min(prev.d, bestD) });
     } else if (!prev || bestD < prev.d) tagged[best.id].set(kind, { codes: [tag.code], d: bestD });
+    // Furring wrapped round a column: the tag lands inside the wrap (on the column),
+    // so the type goes to the wrap all round instead.
+    if (kind === 'furring') {
+      const wrap = enclosure(best, pieces, pt(1.0), pt(6));
+      if (wrap) {
+        tagged[best.id].delete(kind);
+        for (const i of wrap) {
+          if (!tagged[i].has(kind)) tagged[i].set(kind, { codes: [tag.code], d: bestD });
+          wrapped.add(i);
+        }
+      }
+    }
   }
 
   // Carry each kind along connected pieces of similar thickness; nearest tag wins.
@@ -269,7 +283,7 @@ export function wallTakeoff(
       for (const { j, diff, tee, link } of adj[i]) {
         // Furring and finishes belong to a room: they turn its corners but stop where a
         // wall meets them and the wall carries on into the next room.
-        if (kind === 'furring' && link === 'straight') continue;
+        if (kind === 'furring' && (link === 'straight' || wrapped.has(i))) continue;
         // Within a fifth of the thickness counts as the same wall for exterior and
         // foundation walls (cladding and footing changes, pilasters); others must match.
         if (diff > (followsWall(kind) && !tee ? 0.2 : 0)) continue;
@@ -284,6 +298,15 @@ export function wallTakeoff(
     pieces.forEach((_, i) => {
       if (code[i] && !tagged[i].has(kind)) carried[i].set(kind, code[i]!);
     });
+  }
+  // The side of a column wrap that lies on a furring line running past the column is
+  // both: the wrap, and the furring continuing behind the column.
+  for (const i of wrapped) {
+    const ends = adj[i].filter((n) => n.link === 'straight').map((n) => carried[n.j].get('furring') ?? tagged[n.j].get('furring')?.codes);
+    const own = tagged[i].get('furring')?.codes ?? [];
+    if (ends.length >= 2 && ends[0] && ends.every((c) => c && c.join() === ends[0]!.join()) && ends[0].some((c) => !own.includes(c))) {
+      carried[i].set('furring', ends[0].filter((c) => !own.includes(c)));
+    }
   }
   for (const p of pieces) {
     const own = [...tagged[p.id].values()].flatMap((t) => t.codes);
@@ -335,6 +358,64 @@ export function wallTakeoff(
     }
   }
   return { runs: [...measured, ...light], tags, unmatched: stillUnmatched };
+}
+
+/**
+ * The small closed ring of walls round a piece (a column wrapped in furring): rays from
+ * the piece's middle meet walls on all four sides within `reach`, and the ring they
+ * bound is no longer than `maxPerimeter`. Returns the pieces on the ring.
+ */
+function enclosure(inner: WallRun, pieces: WallRun[], reach: number, maxPerimeter: number): number[] | null {
+  const mx = (inner.a[0] + inner.b[0]) / 2;
+  const my = (inner.a[1] + inner.b[1]) / 2;
+  const hit = (dx: number, dy: number): number | null => {
+    let best: number | null = null;
+    for (const p of pieces) {
+      // A second band on the same line as the inner piece (a column read twice) is not a side.
+      if (p === inner || overlapping(inner, p)) continue;
+      const pt = crossingRay(mx, my, dx, dy, p);
+      if (pt !== null && pt > 0.5 && pt <= reach && (best === null || pt < best)) best = pt;
+    }
+    return best;
+  };
+  const [e, w, sth, n] = [hit(1, 0), hit(-1, 0), hit(0, 1), hit(0, -1)];
+  if (e === null || w === null || sth === null || n === null) return null;
+  const [x0, x1, y0, y1] = [mx - w, mx + e, my - n, my + sth];
+  if (2 * (x1 - x0 + (y1 - y0)) > maxPerimeter) return null;
+  const tol = 1.5;
+  const onEdge = (q: Pt) =>
+    q[0] >= x0 - tol && q[0] <= x1 + tol && q[1] >= y0 - tol && q[1] <= y1 + tol &&
+    (Math.abs(q[0] - x0) <= tol || Math.abs(q[0] - x1) <= tol || Math.abs(q[1] - y0) <= tol || Math.abs(q[1] - y1) <= tol);
+  const ring = pieces.flatMap((p, i) => (p !== inner && onEdge(p.a) && onEdge(p.b) && onSameEdge(p, x0, x1, y0, y1, tol) ? [i] : []));
+  return ring.length >= 3 ? ring : null;
+}
+
+/** Whether two pieces run parallel and nearly on one line (within 2.5 pt, at most half the first one's thickness). */
+function overlapping(r: WallRun, p: WallRun): boolean {
+  const L = runLength(r);
+  const ux = (r.b[0] - r.a[0]) / L;
+  const uy = (r.b[1] - r.a[1]) / L;
+  const Lp = runLength(p);
+  if (Math.abs(ux * (p.b[1] - p.a[1]) - uy * (p.b[0] - p.a[0])) / Lp > 0.05) return false;
+  return Math.abs((p.a[0] - r.a[0]) * -uy + (p.a[1] - r.a[1]) * ux) < Math.min(r.thickness / 2, 2.5);
+}
+
+/** Whether both ends of a piece lie on one side of the box (it runs along that side). */
+function onSameEdge(p: WallRun, x0: number, x1: number, y0: number, y1: number, tol: number): boolean {
+  return [x0, x1].some((x) => Math.abs(p.a[0] - x) <= tol && Math.abs(p.b[0] - x) <= tol) || [y0, y1].some((y) => Math.abs(p.a[1] - y) <= tol && Math.abs(p.b[1] - y) <= tol);
+}
+
+/** Distance along a ray from (x, y) in direction (dx, dy) to where it crosses a piece, or null. */
+function crossingRay(x: number, y: number, dx: number, dy: number, p: WallRun): number | null {
+  const ex = p.b[0] - p.a[0];
+  const ey = p.b[1] - p.a[1];
+  const den = dx * ey - dy * ex;
+  if (Math.abs(den) < 1e-9) return null;
+  const qx = p.a[0] - x;
+  const qy = p.a[1] - y;
+  const t = (qx * ey - qy * ex) / den;
+  const u = (qx * dy - qy * dx) / den;
+  return u >= -0.02 && u <= 1.02 ? t : null;
 }
 
 const isPartition = (tags: string[]) => tags.some((t) => tagKind(t) === 'partition') && !tags.some((t) => tagKind(t) === 'exterior');
