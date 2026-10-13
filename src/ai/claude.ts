@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { betaZodOutputFormat } from '@anthropic-ai/sdk/helpers/beta/zod';
+import { LEGEND_INSTRUCTIONS, legendRequest } from './prompt';
 import { ExtractionSchema, type Extraction } from './schema';
 
 export const MODEL = 'claude-opus-5-5';
@@ -31,17 +32,7 @@ function client(): Anthropic {
   return new Anthropic({ apiKey, dangerouslyAllowBrowser: true });
 }
 
-const SYSTEM = `You read construction drawings for a general contractor's quantity takeoff.
 
-The sheet you are given is an assembly-type legend (wall, floor, roof or ceiling types). Extract every assembly type on it.
-
-- Use the type tag exactly as printed (W1, EW3C, FR1, F2, R1).
-- List every layer in the order printed. Keep the printed wording, including sizes and spacing.
-- Record thickness and framing spacing in millimetres; convert inch dimensions.
-- Put substitutions, extents ("assembly to U/S of structure"), fire ratings and acoustic ratings in notes.
-- Only report what the sheet shows. Leave a value null when it is not printed rather than estimating it.
-
-You receive the sheet as image tiles (left to right, top to bottom, slightly overlapping) and as its text layer. Each text line is prefixed with its y position and each run with its x position, in points from the sheet's top-left corner; use the positions to tell which column a layer belongs to. Treat the text layer as authoritative for spelling and numbers, and the images for layout.`;
 
 export interface ReadResult {
   extraction: Extraction;
@@ -65,7 +56,7 @@ export async function readAssemblyLegend(
     ),
     {
       type: 'text',
-      text: `Sheet ${sheetName}. Text layer:\n\n${lines.join('\n')}\n\nExtract every assembly type on this sheet.`,
+      text: legendRequest(sheetName, lines),
     },
   ];
 
@@ -76,7 +67,7 @@ export async function readAssemblyLegend(
       betas: ['server-side-fallback-2026-07-01'],
       fallbacks: 'default',
       output_config: { effort: 'high', format: betaZodOutputFormat(ExtractionSchema) },
-      system: SYSTEM,
+      system: LEGEND_INSTRUCTIONS,
       messages: [{ role: 'user', content }],
     },
     { signal },

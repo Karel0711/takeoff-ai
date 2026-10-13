@@ -34,6 +34,13 @@ nothing is uploaded anywhere.
 **Phase 3 — AI takeoff:** walls by type from the plan tags and PDF vector lines,
 rooms with finishes, all as suggestions you accept or correct.
 
+## Use it hosted
+
+A hosted copy runs on claude.ai as a private artifact. AI features there use your
+own Claude account, so no API key is needed. To update it, run
+`npm run build:artifact` and republish `dist/artifact.html` with the files listed
+in `dist/artifact-files.json` (see `docs/handoff.md`).
+
 ## Run it
 
 Requires Node.js 20 or newer.

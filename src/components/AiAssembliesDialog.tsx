@@ -1,10 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import { describeError, readAssemblyLegend } from '../ai/claude';
+import { aiRoute, describeAiError, readLegend, type AiRoute } from '../ai/readLegend';
 import type { ExtractedAssembly } from '../ai/schema';
 import { buildTakeoffType, findAssemblyCodes } from '../assemblyBuilder';
 import type { Sheet, TakeoffType, Units } from '../model';
-import { pageTextRuns, renderTiles, type PDFPageProxy } from '../pdf';
-import { textLines } from '../sheetInfo';
+import type { PDFPageProxy } from '../pdf';
 import { lengthUnit } from '../units';
 
 interface Props {
@@ -21,7 +20,7 @@ interface Props {
 type State =
   | { phase: 'idle' }
   | { phase: 'running'; step: string; started: number }
-  | { phase: 'done'; assemblies: ExtractedAssembly[]; printed: string[]; model: string; seconds: number }
+  | { phase: 'done'; assemblies: ExtractedAssembly[]; printed: string[]; answeredBy: string; seconds: number }
   | { phase: 'error'; message: string };
 
 const CATEGORY_LABEL: Record<ExtractedAssembly['category'], string> = {
@@ -41,6 +40,11 @@ export function AiAssembliesDialog({ page, sheet, units, existingTypes, onApply,
   const [height, setHeight] = useState(units === 'metric' ? 3 : 10);
   const [, tick] = useState(0);
   const abort = useRef<AbortController | null>(null);
+  const [route, setRoute] = useState<AiRoute | null>(null);
+
+  useEffect(() => {
+    void aiRoute().then(setRoute);
+  }, []);
 
   const existingByCode = new Map(existingTypes.map((t) => [codeOf(t.name), t]));
   const kindOf = (a: ExtractedAssembly) =>
@@ -63,22 +67,18 @@ export function AiAssembliesDialog({ page, sheet, units, existingTypes, onApply,
     const started = Date.now();
     abort.current = new AbortController();
     try {
-      setState({ phase: 'running', step: 'Reading the sheet text…', started });
-      const runs = await pageTextRuns(page);
-      const printed = findAssemblyCodes(runs.map((r) => r.str));
-      setState({ phase: 'running', step: 'Preparing sheet images…', started });
-      const tiles = await renderTiles(page, 2, 2, 2576);
       setState({ phase: 'running', step: 'Claude is reading the assembly types…', started });
-      const { extraction, model } = await readAssemblyLegend(tiles, textLines(runs), sheet.name, abort.current.signal);
+      const { extraction, runsText, answeredBy } = await readLegend(page, sheet.name, abort.current.signal);
+      const printed = findAssemblyCodes(runsText);
       const assemblies = extraction.assemblies;
       setSelected(new Set(assemblies.map((a) => a.code)));
-      setState({ phase: 'done', assemblies, printed, model, seconds: Math.round((Date.now() - started) / 1000) });
+      setState({ phase: 'done', assemblies, printed, answeredBy, seconds: Math.round((Date.now() - started) / 1000) });
     } catch (e) {
       if (abort.current?.signal.aborted) {
         setState({ phase: 'idle' });
         return;
       }
-      setState({ phase: 'error', message: describeError(e) });
+      setState({ phase: 'error', message: describeAiError(e) });
     }
   }
 
@@ -125,14 +125,17 @@ export function AiAssembliesDialog({ page, sheet, units, existingTypes, onApply,
               with its layers as assembly items. You review everything before it is added.
             </p>
             <p className="muted">
-              The sheet's image and text are sent to Anthropic's API using your key. It usually takes one to three
-              minutes.
+              {route === 'account'
+                ? 'This uses your own Claude account; the first time, Claude asks you to allow this page. It usually takes one to three minutes.'
+                : route === 'api-key'
+                  ? "The sheet's images and text are sent to Anthropic's API using your key. It usually takes one to three minutes."
+                  : 'AI features need an Anthropic API key when the app runs on your own computer. Add one in AI settings.'}
             </p>
             <div className="row-actions">
-              <button className="on" onClick={() => void run()}>
+              <button className="on" disabled={route === null || route === 'none'} onClick={() => void run()}>
                 Read assembly types
               </button>
-              <button onClick={onOpenSettings}>AI settings</button>
+              {route !== 'account' && <button onClick={onOpenSettings}>AI settings</button>}
             </div>
           </>
         )}
@@ -159,7 +162,7 @@ export function AiAssembliesDialog({ page, sheet, units, existingTypes, onApply,
             <p className="err-box">{state.message}</p>
             <div className="row-actions">
               <button onClick={() => void run()}>Try again</button>
-              <button onClick={onOpenSettings}>AI settings</button>
+              {route !== 'account' && <button onClick={onOpenSettings}>AI settings</button>}
             </div>
           </>
         )}
@@ -188,7 +191,7 @@ export function AiAssembliesDialog({ page, sheet, units, existingTypes, onApply,
               · {state.printed.length - missed.length} of {state.printed.length} type tags printed on the sheet
             </>
           )}
-          {state.model !== 'claude-opus-5-5' && <span className="muted"> · answered by {state.model}</span>}
+          <span className="muted"> · answered by {state.answeredBy}</span>
           {missed.length > 0 && (
             <div className="warn">
               Printed on the sheet but not returned: {missed.join(', ')}. Some may be references to types on other

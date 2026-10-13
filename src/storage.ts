@@ -5,9 +5,19 @@ import type { Project } from './model';
 const PROJECT_KEY = 'project';
 const pdfKey = (docId: string) => `pdf:${docId}`;
 
-export const loadProject = (): Promise<Project | undefined> => get<Project>(PROJECT_KEY);
-export const saveProject = (project: Project): Promise<void> => set(PROJECT_KEY, project);
+// Storage can be unavailable (private windows, blocked site data, previews). The app then
+// works for the current visit and simply starts fresh next time.
+const safely = async <T>(op: () => Promise<T>, fallback: T): Promise<T> => {
+  try {
+    return await op();
+  } catch {
+    return fallback;
+  }
+};
 
-export const loadPdf = (docId: string): Promise<ArrayBuffer | undefined> => get<ArrayBuffer>(pdfKey(docId));
-export const savePdf = (docId: string, data: ArrayBuffer): Promise<void> => set(pdfKey(docId), data);
-export const deletePdf = (docId: string): Promise<void> => del(pdfKey(docId));
+export const loadProject = () => safely(() => get<Project>(PROJECT_KEY), undefined);
+export const saveProject = (project: Project) => safely(() => set(PROJECT_KEY, project), undefined);
+
+export const loadPdf = (docId: string) => safely(() => get<ArrayBuffer>(pdfKey(docId)), undefined);
+export const savePdf = (docId: string, data: ArrayBuffer) => safely(() => set(pdfKey(docId), data), undefined);
+export const deletePdf = (docId: string) => safely(() => del(pdfKey(docId)), undefined);

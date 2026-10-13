@@ -4,6 +4,7 @@ import type { Measurement, Pt, Sheet, TakeoffType, Units } from '../model';
 import type { PDFPageProxy } from '../pdf';
 import { measurementVars, primaryOf, primaryUnit } from '../quantities';
 import { areaUnit, formatQty, lengthUnit, parseLength, toArea, toLength } from '../units';
+import { askText, notify } from './Dialogs';
 
 export type Tool = 'select' | 'measure' | 'calibrate' | 'cutout';
 
@@ -87,7 +88,7 @@ export function Viewer(props: Props) {
     canvas.width = size.w * dpr;
     canvas.height = size.h * dpr;
     const ctx = canvas.getContext('2d')!;
-    ctx.fillStyle = '#d9dde3';
+    ctx.fillStyle = getComputedStyle(canvas).getPropertyValue('--desk').trim() || '#d6dcdf';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     const v = viewRef.current;
     if (hi.current && sameView(hi.current.view, v) && hi.current.dpr === dpr) {
@@ -204,14 +205,14 @@ export function Viewer(props: Props) {
     setDraft([]);
   }, [tool, activeType, draft, selected, props]);
 
-  const calibrate = (a: Pt, b: Pt) => {
+  const calibrate = async (a: Pt, b: Pt) => {
     const lengthPts = polylineLength([a, b]);
-    const example = units === 'metric' ? 'e.g. 3.5 or 3500mm' : `e.g. 12'6" or 12.5`;
-    const input = window.prompt(`Real length of the line you drew (${example}):`);
+    const example = units === 'metric' ? 'For example 3.5 (metres) or 3500mm' : `For example 12'6" or 12.5 (feet)`;
+    const input = await askText('Real length of the line you drew', { hint: example });
     if (input === null) return;
     const meters = parseLength(input, units);
     if (!meters || lengthPts <= 0) {
-      window.alert(`Could not read "${input}" as a length.`);
+      await notify(`"${input}" is not a length this tool can read. ${example}.`);
       return;
     }
     props.onCalibrate(meters / lengthPts, `Calibrated (${input.trim()})`);
@@ -274,7 +275,7 @@ export function Viewer(props: Props) {
       const next = [...draft, pt];
       if (next.length === 2) {
         setDraft([]);
-        calibrate(next[0], next[1]);
+        void calibrate(next[0], next[1]);
       } else {
         setDraft(next);
       }

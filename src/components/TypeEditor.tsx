@@ -2,6 +2,7 @@ import { evaluate } from '../formula';
 import { newId, type Kind, type TakeoffType, type Units } from '../model';
 import type { Vars } from '../quantities';
 import { formatQty, lengthUnit } from '../units';
+import { askConfirm } from './Dialogs';
 
 interface Props {
   type: TakeoffType;
@@ -127,8 +128,9 @@ export function TypeEditor({ type, units, totals, onChange, onDelete, onClose }:
 
       <button
         className="danger"
-        onClick={() => {
-          if (window.confirm(`Delete "${type.name}" and all of its measurements?`)) onDelete();
+        onClick={async () => {
+          if (await askConfirm(`Delete "${type.name}" and all of its measurements?`, { confirmLabel: 'Delete', danger: true }))
+            onDelete();
         }}
       >
         Delete type

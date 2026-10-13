@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AiAssembliesDialog } from './components/AiAssembliesDialog';
 import { AiSettingsDialog } from './components/AiSettingsDialog';
+import { askConfirm, askText, DialogHost, notify } from './components/Dialogs';
 import { QuantityPanel } from './components/QuantityPanel';
 import { TypeEditor } from './components/TypeEditor';
 import { Viewer, type Tool } from './components/Viewer';
 import { exportWorkbook } from './exportExcel';
+import { getDownloads, isHosted } from './host';
 import { newId, newProject, type Project, type Pt, type Sheet, type TakeoffType, type Units } from './model';
 import { inspectPage, openPdf, type PDFDocumentProxy, type PDFPageProxy } from './pdf';
 import { typeTotals } from './quantities';
@@ -118,7 +120,11 @@ export function App() {
   }
 
   async function startNewProject(units: Units) {
-    if (!window.confirm('Start a new project? The current project and its drawings will be removed from this browser.')) return;
+    const ok = await askConfirm('Start a new project? The current project and its drawings will be removed from this browser.', {
+      confirmLabel: 'Start new project',
+      danger: true,
+    });
+    if (!ok) return;
     for (const d of project!.docs) await deletePdf(d.id);
     setPdfs(new Map());
     setProject(newProject(units));
@@ -132,9 +138,21 @@ export function App() {
     setBusy('Building Excel file…');
     try {
       const blob = await exportWorkbook(project!);
+      const filename = `${project!.name.replace(/[^\w\- ]+/g, '').trim() || 'takeoff'} - takeoff.xlsx`;
+      // Hosted pages cannot start downloads themselves; the viewer confirms the save instead.
+      const downloads = await getDownloads();
+      if (downloads) {
+        try {
+          await downloads.save({ filename, data: blob });
+        } catch (e) {
+          const code = (e as { code?: string }).code;
+          if (code !== 'declined') await notify('The Excel file could not be saved here. Try again in a moment.');
+        }
+        return;
+      }
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
-      a.download = `${project!.name.replace(/[^\w\- ]+/g, '').trim() || 'takeoff'} - takeoff.xlsx`;
+      a.download = filename;
       a.click();
       URL.revokeObjectURL(a.href);
     } finally {
@@ -187,7 +205,7 @@ export function App() {
           }}
         />
         <button onClick={() => fileInput.current?.click()}>Upload drawings</button>
-        <button onClick={() => setAiDialog('settings')}>AI settings</button>
+        {!isHosted && <button onClick={() => setAiDialog('settings')}>AI settings</button>}
         <button onClick={() => void exportExcel()} disabled={!project.measurements.length}>
           Export Excel
         </button>
@@ -220,8 +238,8 @@ export function App() {
                     setSheetId(s.id);
                     setSelectedId(null);
                   }}
-                  onDoubleClick={() => {
-                    const name = window.prompt('Sheet name', s.name);
+                  onDoubleClick={async () => {
+                    const name = await askText('Sheet name', { initial: s.name });
                     if (name?.trim()) updateSheet(s.id, { name: name.trim() });
                   }}
                   title="Double-click to rename"
@@ -390,6 +408,7 @@ export function App() {
         />
       )}
       {aiDialog === 'settings' && <AiSettingsDialog onClose={() => setAiDialog(null)} />}
+      <DialogHost />
 
       <aside className="right">
         {editingType ? (

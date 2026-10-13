@@ -7,7 +7,8 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "typecheck": "tsc",
-    "test": "vitest run"
+    "test": "vitest run",
+    "build:artifact": "tsc && vite build && node scripts/artifact-page.mjs"
   },
   "license": "MIT",
   "dependencies": {
