@@ -2214,6 +2214,7 @@ export function App() {
             setLegend(null);
           }}
           multiSheet={project.sheets.length > 1}
+          existing={project.types}
           onAdd={(choices, everywhere) => {
             setAiDialog(null);
             setLegend(null);

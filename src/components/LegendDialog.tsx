@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { LegendRow } from '../fill/legend';
-import type { Kind } from '../model';
+import type { Kind, TakeoffType } from '../model';
 
 export interface LegendChoice {
   label: string;
@@ -13,6 +13,8 @@ interface Props {
   rows: LegendRow[];
   /** Whether the project has other sheets to count the symbols on. */
   multiSheet: boolean;
+  /** The project's types, to spot a line whose code is already one (ACT-1 read from a finish schedule). */
+  existing: TakeoffType[];
   onAdd: (choices: LegendChoice[], everywhere: boolean) => void;
   onClose: () => void;
 }
@@ -21,9 +23,16 @@ interface Props {
 export const legendCount = (r: LegendRow) => (r.found?.length ? r.found.length : (r.tagged?.length ?? 0));
 
 /** The rows read from a boxed legend, to turn into takeoff types (symbols counted). */
-export function LegendDialog({ sheetName, rows, multiSheet, onAdd, onClose }: Props) {
+export function LegendDialog({ sheetName, rows, multiSheet, existing, onAdd, onClose }: Props) {
   const [everywhere, setEverywhere] = useState(false);
-  const [draft, setDraft] = useState(() => rows.map((r) => ({ on: !!r.graphic, label: r.label.replace(/:$/, ''), kind: (r.kind ?? 'count') as Kind })));
+  // A line whose code (ACT-1, CPT-1) names a type already here would count that finish twice.
+  const already = rows.map((r) => {
+    const code = /^[A-Z]{1,4}-?\d{1,3}[A-Z]?\b/.exec(r.label)?.[0];
+    return code ? existing.find((t) => t.name === code || t.name.startsWith(`${code} `)) : undefined;
+  });
+  const [draft, setDraft] = useState(() =>
+    rows.map((r, i) => ({ on: !!r.graphic && !already[i], label: r.label.replace(/:$/, ''), kind: (r.kind ?? 'count') as Kind })),
+  );
   useEffect(() => {
     const key = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
     window.addEventListener('keydown', key);
@@ -63,6 +72,7 @@ export function LegendDialog({ sheetName, rows, multiSheet, onAdd, onClose }: Pr
                   </td>
                   <td>
                     <input className="room-name" value={d.label} onChange={(e) => set(i, { label: e.target.value })} aria-label="Type name" />
+                    {already[i] && <div className="field-hint">Already a type here ({already[i]!.name}). Adding it again counts it twice.</div>}
                   </td>
                   <td>
                     <select value={d.kind} onChange={(e) => set(i, { kind: e.target.value as Kind })} aria-label="Measured as">
