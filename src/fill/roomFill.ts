@@ -95,7 +95,7 @@ function gridAround(cx: number, cy: number, half: number, sheetW: number, sheetH
   const y0 = Math.max(0, cy - half);
   const w = Math.min(sheetW, cx + half) - x0;
   const h = Math.min(sheetH, cy + half) - y0;
-  const res = Math.min(3, Math.sqrt(MAX_PIXELS / (w * h)));
+  const res = Math.min(2, Math.sqrt(MAX_PIXELS / (w * h)));
   return makeGrid(x0, y0, w, h, res);
 }
 

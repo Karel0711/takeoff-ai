@@ -23,7 +23,7 @@ Where the project stands, for picking it up in a new session.
   273.87 m². How it works: wall pen = heaviest pen with mostly paired parallel
   lines (A2.1: 0.57 pt walls, 0.51 tags/frames, 0.28 furniture/hatch); gaps on a
   wall line up to 3 m are bridged (doors), up to 10 m when glazing runs along
-  them (windows); flood fill at up to 3 px/pt, hole filling, boundary trace,
+  them (windows); flood fill at up to 2 px/pt (3 gave the same areas to 0.01 m² at twice the time), hole filling, boundary trace,
   then edges snapped to the drawn lines. First click reads the sheet's operator
   list (~3–6 s), then 0.1–2 s per room.
 - **Wall takeoff:** `src/walls/`. Latest score across A2.0–A2.3 against the
