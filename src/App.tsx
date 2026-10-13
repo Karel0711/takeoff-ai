@@ -23,6 +23,7 @@ import { buildWallModel } from './fill/roomFill';
 import { matchSymbol, sampleSymbol, type SymbolSample } from './fill/symbols';
 import { traceLine } from './fill/trace';
 import { checkScale, type ScaleCheck } from './scaleCheck';
+import { sheetImage } from './sheetImage';
 import { pageTexts } from './pageText';
 import { isHosted, saveFile } from './host';
 import { defaultTypes, newId, newProject, type Project, type Pt, type Sheet, type TakeoffType, type Units } from './model';
@@ -557,6 +558,21 @@ export function App() {
     } catch (e) {
       setToast({ text: `Something went wrong: ${e instanceof Error ? e.message : String(e)}`, undo: false });
       return;
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  /** Saves the current sheet as a PNG with its takeoffs drawn on and a legend of totals. */
+  async function saveSheetImage() {
+    if (!page || !sheet) return;
+    setBusy('Making the sheet image…');
+    try {
+      const blob = await sheetImage(page, sheet, project!);
+      const name = `${project!.name} - ${sheet.name}`.replace(/[\\/:*?"<>|]+/g, '-');
+      if ((await saveFile(`${name}.png`, blob)) === 'failed') setToast({ text: 'The image could not be saved.', undo: false });
+    } catch (e) {
+      setToast({ text: `Something went wrong: ${e instanceof Error ? e.message : String(e)}`, undo: false });
     } finally {
       setBusy(null);
     }
@@ -1241,6 +1257,7 @@ export function App() {
             [
               { label: 'History', hint: 'Every change', onSelect: () => setTab('history') },
               { label: 'Keyboard shortcuts', onSelect: () => setAiDialog('shortcuts') },
+              ...(page && sheet ? [{ label: 'Save sheet as image…', hint: 'With takeoffs', onSelect: () => void saveSheetImage() }] : []),
               ...(project.sheets.some((x) => /^Page \d+$/.test(x.name))
                 ? [{ label: 'Name sheets with Claude…', hint: 'Sheets with no text', onSelect: () => void nameSheetsWithAi() }]
                 : []),

@@ -210,7 +210,10 @@ right. Tools sit in the title bar.
    that pen, round corners and across dash gaps.
 8. **Cutout** (C): select an area, then draw the hole.
 9. Hover a type on the left to edit (pencil) or delete (bin) it.
-10. **Export** saves the takeoff to Excel, including the activity log.
+10. **More › Save sheet as image…** saves the sheet as a PNG with its takeoffs
+    drawn on and a legend of each type's total on that sheet, to send a sub or
+    a reviewer what was taken off.
+11. **Export** saves the takeoff to Excel, including the activity log.
 
 Editing: select a takeoff to show its points. Drag a corner to move it, drag
 the dot in the middle of an edge to add a point there, Option-click a corner
