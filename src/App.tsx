@@ -41,6 +41,7 @@ import {
   clearStarterTypes,
   deleteProject,
   listProjects,
+  type ProjectSummary,
   loadActivity,
   loadCurrentProject,
   deletePdf,
@@ -424,6 +425,13 @@ export function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, [undo, redo]);
 
+  // Other projects, to copy their types from (the + menu).
+  const [otherProjects, setOtherProjects] = useState<ProjectSummary[]>([]);
+  useEffect(() => {
+    if (popover !== 'newtype') return;
+    void listProjects().then((list) => setOtherProjects(list.filter((x) => x.id !== projectRef.current?.id)));
+  }, [popover]);
+
   if (!project) return <div className="loading">Opening your project…</div>;
 
   const updateSheet = (id: string, patch: Partial<Sheet>, source: string) =>
@@ -740,6 +748,25 @@ export function App() {
     } finally {
       setBusy(null);
     }
+  }
+
+  /** Copies another project's types (with their assemblies) into this one, skipping names already here. */
+  async function importTypes(fromId: string) {
+    const from = await loadProjectById(fromId);
+    if (!from) return;
+    const p = projectRef.current!;
+    const have = new Set(p.types.map((t) => t.name));
+    const types = from.types.filter((t) => !have.has(t.name)).map((t) => ({ ...t, id: newId(), items: t.items.map((it) => ({ ...it, id: newId() })) }));
+    if (!types.length) {
+      setToast({ text: `This project already has every type in ${from.name}.`, undo: false });
+      return;
+    }
+    if (from.units !== p.units) {
+      const ok = await askConfirm(`${from.name} measures in ${from.units} units and this project in ${p.units}. Heights and formulas are copied as they are. Copy the types anyway?`, { confirmLabel: 'Copy types' });
+      if (!ok) return;
+    }
+    commit((q) => ({ ...q, types: [...q.types, ...types] }), 'Import types');
+    setToast({ text: `Copied ${types.length} type${types.length === 1 ? '' : 's'} from ${from.name}`, undo: true });
   }
 
   /** Adds a small generated floor plan to try the tools on. */
@@ -1968,7 +1995,8 @@ export function App() {
               { label: 'Blank type', onSelect: addType },
               { label: 'From the library…', hint: 'Ceilings, flooring, paint…', onSelect: () => setAiDialog('library') },
             ],
-          ]}
+            otherProjects.slice(0, 8).map((o) => ({ label: `Types from ${o.name}`, onSelect: () => void importTypes(o.id) })),
+          ].filter((g) => g.length)}
         />
       )}
       {popover === 'export' && (
