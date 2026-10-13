@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { diffProjects, type ActivityEvent } from './activity';
 import { AiAssembliesDialog } from './components/AiAssembliesDialog';
 import { AiSettingsDialog } from './components/AiSettingsDialog';
@@ -43,9 +43,10 @@ import { readProjectFiles, writeBackup, writeProjectFile } from './projectFile';
 import { canUseServiceWorker, isInstalled, onLaunchFiles, promptInstall, registerServiceWorker } from './pwa';
 import { ringArea } from './geometry';
 import { scoringOn, setScoringOn } from './scoring';
-import { getApiKey } from './ai/claude';
 import { desktopApi, folderLabel } from './desktop';
 import { FolderSync, type PullResult } from './folderSync';
+import { linesIn, onSheet, readNumber, readTitle, relativeBox, type Box } from './sheetNumbers';
+import { SheetNumbersDialog, type SheetNumberRow } from './components/SheetNumbersDialog';
 import { formatQty, parseScale } from './units';
 
 const PALETTE = ['#0a84ff', '#ff9f0a', '#30d158', '#bf5af2', '#ff375f', '#64d2ff', '#ffd60a', '#ac8e68', '#5e5ce6', '#ff6961'];
@@ -99,6 +100,8 @@ export function App() {
   const [activeTypeId, setActiveTypeId] = useState<string | null>(null);
   const [editingTypeId, setEditingTypeId] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  /** Drawing files folded shut in the sheet list. */
+  const [collapsedDocs, setCollapsedDocs] = useState<Set<string>>(new Set());
   /** Takeoffs picked together (Box select), on the open sheet. */
   const [multiIds, setMultiIds] = useState<string[]>([]);
   // A selection belongs to its sheet.
@@ -127,6 +130,13 @@ export function App() {
     legendPickRef.current = legendPick;
   }, [legendPick]);
   const [legend, setLegend] = useState<{ sheetId: string; rows: LegendRow[] } | null>(null);
+  /** Numbering sheets: the next box dragged marks where the number (or title) is in the title block. */
+  const [numberPick, setNumberPick] = useState<'number' | 'title' | null>(null);
+  const numberPickRef = useRef(numberPick);
+  numberPickRef.current = numberPick;
+  /** The marked spots, as fractions of the sheet, read on every sheet. */
+  const numberBoxes = useRef<{ number?: Box; title?: Box }>({});
+  const [sheetNumbers, setSheetNumbers] = useState<{ rows: SheetNumberRow[]; hasTitle: boolean } | null>(null);
   useEffect(() => {
     if (tool !== 'symbol') setLegendPick(false);
   }, [tool]);
@@ -257,7 +267,7 @@ export function App() {
         const result = checkScale(texts, segs, units);
         setScaleCheck({ sheetId: sheet.id, result });
         // A scale read from the title block that the dimensions confirm needs no checking.
-        if (result && result.agree >= 5 && sheet.scaleSource === 'detected' && sheet.metersPerPoint && Math.abs(result.metersPerPoint / sheet.metersPerPoint - 1) < 0.02) {
+        if (result && result.agree >= 5 && sheet.scaleSource === 'detected' && sheet.scaleHints?.includes(sheet.scaleLabel ?? '') && sheet.metersPerPoint && Math.abs(result.metersPerPoint / sheet.metersPerPoint - 1) < 0.02) {
           // Not a user change: kept out of undo and history.
           const prev = projectRef.current;
           if (prev) {
@@ -439,8 +449,9 @@ export function App() {
         return;
       }
       if (mod || e.altKey) return;
-      if (e.key === 'Escape' && legendPickRef.current) {
+      if (e.key === 'Escape' && (legendPickRef.current || numberPickRef.current)) {
         setLegendPick(false);
+        setNumberPick(null);
         setTool('select');
         return;
       }
@@ -593,12 +604,17 @@ export function App() {
         setBusy(`Reading ${file.name}: sheet ${n} of ${pdf.numPages}`);
         const pg = await pdf.getPage(n);
         const info = await inspectPage(pg);
-        pg.cleanup();
         if (info.textRuns < 5) noText++;
         // A single standard scale on the sheet is applied automatically and flagged for checking;
         // a sheet noting its scale in both systems (1:100 and 1/8" = 1'-0") gets the project's.
         const inUnits = info.scaleHints.filter((h) => /^1:/.test(h) === (projectRef.current?.units === 'metric'));
-        const detected = info.scaleHints.length === 1 ? info.scaleHints[0] : inUnits.length === 1 ? inUnits[0] : null;
+        let detected = info.scaleHints.length === 1 ? info.scaleHints[0] : inUnits.length === 1 ? inUnits[0] : null;
+        // No scale printed (a plan whose title gives none): the one its dimensions agree on.
+        if (!detected && !info.scaleHints.length && info.textRuns >= 20) {
+          const read = checkScale(await pageTexts(pg), await segmentsOnce(pg), projectRef.current?.units ?? 'metric');
+          if (read && read.agree >= 5) detected = read.label;
+        }
+        pg.cleanup();
         sheets.push({
           id: newId(),
           docId,
@@ -623,7 +639,7 @@ export function App() {
         scaled === sheets.length ? 'every scale read' : `${scaled} scales read, ${sheets.length - scaled} to set`,
         ...(noText ? [`${noText} without text (tags can't be read there)`] : []),
       ];
-      setToast({ text: `${parts.join(' · ')}`, undo: false });
+      setToast({ text: `${parts.join(' · ')}`, undo: false, action: { label: 'Fix sheet numbers', run: () => startNumberPick('number') } });
       await offerRevision(sheets);
     }
     setBusy(null);
@@ -936,7 +952,9 @@ export function App() {
     try {
       const { samplePlanPdf } = await import('./samplePlan');
       const bytes = await samplePlanPdf(project!.units);
-      if (project!.name === 'Untitled project' && !project!.sheets.length) commit((p) => ({ ...p, name: 'Sample project' }), 'Rename project');
+      // The sample comes with a few starter types to try the tools with.
+      if (project!.name === 'Untitled project' && !project!.sheets.length)
+        commit((p) => ({ ...p, name: 'Sample project', types: p.types.length ? p.types : defaultTypes(p.units) }), 'Rename project');
       await upload([new File([bytes as BlobPart], 'Sample floor plan.pdf', { type: 'application/pdf' })]);
     } catch (e) {
       setBusy(null);
@@ -1029,7 +1047,8 @@ export function App() {
       name: 'New takeoff type',
       color: PALETTE[project!.types.length % PALETTE.length],
       kind: 'area',
-      height: project!.units === 'metric' ? 3 : 10,
+      // No height until one is entered (only wall areas need it).
+      height: 0,
       items: [],
     };
     commit((p) => ({ ...p, types: [...p.types, type] }), 'New type');
@@ -1115,6 +1134,58 @@ export function App() {
   }
 
   /** Reads the legend boxed on the sheet into rows for the legend dialog. */
+  /** Starts marking where the sheet number (or title) sits in the title block. */
+  function startNumberPick(kind: 'number' | 'title') {
+    if (!page) return;
+    if (kind === 'number') numberBoxes.current = {};
+    setLegendPick(false);
+    setNumberPick(kind);
+    setSelectedId(null);
+    setTool('symbol');
+  }
+
+  /** The text on a sheet, read once and kept (the search uses the same cache). */
+  async function sheetTexts(s: Sheet): Promise<PageText[]> {
+    const key = `${s.docId}:${s.page}`;
+    const cached = textCache.current.get(key);
+    if (cached) return cached;
+    const pg = await pdfsRef.current
+      .get(s.docId)
+      ?.getPage(s.page)
+      .catch(() => null);
+    const texts = pg ? await pageTexts(pg).catch(() => []) : [];
+    if (pg) textCache.current.set(key, texts);
+    return texts;
+  }
+
+  /** The box just marked: remember the spot, then read that spot on every sheet. */
+  async function readNumberBox(box: Box) {
+    const kind = numberPickRef.current;
+    if (!kind || !sheet) return;
+    numberBoxes.current[kind] = relativeBox(box, sheet.width, sheet.height);
+    setNumberPick(null);
+    setTool('select');
+    const { number, title } = numberBoxes.current;
+    const sheets = projectRef.current!.sheets;
+    const rows: SheetNumberRow[] = [];
+    try {
+      for (let i = 0; i < sheets.length; i++) {
+        const s = sheets[i];
+        setBusy(`Reading sheet numbers: ${i + 1} of ${sheets.length}`);
+        const texts = await sheetTexts(s);
+        rows.push({
+          sheetId: s.id,
+          current: s.name,
+          number: number ? readNumber(linesIn(texts, onSheet(number, s.width, s.height))) : '',
+          ...(title ? { title: readTitle(linesIn(texts, onSheet(title, s.width, s.height))) } : {}),
+        });
+      }
+    } finally {
+      setBusy(null);
+    }
+    setSheetNumbers({ rows, hasTitle: !!title });
+  }
+
   async function readLegendBox(box: [number, number, number, number]) {
     if (!page || !sheet) return;
     setLegendPick(false);
@@ -1209,7 +1280,10 @@ export function App() {
         // door tags. Door numbers follow the room numbers (door 113A by room 113), so only
         // tags in the sheet's room-number range count; other sheets also need a plan's
         // worth of them.
-        const rooms = findRoomLabels(texts, segs).map((r) => parseInt(r.number.replace(/^\D/, ''), 10));
+        // (Lettered rooms, corridor A, have no number to go by.)
+        const rooms = findRoomLabels(texts, segs)
+          .map((r) => parseInt(r.number.replace(/^\D/, ''), 10))
+          .filter((n) => !Number.isNaN(n));
         if (rooms.length) {
           const [lo, hi] = [Math.min(...rooms) - 20, Math.max(...rooms) + 20];
           // On the sheet being counted, doors numbered on their own (D001) are kept; only
@@ -1555,12 +1629,63 @@ export function App() {
 
   const query = sheetFilter.trim().toLowerCase();
   const hitsOn = (id: string) => (textHits && textHits.q === query ? textHits.hits.get(id) : undefined);
-  const filteredSheets = project.sheets.filter((s) => s.name.toLowerCase().includes(query) || hitsOn(s.id));
+  const filteredSheets = project.sheets.filter((s) => s.name.toLowerCase().includes(query) || (s.title ?? '').toLowerCase().includes(query) || hitsOn(s.id));
   // Text that is exactly the search (a tag such as WC-1 or EX-1, not WC-10), on current sheets.
   const exactHits = textHits && textHits.q === query ? project.sheets.filter((s) => !s.superseded).flatMap((s) => (hitsOn(s.id) ?? []).filter((t) => t.str.trim().toLowerCase() === query).map((t) => ({ sheetId: s.id, t }))) : [];
   const exactTags = exactHits.length;
   const totalFor = (typeId: string) => totals.find((t) => t.type.id === typeId);
   const scaleState = !sheet ? 'none' : !sheet.metersPerPoint ? 'unset' : sheet.scaleSource === 'detected' ? 'check' : 'set';
+  const renderSheet = (s: Sheet) => {
+              const count = project.measurements.filter((m) => m.sheetId === s.id).length;
+              const state = !s.metersPerPoint ? 'unset' : s.scaleSource === 'detected' ? 'check' : 'set';
+              return (
+                <li key={s.id}>
+                  <button
+                    className={`source-row ${s.id === sheetId ? 'active' : ''}`}
+                    onClick={() => {
+                      setSheetId(s.id);
+                      setSelectedId(null);
+                      // Text found on the sheet: show it, the next one on each further click.
+                      const hits = hitsOn(s.id);
+                      if (hits) {
+                        hitTurn.current = s.id === sheetId ? hitTurn.current + 1 : 0;
+                        const t = hits[hitTurn.current % hits.length];
+                        // With the drawing around it.
+                        const r = Math.max(t.w, t.h) / 2 + 120;
+                        setFocus((f) => ({ box: [t.cx - r, t.cy - r, t.cx + r, t.cy + r], n: (f?.n ?? 0) + 1 }));
+                      }
+                    }}
+                    onDoubleClick={async () => {
+                      const name = await askText('Rename sheet', { initial: s.name });
+                      if (name?.trim()) updateSheet(s.id, { name: name.trim() }, 'Rename sheet');
+                    }}
+                    title="Double-click to rename"
+                  >
+                    <Icon name="sheet" size={16} />
+                    <span className="row-main">
+                      <span className="row-title sheet-name" title={s.title}>
+                        {s.name}
+                        {s.title && <span className="sheet-title"> {s.title}</span>}
+                      </span>
+                      <span className={`row-sub scale-${state}`}>
+                        {state === 'check' && <span className="check-dot" title="Read from the sheet; check it against a dimension" />}
+                        {s.metersPerPoint ? s.scaleLabel : 'No scale'}
+                        {state === 'check' && <span title="Read from the sheet; check it against a dimension"> · check</span>}
+                        {s.done ? <span className="done-tag" title="Marked done"> · done</span> : null}
+                        {hitsOn(s.id) ? <span className="found-tag"> · {hitsOn(s.id)!.length} found</span> : null}
+                        {s.repeat ? <span className="repeat-tag" title={`Takeoffs on this sheet count ${s.repeat} times`}> · ×{s.repeat}</span> : null}
+                      </span>
+                    </span>
+                    {count > 0 && (
+                      <span className="badge" title={`${count} takeoff${count === 1 ? '' : 's'} on this sheet`}>
+                        {count}
+                      </span>
+                    )}
+                  </button>
+                </li>
+              );
+            };
+
   const toolDisabled = (id: Tool) => !page || (id === 'cutout' && selectedType?.kind !== 'area');
   const toolTitle = (t: (typeof TOOLS)[number]) => `${t.help} (${t.key})${t.id === 'cutout' && selectedType?.kind !== 'area' ? ' — select an area first' : ''}`;
 
@@ -1699,6 +1824,11 @@ export function App() {
         <section className="source sheets">
           <div className="source-head">
             <h2>Sheets</h2>
+            {page && project.sheets.length > 0 && (
+              <button className="link-button number-sheets" onClick={() => startNumberPick('number')} title="Mark where the sheet number is in the title block, and every sheet is named from that spot">
+                Number sheets
+              </button>
+            )}
             <span className="count">
               {project.sheets.some((x) => x.done)
                 ? `${project.sheets.filter((x) => x.done).length} of ${project.sheets.length} done`
@@ -1712,53 +1842,41 @@ export function App() {
             </label>
           )}
           <ul className="source-list">
-            {filteredSheets.map((s) => {
-              const count = project.measurements.filter((m) => m.sheetId === s.id).length;
-              const state = !s.metersPerPoint ? 'unset' : s.scaleSource === 'detected' ? 'check' : 'set';
-              return (
-                <li key={s.id}>
-                  <button
-                    className={`source-row ${s.id === sheetId ? 'active' : ''}`}
-                    onClick={() => {
-                      setSheetId(s.id);
-                      setSelectedId(null);
-                      // Text found on the sheet: show it, the next one on each further click.
-                      const hits = hitsOn(s.id);
-                      if (hits) {
-                        hitTurn.current = s.id === sheetId ? hitTurn.current + 1 : 0;
-                        const t = hits[hitTurn.current % hits.length];
-                        // With the drawing around it.
-                        const r = Math.max(t.w, t.h) / 2 + 120;
-                        setFocus((f) => ({ box: [t.cx - r, t.cy - r, t.cx + r, t.cy + r], n: (f?.n ?? 0) + 1 }));
-                      }
-                    }}
-                    onDoubleClick={async () => {
-                      const name = await askText('Rename sheet', { initial: s.name });
-                      if (name?.trim()) updateSheet(s.id, { name: name.trim() }, 'Rename sheet');
-                    }}
-                    title="Double-click to rename"
-                  >
-                    <Icon name="sheet" size={16} />
-                    <span className="row-main">
-                      <span className="row-title sheet-name">{s.name}</span>
-                      <span className={`row-sub scale-${state}`}>
-                        {state === 'check' && <span className="check-dot" title="Read from the sheet; check it against a dimension" />}
-                        {s.metersPerPoint ? s.scaleLabel : 'No scale'}
-                        {state === 'check' && <span title="Read from the sheet; check it against a dimension"> · check</span>}
-                        {s.done ? <span className="done-tag" title="Marked done"> · done</span> : null}
-                        {hitsOn(s.id) ? <span className="found-tag"> · {hitsOn(s.id)!.length} found</span> : null}
-                        {s.repeat ? <span className="repeat-tag" title={`Takeoffs on this sheet count ${s.repeat} times`}> · ×{s.repeat}</span> : null}
-                      </span>
-                    </span>
-                    {count > 0 && (
-                      <span className="badge" title={`${count} takeoff${count === 1 ? '' : 's'} on this sheet`}>
-                        {count}
-                      </span>
-                    )}
-                  </button>
-                </li>
-              );
-            })}
+            {project.docs.length > 1
+              ? project.docs.map((d) => {
+                  const own = filteredSheets.filter((x) => x.docId === d.id);
+                  if (!own.length && query) return null;
+                  const all = project.sheets.filter((x) => x.docId === d.id);
+                  const done = all.filter((x) => x.done).length;
+                  const open = !collapsedDocs.has(d.id) || !!query;
+                  return (
+                    <Fragment key={d.id}>
+                      <li className="doc-group">
+                        <button
+                          className="doc-head"
+                          onClick={() => setCollapsedDocs((c) => (c.has(d.id) ? new Set([...c].filter((x) => x !== d.id)) : new Set(c).add(d.id)))}
+                          onDoubleClick={async () => {
+                            const name = await askText('Rename drawing file', { initial: d.name.replace(/\.pdf$/i, ''), hint: 'e.g. Architectural, Structural, Mechanical' });
+                            if (name?.trim()) commit((p) => ({ ...p, docs: p.docs.map((x) => (x.id === d.id ? { ...x, name: name.trim() } : x)) }), 'Rename drawing file');
+                          }}
+                          aria-expanded={open}
+                          title={`${d.name} · click to fold, double-click to rename`}
+                        >
+                          <span className={`doc-chevron ${open ? 'open' : ''}`}>
+                            <Icon name="chevron" size={12} />
+                          </span>
+                          <span className="doc-name">{d.name.replace(/\.pdf$/i, '')}</span>
+                          <span className="doc-count">{done ? `${done}/${all.length}` : all.length}</span>
+                        </button>
+                        <button className="icon-button small danger doc-remove" title={`Remove ${d.name} and its takeoffs`} aria-label={`Remove ${d.name}`} onClick={() => void removeDrawings(d.id)}>
+                          <Icon name="trash" size={13} />
+                        </button>
+                      </li>
+                      {open && own.map(renderSheet)}
+                    </Fragment>
+                  );
+                })
+              : filteredSheets.map(renderSheet)}
           </ul>
           {project.sheets.length === 0 && <p className="source-empty">Drawings you add appear here, one row per sheet.</p>}
           {query.length >= 2 && textHits?.q !== query && <p className="source-empty">Searching the drawings…</p>}
@@ -1849,7 +1967,7 @@ export function App() {
           onDelete={(id) => deleteMeasurements([id])}
           onCalibrate={(mpp, label) => sheet && updateSheet(sheet.id, { metersPerPoint: mpp, scaleLabel: label, scaleSource: 'calibrated' }, 'Calibrate')}
           onToolDone={() => setTool('select')}
-          onFindSymbols={(box) => void (legendPick ? readLegendBox(box) : countSymbols(box))}
+          onFindSymbols={(box) => void (numberPick ? readNumberBox(box) : legendPick ? readLegendBox(box) : countSymbols(box))}
           onTrace={(at, reach) => void traceAt(at, reach)}
           focus={focus}
           highlights={sheet ? hitsOn(sheet.id) : undefined}
@@ -1960,7 +2078,15 @@ export function App() {
           </div>
         )}
 
-        {page && <div className="hint-pill">{legendPick && tool === 'symbol' ? 'Drag a box around the legend: its symbols and their labels · Esc cancels' : toolHint(tool, activeType, sheet)}</div>}
+        {page && (
+          <div className="hint-pill">
+            {numberPick && tool === 'symbol'
+              ? `Drag a box around the sheet ${numberPick} in the title block; the same spot is read on every sheet · Esc cancels`
+              : legendPick && tool === 'symbol'
+                ? 'Drag a box around the legend: its symbols and their labels · Esc cancels'
+                : toolHint(tool, activeType, sheet)}
+          </div>
+        )}
         {busy && (
           <div className="busy">
             <span className="spinner small" /> {busy}
@@ -2118,10 +2244,7 @@ export function App() {
                 id: 'assemblies' as const,
                 icon: 'sparkle' as const,
                 title: sheet.aiAssemblies ? 'Assembly types (saved)' : 'Read assembly types',
-                text:
-                  isHosted || getApiKey()
-                    ? 'On a legend sheet: Claude reads every wall, floor, roof and ceiling type into takeoff types with their materials.'
-                    : 'On a legend sheet: Claude reads every wall, floor and ceiling type. Needs a Claude API key (More › AI settings).',
+                text: 'On an assembly schedule sheet: every wall, floor, roof and ceiling type becomes a takeoff type with its materials.',
                 ready: !!page,
               },
               {
@@ -2240,6 +2363,7 @@ export function App() {
               { label: 'Quick start', onSelect: () => setAiDialog('help') },
               { label: 'Keyboard shortcuts', onSelect: () => setAiDialog('shortcuts') },
               ...(page && sheet ? [{ label: 'Save sheet as image…', hint: 'With takeoffs', onSelect: () => void saveSheetImage() }] : []),
+              ...(page && project.sheets.length ? [{ label: 'Number sheets from the title block…', hint: 'Mark it once', onSelect: () => startNumberPick('number') }] : []),
               ...(sheet
                 ? [
                     {
@@ -2313,7 +2437,8 @@ export function App() {
           types={project.types}
           earlier={project.measurements.filter((m) => m.sheetId === sheet.id && m.source === 'walls').length}
           palette={PALETTE}
-          legend={project.sheets.flatMap((s) => s.aiAssemblies?.assemblies ?? [])}
+          // This drawing file's schedules first: another building's WE1 may be a different wall.
+          legend={[...project.sheets.filter((s) => s.docId === sheet.docId), ...project.sheets.filter((s) => s.docId !== sheet.docId)].flatMap((s) => s.aiAssemblies?.assemblies ?? [])}
           maxOpening={maxOpening}
           onApply={({ types, measurements, replaceEarlier, stopsAtDoors }) =>
             commit(
@@ -2464,6 +2589,32 @@ export function App() {
             </div>
           </div>
         </div>
+      )}
+      {sheetNumbers && (
+        <SheetNumbersDialog
+          rows={sheetNumbers.rows}
+          hasTitle={sheetNumbers.hasTitle}
+          onClose={() => setSheetNumbers(null)}
+          onPickTitle={() => {
+            setSheetNumbers(null);
+            startNumberPick('title');
+          }}
+          onApply={(rows) => {
+            setSheetNumbers(null);
+            const byId = new Map(rows.map((r) => [r.sheetId, r]));
+            commit(
+              (p) => ({
+                ...p,
+                sheets: p.sheets.map((s) => {
+                  const r = byId.get(s.id);
+                  return r ? { ...s, name: r.number.trim(), ...(r.title?.trim() ? { title: r.title.trim() } : {}) } : s;
+                }),
+              }),
+              'Number sheets',
+            );
+            setToast({ text: `Renamed ${rows.length} sheet${rows.length === 1 ? '' : 's'}`, undo: true });
+          }}
+        />
       )}
       {folderSetup && (
         <div className="modal-backdrop">

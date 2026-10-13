@@ -29,6 +29,8 @@ export interface Sheet {
   /** 1-based page number within the document. */
   page: number;
   name: string;
+  /** The drawing's title from its title block ("Ground Floor Plan"), when read. */
+  title?: string;
   width: number;
   height: number;
   /** Real-world metres represented by one PDF point; null until the scale is set. */
@@ -82,6 +84,11 @@ export interface TakeoffType {
   assemblyTitle?: string;
   /** Assembly build-up, e.g. the layers from the legend. */
   description?: string;
+  /**
+   * The drawing file its assembly was read from. Two buildings in one project can use one
+   * code for different walls (WE1 on the garage set and on the office set).
+   */
+  fromDoc?: string;
 }
 
 /** Estimate divisions, named as on the estimator's bid workbook tabs. */
@@ -271,6 +278,11 @@ export function finishType(role: FinishRole, code: string, units: Units, color: 
   }
 }
 
+/**
+ * A new, empty project. It starts with no takeoff types: you add your own, copy them from
+ * another project or the trade library, or set a starting set under More (`defaultTypes`
+ * is only for the sample plan and tests).
+ */
 export function newProject(units: Units = 'metric'): Project {
   return {
     version: 1,
@@ -279,7 +291,7 @@ export function newProject(units: Units = 'metric'): Project {
     units,
     docs: [],
     sheets: [],
-    types: defaultTypes(units),
+    types: [],
     measurements: [],
   };
 }

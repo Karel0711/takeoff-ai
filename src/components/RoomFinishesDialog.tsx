@@ -1,5 +1,8 @@
 import { useMemo, useRef, useState } from 'react';
-import { readFinishSchedule, roomNumbersOf, type ScheduleRow } from '../finishSchedule';
+import { codesInside, readFinishSchedule, readFinishTags, roomNumbersOf, sameCode, type ScheduleRow } from '../finishSchedule';
+import { findRoomLabels } from '../fill/rooms';
+import { segmentsOnce } from '../fill/sheetWalls';
+import { pointInRing } from '../fill/similar';
 import { FINISH_ROLES, finishType, type FinishRole, type Measurement, type Project, type Sheet, type TakeoffType } from '../model';
 import { pageTexts } from '../pageText';
 import type { PDFPageProxy } from '../pdf';
@@ -74,9 +77,11 @@ export function RoomFinishesDialog({ project, palette, getPage, onApply, onFindR
     });
 
   /** A type for this finish code: one already named with it, or a new one. */
-  function typeFor(role: FinishRole, code: string, pool: TakeoffType[], fresh: TakeoffType[]): string {
+  /** `docId`: the drawings the room is on, whose own type of that code is preferred (two buildings' FA1). */
+  function typeFor(role: FinishRole, code: string, pool: TakeoffType[], fresh: TakeoffType[], docId?: string): string {
     const kind = FINISH_ROLES.find((r) => r.role === role)!.kind;
-    const hit = [...pool, ...fresh].find((t) => t.kind === kind && codeOf(t.name) === code.toUpperCase());
+    const all = [...pool, ...fresh].filter((t) => t.kind === kind && sameCode(codeOf(t.name), code));
+    const hit = all.find((t) => docId && t.fromDoc === docId) ?? all.find((t) => !t.fromDoc) ?? all[0];
     if (hit) return hit.id;
     const t = finishType(role, code, project.units, palette[(pool.length + fresh.length) % palette.length]);
     fresh.push(t);
@@ -114,7 +119,7 @@ export function RoomFinishesDialog({ project, palette, getPage, onApply, onFindR
       setReading(null);
     }
     if (!best) {
-      setReadNote('No room finish schedule found on these drawings. Pick the finishes by hand, or select rooms and set them together.');
+      await readTags();
       return;
     }
     // Applied to the latest picks and types: the dialog stays usable while the sheets are read.
@@ -143,6 +148,93 @@ export function RoomFinishesDialog({ project, palette, getPage, onApply, onFindR
       `Read the schedule on ${best.sheet.name}: ${best.rows.length} room${best.rows.length === 1 ? '' : 's'}, ${best.matched} matched to your room takeoffs` +
         (fresh.length ? `, ${fresh.length} new finish type${fresh.length === 1 ? '' : 's'}.` : '.'),
     );
+  }
+
+  /**
+   * No finish schedule: finishes tagged on the drawings instead. Floors from a finish plan
+   * (the code boxed under each room's number), ceilings from a ceiling plan drawn over the
+   * same outline as the room's plan (the ceiling type tagged inside each room).
+   */
+  async function readTags() {
+    const ceilingCodes = new Set(
+      project.sheets.flatMap((x) => x.aiAssemblies?.assemblies ?? []).filter((a) => a.category === 'ceiling').map((a) => a.code.toUpperCase()),
+    );
+    for (const t of project.types) if (t.kind === 'area' && /CEILING/i.test(`${t.name} ${t.assemblyTitle ?? ''}`)) ceilingCodes.add(codeOf(t.name));
+    // Per drawing file: two buildings in one project can both have a room 100.
+    const floors = new Map<string, { sheet: Sheet; rows: ScheduleRow[]; matched: number }>();
+    const ceilings = new Map<string, { sheet: Sheet; codes: Map<string, string> }>();
+    const docRooms = (docId: string) => rooms.filter((m) => sheets.get(m.sheetId)?.docId === docId);
+    const numbersIn = (docId: string) => {
+      const out = new Map<string, string[]>();
+      for (const m of docRooms(docId)) for (const n of roomNumbersOf(m.label)) out.set(n, [...(out.get(n) ?? []), m.id]);
+      return out;
+    };
+    try {
+      for (const [i, sheet] of project.sheets.entries()) {
+        setReading(`Reading finish tags… sheet ${i + 1} of ${project.sheets.length}`);
+        const own = numbersIn(sheet.docId);
+        if (!own.size) continue;
+        const page = await getPage(sheet);
+        if (!page) continue;
+        const texts = await pageTexts(page);
+        // Floors: room tags with a finish code under them.
+        if (texts.filter((t) => own.has(t.str.trim())).length >= Math.min(2, own.size)) {
+          const rows = readFinishTags(texts, findRoomLabels(texts, await segmentsOnce(page)));
+          const matched = rows.filter((r) => own.has(r.number)).length;
+          const best = floors.get(sheet.docId);
+          if (matched >= 1 && (!best || matched > best.matched)) floors.set(sheet.docId, { sheet, rows, matched });
+        }
+        // Ceilings: one ceiling code inside a room, on another sheet of its plan's size.
+        if (!ceilingCodes.size) continue;
+        const codes = new Map<string, string>();
+        for (const m of docRooms(sheet.docId)) {
+          const plan = sheets.get(m.sheetId);
+          if (!plan || plan.id === sheet.id || Math.abs(plan.width - sheet.width) > 1 || Math.abs(plan.height - sheet.height) > 1) continue;
+          const found = codesInside(texts, (x, y) => pointInRing([x, y], m.points), (c) => ceilingCodes.has(c.toUpperCase()));
+          if (found.length === 1) codes.set(m.id, found[0]);
+        }
+        const best = ceilings.get(sheet.docId);
+        if (codes.size >= 1 && (!best || codes.size > best.codes.size)) ceilings.set(sheet.docId, { sheet, codes });
+      }
+    } finally {
+      setReading(null);
+    }
+    if (!floors.size && !ceilings.size) {
+      setReadNote('No room finish schedule or finish tags found on these drawings. Pick the finishes by hand, or select rooms and set them together.');
+      return;
+    }
+    const fresh: TakeoffType[] = [];
+    const pool = [...project.types, ...addedRef.current];
+    const roomType = new Map(rooms.map((m) => [m.id, m.typeId]));
+    const picks = new Map<string, Finishes>();
+    for (const [docId, f] of floors) {
+      const own = numbersIn(docId);
+      for (const row of f.rows) {
+        for (const id of own.get(row.number) ?? []) {
+          const t = typeFor('floor', row.finishes.floor!, pool, fresh, docId);
+          if (t !== roomType.get(id)) picks.set(id, { ...picks.get(id), floor: t });
+        }
+      }
+    }
+    for (const [docId, c] of ceilings) {
+      for (const [id, code] of c.codes) {
+        const t = typeFor('ceiling', code, pool, fresh, docId);
+        if (t !== roomType.get(id)) picks.set(id, { ...picks.get(id), ceiling: t });
+      }
+    }
+    addedRef.current = [...addedRef.current, ...fresh];
+    setAdded(addedRef.current);
+    setDraft((d) => {
+      const next = new Map(d);
+      for (const [id, f] of picks) next.set(id, { ...next.get(id), ...f });
+      return next;
+    });
+    const n = (k: number) => `${k} room${k === 1 ? '' : 's'}`;
+    const parts = [
+      ...(floors.size ? [`floors tagged on ${[...floors.values()].map((f) => `${f.sheet.name} (${n(f.matched)})`).join(', ')}`] : []),
+      ...(ceilings.size ? [`ceilings tagged on ${[...ceilings.values()].map((c) => `${c.sheet.name} (${n(c.codes.size)})`).join(', ')}`] : []),
+    ];
+    setReadNote(`No finish schedule; read the ${parts.join('; ')}${fresh.length ? `; ${fresh.length} new finish type${fresh.length === 1 ? '' : 's'}` : ''}. Check the rooms left blank.`);
   }
 
   const changed = rooms.filter((m) => JSON.stringify(m.finishes ?? {}) !== JSON.stringify(draft.get(m.id) ?? {})).length;
@@ -199,7 +291,7 @@ export function RoomFinishesDialog({ project, palette, getPage, onApply, onFindR
           <>
             <div className="row-actions">
               <button onClick={() => void readSchedule()} disabled={!!reading || !project.sheets.length}>
-                Read finish schedule
+                Read finishes from the drawings
               </button>
               {reading && (
                 <span className="muted inline">

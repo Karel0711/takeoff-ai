@@ -10,6 +10,9 @@ import type { PDFPageProxy } from '../pdf';
 import { ScorePanel } from './ScorePanel';
 import { scoringOn } from '../scoring';
 import { lengthUnit } from '../units';
+import { readAssemblyTable } from '../legendTable';
+import { pageTexts } from '../pageText';
+import { segmentsOf } from '../fill/sheetWalls';
 
 interface Props {
   page: PDFPageProxy;
@@ -49,7 +52,7 @@ export function AiAssembliesDialog({ page, sheet, units, existingTypes, onApply,
   const [state, setState] = useState<State>(saved ? { phase: 'done', ...saved } : { phase: 'idle' });
   // Selection is by position: one tag can have several entries (R1 option 1 and option 2).
   const [selected, setSelected] = useState<Set<number>>(() => new Set(saved?.assemblies.map((_, i) => i) ?? []));
-  const [height, setHeight] = useState(units === 'metric' ? 3 : 10);
+  const [height, setHeight] = useState(0);
   const [, tick] = useState(0);
   const abort = useRef<AbortController | null>(null);
   const [route, setRoute] = useState<AiRoute | null>(null);
@@ -85,14 +88,17 @@ export function AiAssembliesDialog({ page, sheet, units, existingTypes, onApply,
   const existingByCode = new Map(existingTypes.map((t) => [codeOf(t.name), t]));
   const kindOf = (a: ExtractedAssembly) =>
     a.category === 'interior_wall' || a.category === 'exterior_wall' ? 'linear' : 'area';
-  /** An existing type of the same code and kind is updated in place, keeping its measurements and colour. */
+  /**
+   * An existing type of the same code and kind is updated in place, keeping its measurements
+   * and colour: unless it was read from another drawing file (another building's WE1).
+   */
   const replaces = (a: ExtractedAssembly, all: ExtractedAssembly[]) => {
     // A repeated tag is matched by its full name, so each option updates its own type.
     const t =
       all.filter((x) => x.code === a.code).length > 1
         ? existingTypes.find((x) => x.name === `${a.code} – ${a.title}`.replace(/\s+/g, ' ').trim())
-        : existingByCode.get(a.code);
-    return t && t.kind === kindOf(a) ? t : undefined;
+        : (existingTypes.find((x) => codeOf(x.name) === a.code && x.fromDoc === sheet.docId) ?? existingByCode.get(a.code));
+    return t && t.kind === kindOf(a) && (!t.fromDoc || t.fromDoc === sheet.docId) ? t : undefined;
   };
 
   useEffect(() => {
@@ -102,6 +108,41 @@ export function AiAssembliesDialog({ page, sheet, units, existingTypes, onApply,
   }, [state.phase]);
 
   useEffect(() => () => abort.current?.abort(), []);
+
+  /** Reads the schedule from the drawing's own text: no AI, nothing leaves the computer. */
+  async function runLocal() {
+    const started = Date.now();
+    setState({ phase: 'running', step: 'Reading the assembly schedule on this sheet…', started });
+    try {
+      const [texts, segs] = await Promise.all([pageTexts(page), segmentsOf(page)]);
+      const { assemblies } = readAssemblyTable(texts, segs);
+      if (!assemblies.length) {
+        setState({
+          phase: 'error',
+          message:
+            'No assembly schedule found on this sheet. This reads tables with a TYPE column and a DESCRIPTION or CONSTRUCTION column. If the sheet has one, its text may be drawn as outlines (try selecting text in the PDF): then use Read with Claude.',
+        });
+        return;
+      }
+      // Tags printed on the sheet: the usual prefixes, and this schedule's own codes wherever
+      // they appear ("WP2b" can be printed only in its title, "... TYPE 2 (WP2b)").
+      const words = new Set(texts.flatMap((t) => t.str.split(/[\s()[\],:;]+/)));
+      const printed = [...new Set([...findAssemblyCodes(texts.map((t) => t.str)), ...assemblies.map((a) => a.code).filter((c) => words.has(c))])];
+      setSelected(new Set(assemblies.map((_, i) => i)));
+      if (answerKey) scoreWith(answerKey, assemblies);
+      const result: SavedLegendRead = {
+        assemblies,
+        printed,
+        answeredBy: 'the drawing’s text (no AI)',
+        readAt: new Date().toISOString(),
+        seconds: Math.round((Date.now() - started) / 1000),
+      };
+      onSaveResult(result);
+      setState({ phase: 'done', ...result });
+    } catch (e) {
+      setState({ phase: 'error', message: e instanceof Error ? e.message : String(e) });
+    }
+  }
 
   async function run() {
     const started = Date.now();
@@ -136,7 +177,7 @@ export function AiAssembliesDialog({ page, sheet, units, existingTypes, onApply,
     const chosen = state.assemblies.filter((_, i) => selected.has(i));
     onApply(
       chosen.map((a, i) => {
-        const built = buildTakeoffType(a, units, existingTypes.length + i, height);
+        const built = { ...buildTakeoffType(a, units, existingTypes.length + i, height), fromDoc: sheet.docId };
         const old = replaces(a, state.assemblies);
         return old
           ? { ...built, id: old.id, color: old.color, division: old.division ?? built.division, package: old.package }
@@ -158,7 +199,7 @@ export function AiAssembliesDialog({ page, sheet, units, existingTypes, onApply,
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal wide" onClick={(e) => e.stopPropagation()}>
         <div className="panel-head">
-          <h3>AI: read assembly types from {sheet.name}</h3>
+          <h3>Read assembly types from {sheet.name}</h3>
           <button
             onClick={() => {
               abort.current?.abort();
@@ -172,21 +213,22 @@ export function AiAssembliesDialog({ page, sheet, units, existingTypes, onApply,
         {state.phase === 'idle' && (
           <>
             <p>
-              Claude reads the wall, floor, roof and ceiling types on this sheet and turns each one into a takeoff type
-              with its layers as assembly items. You review everything before it is added.
-            </p>
-            <p className="muted">
-              {route === 'account'
-                ? 'This uses your own Claude account; the first time, Claude asks you to allow this page. It usually takes one to three minutes.'
-                : route === 'api-key'
-                  ? "The sheet's images and text are sent to Anthropic's API using your key. It usually takes one to three minutes."
-                  : 'AI features need an Anthropic API key when the app runs on your own computer. Add one in AI settings.'}
+              Reads the wall, floor, roof and ceiling types in this sheet’s assembly schedule (a TYPE column and a DESCRIPTION or
+              CONSTRUCTION column) and turns each one into a takeoff type with its layers as materials. You review everything before it
+              is added. It reads the drawing’s own text, on this computer, in a second or two.
             </p>
             <div className="row-actions">
-              <button className="on" disabled={route === null || route === 'none'} onClick={() => void run()}>
+              <button className="on" onClick={() => void runLocal()}>
                 Read assembly types
               </button>
-              {route !== 'account' && <button onClick={onOpenSettings}>AI settings</button>}
+              <button
+                disabled={route === null || route === 'none'}
+                onClick={() => void run()}
+                title={route === 'none' ? 'Needs a Claude API key (AI settings)' : 'For schedules drawn as pictures or in an unusual layout'}
+              >
+                Read with Claude instead
+              </button>
+              {route === 'none' && <button onClick={onOpenSettings}>AI settings</button>}
             </div>
           </>
         )}
@@ -212,8 +254,11 @@ export function AiAssembliesDialog({ page, sheet, units, existingTypes, onApply,
           <>
             <p className="err-box">{state.message}</p>
             <div className="row-actions">
-              <button onClick={() => void run()}>Try again</button>
-              {route !== 'account' && <button onClick={onOpenSettings}>AI settings</button>}
+              <button onClick={() => void runLocal()}>Read again</button>
+              <button disabled={route === null || route === 'none'} onClick={() => void run()}>
+                Read with Claude instead
+              </button>
+              {route === 'none' && <button onClick={onOpenSettings}>AI settings</button>}
             </div>
           </>
         )}
@@ -271,9 +316,14 @@ export function AiAssembliesDialog({ page, sheet, units, existingTypes, onApply,
                 {score ? 'Score against another workbook…' : 'Score against bid workbook…'}
               </button>
             )}
-            <button onClick={() => void run()} title="Ask Claude to read this sheet again">
+            <button onClick={() => void runLocal()} title="Read the schedule on this sheet again">
               Read again
             </button>
+            {route !== null && route !== 'none' && (
+              <button onClick={() => void run()} title="Ask Claude to read this sheet instead">
+                Read with Claude
+              </button>
+            )}
             <button
               onClick={() =>
                 void saveFile(
@@ -284,7 +334,7 @@ export function AiAssembliesDialog({ page, sheet, units, existingTypes, onApply,
                 )
               }
             >
-              Download AI result
+              Download result
             </button>
           </div>
           {scoreError && <p className="err-box">{scoreError}</p>}
@@ -303,7 +353,13 @@ export function AiAssembliesDialog({ page, sheet, units, existingTypes, onApply,
                   {replaces(a, state.assemblies) ? (
                     <span className="tag warn-tag">replaces existing {a.code}</span>
                   ) : (
-                    existingByCode.has(a.code) && <span className="tag warn-tag">{a.code} exists; added as new type</span>
+                    existingByCode.has(a.code) && (
+                      <span className="tag warn-tag">
+                        {existingTypes.some((t) => codeOf(t.name) === a.code && t.fromDoc && t.fromDoc !== sheet.docId)
+                          ? `${a.code} from other drawings exists; added as its own type`
+                          : `${a.code} exists; added as new type`}
+                      </span>
+                    )
                   )}
                 </div>
                 <ol className="layers">
@@ -327,7 +383,8 @@ export function AiAssembliesDialog({ page, sheet, units, existingTypes, onApply,
               type="number"
               min={0}
               step={0.1}
-              value={height}
+              value={height || ''}
+              placeholder="optional"
               onChange={(e) => setHeight(Math.max(0, Number(e.target.value) || 0))}
             />
           </label>
