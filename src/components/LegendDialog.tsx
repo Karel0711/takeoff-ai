@@ -11,7 +11,9 @@ export interface LegendChoice {
 interface Props {
   sheetName: string;
   rows: LegendRow[];
-  onAdd: (choices: LegendChoice[]) => void;
+  /** Whether the project has other sheets to count the symbols on. */
+  multiSheet: boolean;
+  onAdd: (choices: LegendChoice[], everywhere: boolean) => void;
   onClose: () => void;
 }
 
@@ -19,7 +21,8 @@ interface Props {
 export const legendCount = (r: LegendRow) => (r.found?.length ? r.found.length : (r.tagged?.length ?? 0));
 
 /** The rows read from a boxed legend, to turn into takeoff types (symbols counted). */
-export function LegendDialog({ sheetName, rows, onAdd, onClose }: Props) {
+export function LegendDialog({ sheetName, rows, multiSheet, onAdd, onClose }: Props) {
+  const [everywhere, setEverywhere] = useState(false);
   const [draft, setDraft] = useState(() => rows.map((r) => ({ on: !!(r.graphic || r.tag), label: r.label.replace(/:$/, ''), kind: (r.kind ?? 'count') as Kind })));
   useEffect(() => {
     const key = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
@@ -81,10 +84,15 @@ export function LegendDialog({ sheetName, rows, onAdd, onClose }: Props) {
           </tbody>
         </table>
         <div className="row-actions sticky library-actions">
+          {multiSheet && rows.some((r) => r.sample) && (
+            <label className="inline check-row legend-everywhere">
+              <input type="checkbox" checked={everywhere} onChange={(e) => setEverywhere(e.target.checked)} /> Also count the symbols on every other sheet
+            </label>
+          )}
           <button
             className="primary"
             disabled={!picked.length}
-            onClick={() => onAdd(draft.flatMap((d, i) => (d.on && d.label.trim() ? [{ label: d.label.trim(), kind: d.kind, row: rows[i] }] : [])))}
+            onClick={() => onAdd(draft.flatMap((d, i) => (d.on && d.label.trim() ? [{ label: d.label.trim(), kind: d.kind, row: rows[i] }] : [])), everywhere)}
           >
             {picked.length ? `Add ${picked.length} type${picked.length === 1 ? '' : 's'}` : 'Add types'}
           </button>

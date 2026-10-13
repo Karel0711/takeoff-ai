@@ -819,7 +819,7 @@ export function App() {
       setToast({
         text: `Counted ${added.length} ${activeType.name.split(' – ')[0]}${found.length > added.length ? ` (${found.length - added.length} already counted)` : ''}`,
         undo: true,
-        action: project!.sheets.length > 1 ? { label: 'Count on all sheets', run: () => void countEverywhere(sample, typeId, sheet.id) } : undefined,
+        action: project!.sheets.length > 1 ? { label: 'Count on all sheets', run: () => void countEverywhere([{ sample, typeId }], sheet.id) } : undefined,
       });
     } catch (e) {
       setToast({ text: `Something went wrong: ${e instanceof Error ? e.message : String(e)}`, undo: false });
@@ -853,7 +853,7 @@ export function App() {
   }
 
   /** Adds the legend lines chosen as types, with the symbols found counted. */
-  function addLegendTypes(sheetId: string, choices: LegendChoice[]) {
+  function addLegendTypes(sheetId: string, choices: LegendChoice[], everywhere = false) {
     const p = projectRef.current!;
     const h = p.units === 'metric' ? 3 : 10;
     const area = p.units === 'metric' ? 'm²' : 'SF';
@@ -879,6 +879,9 @@ export function App() {
     commit((q) => ({ ...q, types: [...q.types, ...types], measurements: [...q.measurements, ...added] }), 'Legend');
     setActiveTypeId(types[0].id);
     setToast({ text: `Added ${types.length} type${types.length === 1 ? '' : 's'} from the legend${added.length ? `, ${added.length} counted` : ''}`, undo: true });
+    // Then the legend's symbols on the rest of the set, as their own change.
+    const symbols = choices.flatMap((c, n) => (c.kind === 'count' && c.row.sample ? [{ sample: c.row.sample, typeId: types[n].id }] : []));
+    if (everywhere && symbols.length) void countEverywhere(symbols, sheetId, `Added ${types.length} type${types.length === 1 ? '' : 's'}. `);
   }
 
   /**
@@ -1119,10 +1122,11 @@ export function App() {
   }
 
   /** Counts a sampled symbol on every other sheet, as one change. */
-  async function countEverywhere(sample: SymbolSample, typeId: string, fromSheet: string) {
+  async function countEverywhere(symbols: { sample: SymbolSample; typeId: string }[], fromSheet: string, lead = '') {
     const p = projectRef.current!;
-    const type = p.types.find((t) => t.id === typeId);
-    if (!type) return;
+    const items = symbols.filter((s) => p.types.some((t) => t.id === s.typeId));
+    if (!items.length) return;
+    const type = p.types.find((t) => t.id === items[0].typeId)!;
     const added: Project['measurements'] = [];
     const perSheet: string[] = [];
     try {
@@ -1138,13 +1142,16 @@ export function App() {
         if (!pg) continue;
         const segs = await segmentsOnce(pg);
         if (source && !(await sameScale(other, source, pg, segs))) continue;
-        const counted = p.measurements.filter((m) => m.sheetId === other.id && m.typeId === typeId).map((m) => m.points[0]);
-        const fresh = matchSymbol(sample, segs).filter(
-          (f) => !counted.some((q) => Math.hypot(q[0] - f.at[0], q[1] - f.at[1]) < sample.span / 2),
-        );
-        if (!fresh.length) continue;
-        perSheet.push(`${other.name} ${fresh.length}`);
-        for (const f of fresh) added.push({ id: newId(), sheetId: other.id, typeId, points: [f.at], holes: [] });
+        let here = 0;
+        for (const { sample, typeId } of items) {
+          const counted = p.measurements.filter((m) => m.sheetId === other.id && m.typeId === typeId).map((m) => m.points[0]);
+          const fresh = matchSymbol(sample, segs).filter(
+            (f) => !counted.some((q) => Math.hypot(q[0] - f.at[0], q[1] - f.at[1]) < sample.span / 2),
+          );
+          here += fresh.length;
+          for (const f of fresh) added.push({ id: newId(), sheetId: other.id, typeId, points: [f.at], holes: [] });
+        }
+        if (here) perSheet.push(`${other.name} ${here}`);
       }
     } catch (e) {
       setToast({ text: `Something went wrong: ${e instanceof Error ? e.message : String(e)}`, undo: false });
@@ -1153,11 +1160,12 @@ export function App() {
       setBusy(null);
     }
     if (!added.length) {
-      setToast({ text: 'No copies of this symbol on the other sheets.', undo: false });
+      setToast({ text: `${lead}No copies of ${items.length > 1 ? 'these symbols' : 'this symbol'} on the other sheets.`, undo: false });
       return;
     }
     commit((q) => ({ ...q, measurements: [...q.measurements, ...added] }), 'Count symbols');
-    setToast({ text: `Counted ${added.length} more ${type.name.split(' – ')[0]}: ${perSheet.slice(0, 4).join(', ')}${perSheet.length > 4 ? '…' : ''}`, undo: true });
+    const what = items.length > 1 ? 'symbols' : type.name.split(' – ')[0];
+    setToast({ text: `${lead}Counted ${added.length} more ${what}: ${perSheet.slice(0, 4).join(', ')}${perSheet.length > 4 ? '…' : ''}`, undo: true });
   }
 
   /** Adds every area on the sheet hatched like the given one, as the same type. */
@@ -1963,10 +1971,11 @@ export function App() {
             setAiDialog(null);
             setLegend(null);
           }}
-          onAdd={(choices) => {
+          multiSheet={project.sheets.length > 1}
+          onAdd={(choices, everywhere) => {
             setAiDialog(null);
             setLegend(null);
-            addLegendTypes(legend.sheetId, choices);
+            addLegendTypes(legend.sheetId, choices, everywhere);
           }}
         />
       )}
