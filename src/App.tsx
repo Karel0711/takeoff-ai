@@ -375,6 +375,16 @@ export function App() {
         redo();
         return;
       }
+      // Find: the sheet search, which also searches the drawings' text.
+      if (mod && e.key.toLowerCase() === 'f') {
+        const box = document.getElementById('sheet-filter') as HTMLInputElement | null;
+        if (box) {
+          e.preventDefault();
+          box.focus();
+          box.select();
+        }
+        return;
+      }
       if (mod || e.altKey) return;
       if (e.key === '[' || e.key === ']') {
         // Previous / next sheet.
@@ -1352,7 +1362,7 @@ export function App() {
             <h2>Sheets</h2>
             <span className="count">{project.sheets.length || ''}</span>
           </div>
-          {project.sheets.length > 8 && (
+          {project.sheets.length > 1 && (
             <label className="search">
               <Icon name="search" size={14} />
               <input id="sheet-filter" placeholder="Search sheets and text" value={sheetFilter} onChange={(e) => setSheetFilter(e.target.value)} />

@@ -15,6 +15,7 @@ const SHORTCUTS: [string, string][] = [
   ['Esc', 'Cancel, or deselect'],
   ['⌘Z', 'Undo'],
   ['⇧⌘Z', 'Redo'],
+  ['⌘F', 'Search sheets and drawing text'],
   ['F', 'Fit the sheet in the window'],
   ['[ and ]', 'Previous and next sheet'],
   ['Scroll', 'Zoom'],
