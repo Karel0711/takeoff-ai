@@ -42,6 +42,21 @@ function iCloudDrive() {
 }
 
 let root = null;
+// Quitting (⌘Q) rather than closing one window: after the last writes, quit for real.
+let quitting = false;
+app.on('before-quit', () => {
+  quitting = true;
+});
+
+/** Where projects go unless you pick somewhere else: iCloud Drive › Takeoff AI, else Documents › Takeoff AI. */
+const defaultFolder = () => path.join(iCloudDrive() ?? app.getPath('documents'), FOLDER_NAME);
+
+async function useFolder(chosen) {
+  await fs.mkdir(chosen, { recursive: true });
+  root = chosen;
+  await writeSettings({ ...(await readSettings()), projectsFolder: chosen });
+  return chosen;
+}
 
 function requireRoot() {
   if (!root) throw new Error('No projects folder chosen');
@@ -60,12 +75,17 @@ function registerIpc() {
     });
     if (result.canceled || !result.filePaths[0]) return null;
     const picked = result.filePaths[0];
-    const chosen = path.basename(picked) === FOLDER_NAME ? picked : path.join(picked, FOLDER_NAME);
-    await fs.mkdir(chosen, { recursive: true });
-    root = chosen;
-    await writeSettings({ ...(await readSettings()), projectsFolder: chosen });
-    return chosen;
+    return useFolder(path.basename(picked) === FOLDER_NAME ? picked : path.join(picked, FOLDER_NAME));
   });
+  ipcMain.handle('folder:default', () => ({ path: defaultFolder(), iCloud: !!iCloudDrive() }));
+  ipcMain.handle('folder:useDefault', () => useFolder(defaultFolder()));
+  /** The folder chosen before but missing now (iCloud signed out, drive unplugged), to say so. */
+  ipcMain.handle('folder:missing', async () => {
+    const saved = (await readSettings()).projectsFolder;
+    return saved && !root ? saved : null;
+  });
+  ipcMain.handle('folder:rename', (_e, from, to) => folder.rename(requireRoot(), from, to));
+  ipcMain.handle('folder:revealProject', (_e, dir) => shell.openPath(folder.inside(requireRoot(), dir)));
   ipcMain.handle('folder:list', () => folder.list(requireRoot()));
   ipcMain.handle('folder:dirFor', (_e, name, id) => folder.dirFor(name, id));
   ipcMain.handle('folder:read', (_e, dir) => folder.readProject(requireRoot(), dir));
@@ -117,6 +137,25 @@ function createWindow() {
       event.preventDefault();
       if (/^https?:/.test(url)) void shell.openExternal(url);
     }
+  });
+  // Closing waits for the page to finish writing the last changes to the projects folder
+  // (at most a few seconds, so a stuck write never keeps the window open).
+  let flushed = false;
+  win.on('close', (event) => {
+    if (flushed) return;
+    event.preventDefault();
+    const done = () => {
+      flushed = true;
+      ipcMain.removeListener('app:flushed', onFlushed);
+      if (quitting) app.quit();
+      else if (!win.isDestroyed()) win.close();
+    };
+    const onFlushed = (e) => {
+      if (e.sender === win.webContents) done();
+    };
+    ipcMain.on('app:flushed', onFlushed);
+    win.webContents.send('app:flush');
+    setTimeout(done, 8000);
   });
   void win.loadURL('app://takeoff/index.html');
   return win;

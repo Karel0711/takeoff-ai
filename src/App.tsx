@@ -136,6 +136,10 @@ export function App() {
   /** Desktop app: the shared projects folder (iCloud Drive), and its sync. */
   const [syncFolder, setSyncFolder] = useState<string | null>(null);
   const folderSync = useRef<FolderSync | null>(null);
+  /** Desktop app with no projects folder yet (or one that went missing): the setup screen. */
+  const [folderSetup, setFolderSetup] = useState<{ suggested: string; iCloud: boolean; missing: string | null } | null>(null);
+  /** Saves the open project and writes every waiting change to the projects folder. */
+  const flushAllRef = useRef<() => Promise<void>>(async () => undefined);
   /** From now on, keeps projects in `folder` too: each save is sent there, each delete trashed there. */
   function startFolderSync(folder: string) {
     const sync = new FolderSync(desktopApi!, { listProjects, loadProjectById, saveProject, loadActivity, saveActivity, loadPdf, savePdf, getSyncMark, setSyncMark });
@@ -191,23 +195,13 @@ export function App() {
       const saved = (await loadCurrentProject()) ?? newProject('metric');
       await openProjectState(saved.id ? saved : { ...saved, id: newId() });
       setPersisted(await persistStorage());
-      // Desktop app, first launch: offer the shared folder once.
+      // Desktop app: projects live in a folder on disk, so one has to be chosen first.
       if (desktopApi && !folder) {
-        let asked = false;
-        try {
-          asked = localStorage.getItem('takeoff-ai.folderAsked') === '1';
-          localStorage.setItem('takeoff-ai.folderAsked', '1');
-        } catch {
-          // Storage blocked: ask again next time.
-        }
-        if (!asked)
-          setToast({
-            text: 'Keep your projects in iCloud Drive to open them on your other computer too',
-            undo: false,
-            sticky: true,
-            action: { label: 'Choose folder', run: () => void chooseProjectsFolderRef.current() },
-          });
+        const [suggested, missing] = await Promise.all([desktopApi.getDefaultFolder(), desktopApi.getMissingFolder()]);
+        setFolderSetup({ suggested: suggested.path, iCloud: suggested.iCloud, missing });
       }
+      // The window waits for the last changes to reach the projects folder before closing.
+      desktopApi?.onFlush(() => flushAllRef.current());
     })();
     registerServiceWorker((apply) =>
       setToast({ text: 'A new version of Takeoff AI is ready', undo: false, sticky: true, action: { label: 'Restart', run: apply } }),
@@ -521,10 +515,11 @@ export function App() {
   }, [syncFolder, openProjectState]);
 
   /** Desktop app: picks the shared projects folder, then sends this computer's projects there and brings in the other's. */
-  async function chooseProjectsFolder() {
+  async function chooseProjectsFolder(useDefault = false) {
     if (!desktopApi) return;
-    const folder = await desktopApi.chooseFolder().catch(() => null);
+    const folder = await (useDefault ? desktopApi.useDefaultFolder() : desktopApi.chooseFolder()).catch(() => null);
     if (!folder) return;
+    setFolderSetup(null);
     startFolderSync(folder);
     try {
       const res = await folderSync.current!.pull();
@@ -535,8 +530,6 @@ export function App() {
       setToast({ text: `That folder couldn’t be used: ${e instanceof Error ? e.message : String(e)}`, undo: false });
     }
   }
-  const chooseProjectsFolderRef = useRef(chooseProjectsFolder);
-  chooseProjectsFolderRef.current = chooseProjectsFolder;
 
   if (!project) return <div className="loading">Opening your project…</div>;
 
@@ -579,6 +572,15 @@ export function App() {
   const canRedo = future.current.length > 0;
 
   async function upload(files: FileList | File[]) {
+    // Desktop app: drawings added to the blank starting project make it a real job with a
+    // folder of its own, so it gets its name first (offered from the file name).
+    const open = projectRef.current;
+    if (syncFolder && open && !open.docs.length && !open.measurements.length && open.name === 'Untitled project') {
+      const first = Array.from(files)[0]?.name.replace(/\.pdf$/i, '').replace(/[_-]+/g, ' ').trim() ?? '';
+      const name = await askText('Name this project', { initial: first, hint: `Its drawings and takeoffs are kept in a folder with this name in ${folderLabel(syncFolder)}.` });
+      if (name === null) return;
+      if (name.trim()) commit((p) => ({ ...p, name: name.trim() }), 'Rename project');
+    }
     for (const file of Array.from(files)) {
       setBusy(`Reading ${file.name}…`);
       const data = await file.arrayBuffer();
@@ -678,18 +680,39 @@ export function App() {
   const flush = async () => {
     if (projectRef.current) await saveProject(projectRef.current);
   };
+  flushAllRef.current = async () => {
+    await flush();
+    await folderSync.current?.flush();
+  };
+
+  /** Desktop app: opens the open project's folder in Finder or Explorer (writing it first if needed). */
+  async function revealProjectFolder() {
+    const sync = folderSync.current;
+    const id = projectRef.current?.id;
+    if (!sync || !id || !desktopApi) return;
+    await flushAllRef.current();
+    const dir = (await sync.dirOf(id)) ?? (await sync.push(id).then(() => sync.dirOf(id)));
+    if (dir) await desktopApi.revealProject(dir);
+  }
 
   async function startNewProject(units: Units) {
+    const name = await askText('New project', {
+      initial: '',
+      hint: syncFolder ? `Its drawings and takeoffs are kept in a folder with this name in ${folderLabel(syncFolder)}.` : 'The job name, e.g. Kelso Lodge.',
+    });
+    if (name === null) return;
     await flush();
-    const fresh = newProject(units);
+    const fresh = { ...newProject(units), name: name.trim() || 'Untitled project' };
     // The user's own starting types, when they saved a set in these units.
     const starter = await loadStarterTypes();
     if (starter?.units === units && starter.types.length) {
       fresh.types = starter.types.map((t) => ({ ...t, id: newId(), items: t.items.map((it) => ({ ...it, id: newId() })) }));
     }
     await saveProject(fresh);
+    // Desktop app: the project's folder is made now, not on the first takeoff.
+    await folderSync.current?.push(fresh.id!).catch(() => undefined);
     await openProjectState(fresh);
-    setToast({ text: `New ${units} project`, undo: false });
+    setToast({ text: syncFolder ? `Created ${fresh.name} in ${folderLabel(syncFolder)}` : `New ${units} project: ${fresh.name}`, undo: false });
   }
 
   async function switchProject(id: string) {
@@ -2239,6 +2262,7 @@ export function App() {
               ...(desktopApi
                 ? syncFolder
                   ? [
+                      { label: 'Show this project’s folder', hint: 'Drawings and takeoffs', onSelect: () => void revealProjectFolder() },
                       { label: 'Show projects folder', hint: folderLabel(syncFolder), onSelect: () => void desktopApi!.revealFolder() },
                       { label: 'Change projects folder…', onSelect: () => void chooseProjectsFolder() },
                     ]
@@ -2438,6 +2462,36 @@ export function App() {
             <div className="compare-image">
               <img src={comparison.url} alt={`Changes on ${comparison.name}`} />
             </div>
+          </div>
+        </div>
+      )}
+      {folderSetup && (
+        <div className="modal-backdrop">
+          <div className="modal folder-setup" role="dialog" aria-label="Projects folder">
+            <div className="welcome-icon">
+              <Icon name="doc" size={28} />
+            </div>
+            <h3>{folderSetup.missing ? 'Your projects folder can’t be found' : 'Where should your projects live?'}</h3>
+            {folderSetup.missing ? (
+              <p className="muted">
+                {folderLabel(folderSetup.missing)} isn’t there. If it’s in iCloud Drive, check iCloud is signed in on this computer, then quit and
+                reopen Takeoff AI. Or choose the folder again.
+              </p>
+            ) : (
+              <p className="muted">
+                Each project gets its own folder there, holding its drawings and takeoffs, saved as you work. Use iCloud Drive to open the same
+                projects on your other computer.
+              </p>
+            )}
+            <div className="folder-setup-actions">
+              <button className="primary large" onClick={() => void chooseProjectsFolder(true)}>
+                Use {folderLabel(folderSetup.suggested)}
+              </button>
+              <button onClick={() => void chooseProjectsFolder()}>Choose another folder…</button>
+            </div>
+            {!folderSetup.iCloud && (
+              <p className="field-hint">iCloud Drive isn’t set up on this computer, so the default is your Documents folder.</p>
+            )}
           </div>
         </div>
       )}

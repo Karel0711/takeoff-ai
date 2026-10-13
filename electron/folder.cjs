@@ -3,6 +3,7 @@
 //   <folder>/<Project name> (<id>)/meta.json        { id, name, savedAt }   read to list projects
 //   <folder>/<Project name> (<id>)/project.json     { format, version, savedAt, project, activity }
 //   <folder>/<Project name> (<id>)/drawings/<docId>.pdf
+//   <folder>/<Project name> (<id>)/.versions/<time>.json   earlier project.json, every 10 minutes, the last 50
 //
 // Every path is checked to stay inside the folder. Files are written to a temporary name
 // and renamed, so a sync service never picks up half a file.
@@ -67,9 +68,36 @@ async function readProject(root, dir) {
   }
 }
 
+const VERSION_EVERY_MS = 10 * 60 * 1000;
+const VERSIONS_KEPT = 50;
+
+/** Keeps the project as it was before this write, at most every 10 minutes, the last 50. */
+async function keepVersion(root, dir, now) {
+  const current = inside(root, dir, 'project.json');
+  const versions = inside(root, dir, '.versions');
+  let names = [];
+  try {
+    names = (await fs.readdir(versions)).filter((n) => n.endsWith('.json')).sort();
+  } catch {
+    // No versions yet.
+  }
+  const newest = names.length ? Date.parse(names[names.length - 1].replace(/\.json$/, '').replace(/_/g, ':')) : 0;
+  if (now - newest < VERSION_EVERY_MS) return;
+  try {
+    await fs.mkdir(versions, { recursive: true });
+    const name = `${new Date(now).toISOString().replace(/:/g, '_')}.json`;
+    await fs.copyFile(current, path.join(versions, name));
+    names.push(name);
+  } catch {
+    return; // Nothing written yet.
+  }
+  for (const old of names.slice(0, Math.max(0, names.length - VERSIONS_KEPT))) await fs.rm(path.join(versions, old), { force: true });
+}
+
 /** Writes the project, then its meta.json (so a listed project is always complete). */
-async function writeProject(root, dir, json, meta) {
+async function writeProject(root, dir, json, meta, now = Date.now()) {
   if (!SAFE_ID.test(meta.id)) throw new Error('Bad project id');
+  await keepVersion(root, dir, now);
   await writeAtomic(inside(root, dir, 'project.json'), json);
   await writeAtomic(inside(root, dir, 'meta.json'), JSON.stringify({ id: meta.id, name: meta.name, savedAt: meta.savedAt }));
 }
@@ -100,4 +128,16 @@ async function writePdf(root, dir, docId, data) {
   await writeAtomic(pdfPath(root, dir, docId), Buffer.from(data));
 }
 
-module.exports = { inside, dirFor, list, readProject, writeProject, hasPdf, readPdf, writePdf };
+/** Renames a project's folder (after the project is renamed), unless the new name is taken. */
+async function rename(root, from, to) {
+  const target = inside(root, to);
+  try {
+    await fs.access(target);
+    return false;
+  } catch {
+    await fs.rename(inside(root, from), target);
+    return true;
+  }
+}
+
+module.exports = { inside, dirFor, list, readProject, writeProject, hasPdf, readPdf, writePdf, rename };

@@ -17,6 +17,7 @@ const folder = createRequire(import.meta.url)('../electron/folder.cjs') as {
   hasPdf(root: string, dir: string, docId: string): Promise<boolean>;
   readPdf(root: string, dir: string, docId: string): Promise<Buffer | null>;
   writePdf(root: string, dir: string, docId: string, data: ArrayBuffer): Promise<void>;
+  rename(root: string, from: string, to: string): Promise<boolean>;
 };
 
 /** The shared folder, on disk, as the desktop app's main process serves it. */
@@ -36,6 +37,7 @@ function diskApi(root: string): FolderApi {
     },
     writePdf: (dir, id, data) => folder.writePdf(root, dir, id, data),
     trash: async () => undefined,
+    rename: (from, to) => folder.rename(root, from, to),
   };
 }
 
@@ -126,6 +128,21 @@ describe('shared projects folder', () => {
     expect(pc.projects.get(p.id!)?.name).toBe('Mac edit');
   });
 
+  it('leaves the blank project the app opens with out of the folder', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'takeoff-sync-'));
+    let t = 0;
+    const clock = () => new Date(Date.UTC(2026, 9, 13, 12, 0, t++)).toISOString();
+    const mac = computer(clock);
+    const blank = { ...newProject('metric'), id: 'blank1234' };
+    await mac.edit(blank);
+    const sync = new FolderSync(diskApi(root), mac, clock);
+    await sync.pull();
+    expect(await readdir(root)).toEqual([]);
+    await mac.edit({ ...blank, name: 'Kelso Lodge' });
+    await sync.push(blank.id);
+    expect(await readdir(root)).toEqual([folder.dirFor('Kelso Lodge', blank.id)]);
+  });
+
   it('sends out a project made here that was never sent', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'takeoff-sync-'));
     let t = 0;
@@ -151,6 +168,30 @@ describe('shared projects folder', () => {
     const pc = computer(clock);
     expect((await new FolderSync(diskApi(root), pc, clock).pull()).added).toEqual([]);
     expect(pc.projects.size).toBe(0);
+  });
+
+  it('renames a project folder with its project, and keeps earlier versions', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'takeoff-sync-'));
+    let t = 0;
+    const clock = () => new Date(Date.UTC(2026, 9, 13, 12, 0, t++)).toISOString();
+    const mac = computer(clock);
+    const sync = new FolderSync(diskApi(root), mac, clock);
+    const p = { ...project('Bid draft'), docs: [] };
+    await mac.edit(p);
+    await sync.push(p.id!);
+    await mac.edit({ ...p, name: 'Kelso Lodge' });
+    await sync.push(p.id!);
+    expect(await readdir(root)).toEqual([folder.dirFor('Kelso Lodge', p.id!)]);
+    // One version per 10 minutes: the first overwrite kept the original, the next ones within 10 minutes don't add more.
+    const dir = path.join(root, folder.dirFor('Kelso Lodge', p.id!));
+    const versions = await readdir(path.join(dir, '.versions'));
+    expect(versions).toHaveLength(1);
+    expect(JSON.parse(await readFile(path.join(dir, '.versions', versions[0]), 'utf8')).project.name).toBe('Bid draft');
+    const meta = { id: p.id!, name: 'Kelso Lodge', savedAt: clock() };
+    await folder.writeProject(root, folder.dirFor('Kelso Lodge', p.id!), '{}', meta);
+    expect(await readdir(path.join(dir, '.versions'))).toHaveLength(1);
+    await (folder as unknown as { writeProject(...a: unknown[]): Promise<void> }).writeProject(root, folder.dirFor('Kelso Lodge', p.id!), '{}', meta, Date.now() + 11 * 60 * 1000);
+    expect(await readdir(path.join(dir, '.versions'))).toHaveLength(2);
   });
 
   it('keeps every path inside the projects folder', () => {

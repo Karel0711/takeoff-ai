@@ -237,8 +237,18 @@ Where the project stands, for picking it up in a new session.
   change nothing (the autosave after opening), which would otherwise bounce a
   project between computers. Tested with two Electron profiles sharing a folder
   (Playwright `_electron` under xvfb): carry over, edit back, live reload while
-  both are open (within one 45 s poll), first-launch prompt. Mac and Windows
-  installers come from `.github/workflows/desktop.yml` (Releases).
+  both are open (within one 45 s poll). Mac and Windows installers come from
+  `.github/workflows/desktop.yml` (Releases).
+  - The folder is required: a setup screen at first launch (or when the saved
+    folder is missing) offers iCloud Drive › Takeoff AI (`folder:default`) or a
+    pick. New project asks for a name and pushes at once; the blank starting
+    project is never written until it has drawings, takeoffs or a name (and
+    adding drawings to it asks for the name). A rename renames the folder
+    (`folder:rename`, in `pushNow`). The window's close waits for
+    `FolderSync.flush()` through `app:flush`/`app:flushed` (8 s cap), and ⌘Q
+    still quits. `.versions/` keeps the previous project.json every 10 minutes,
+    50 kept. Workflow e2e: setup, new project folder, Kelso drawings on disk,
+    rename, edit 0.6 s before quit lands, relaunch.
 - **Interface (redesigned):** light, Mac-style (system font, segmented tools,
   source-list sidebar, inspector with Quantities / Takeoffs / History). State
   changes go through `commit()` in `App.tsx`, which keeps undo/redo stacks and

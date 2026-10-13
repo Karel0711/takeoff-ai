@@ -189,10 +189,22 @@ the files to a GitHub Release (Releases, on the repository page):
 - **Windows:** `Takeoff-AI-Windows-Setup.exe`. SmartScreen may warn: More info ›
   Run anyway.
 
-**Shared projects folder:** **More › Keep projects in iCloud Drive…** (any synced
-folder works: OneDrive, Dropbox, Google Drive) on each computer. Each project is
-kept there as a folder (`meta.json`, `project.json`, `drawings/*.pdf`) as well
-as in the app's own database. Saves go out a moment after each change; the
+**Projects folder:** at first launch the app asks where projects live (iCloud
+Drive › Takeoff AI by default; any synced folder works: OneDrive, Dropbox,
+Google Drive). Every project is a folder there:
+
+    Takeoff AI/
+      Kelso Lodge (7d01cf89)/
+        project.json      the takeoffs, types, sheets and history
+        meta.json         name and last save, for listing
+        drawings/*.pdf    the drawings as added
+        .versions/*.json  earlier project.json, every 10 minutes, the last 50
+
+**New project** asks for the job name and makes its folder at once; adding
+drawings to the blank starting project asks for a name first. Renaming a
+project renames its folder. Closing or quitting waits until the last change is
+written. **More › Show this project's folder** opens it in Finder or Explorer.
+The app also keeps its own database as a working copy. Saves go out a moment after each change; the
 other computer brings them in at launch, every 45 s and whenever its window
 comes to the front, and reloads the open project when it changed only there. A
 project edited on both computers before they synced keeps both: the other

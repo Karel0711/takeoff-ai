@@ -31,6 +31,8 @@ export interface FolderApi {
   readPdf(dir: string, docId: string): Promise<ArrayBuffer | null>;
   writePdf(dir: string, docId: string, data: ArrayBuffer): Promise<void>;
   trash(dir: string): Promise<void>;
+  /** Renames a project folder; false when the new name is taken. */
+  rename(from: string, to: string): Promise<boolean>;
 }
 
 /** This computer's database, as the sync needs it (src/storage.ts). */
@@ -47,6 +49,8 @@ export interface LocalStore {
 }
 
 const FORMAT = 'takeoff-ai-project';
+
+const isBlank = (p: Project) => !p.docs.length && !p.measurements.length && (!p.name || p.name === 'Untitled project');
 
 export interface PullResult {
   /** Projects brought in for the first time. */
@@ -91,6 +95,19 @@ export class FolderSync {
     );
   }
 
+  /** Writes every change still waiting (the window is closing). */
+  async flush(): Promise<void> {
+    const waiting = [...this.pushing.keys()];
+    for (const id of waiting) globalThis.clearTimeout(this.pushing.get(id));
+    this.pushing.clear();
+    await Promise.all(waiting.map((id) => this.push(id).catch(() => undefined)));
+  }
+
+  /** The folder a project is kept in, once it has been written there. */
+  async dirOf(id: string): Promise<string | null> {
+    return (await this.api.list()).find((e) => e.id === id)?.dir ?? null;
+  }
+
   /** Moves a deleted project's folder to the Trash. */
   remove(id: string): Promise<void> {
     globalThis.clearTimeout(this.pushing.get(id));
@@ -104,7 +121,13 @@ export class FolderSync {
     const project = await this.store.loadProjectById(id);
     if (!project?.id) return;
     const entry = (await this.api.list()).find((e) => e.id === id);
-    const dir = entry?.dir ?? (await this.api.dirFor(project.name, id));
+    // The blank project the app opens with gets no folder until it has drawings or takeoffs
+    // (a project made with New project does: it was named).
+    if (!entry && isBlank(project)) return;
+    const named = await this.api.dirFor(project.name, id);
+    let dir = entry?.dir ?? named;
+    // A renamed project's folder follows its name.
+    if (entry && entry.dir !== named && (await this.api.rename(entry.dir, named).catch(() => false))) dir = named;
     for (const d of project.docs) {
       if (await this.api.hasPdf(dir, d.id)) continue;
       const data = await this.store.loadPdf(d.id);
