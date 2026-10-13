@@ -105,7 +105,7 @@ export function App() {
   const [toast, setToast] = useState<Toast | null>(null);
   const [sheetFilter, setSheetFilter] = useState('');
   const [aiDialog, setAiDialog] = useState<'assemblies' | 'settings' | 'walls' | 'rooms' | 'finishes' | 'shortcuts' | 'help' | null>(null);
-  const [popover, setPopover] = useState<'scale' | 'more' | 'automate' | 'projects' | 'copy' | null>(null);
+  const [popover, setPopover] = useState<'scale' | 'more' | 'automate' | 'projects' | 'copy' | 'export' | null>(null);
   const [tab, setTab] = useState<InspectorTab>('quantities');
   const [persisted, setPersisted] = useState(false);
   const projectFileInput = useRef<HTMLInputElement>(null);
@@ -115,6 +115,7 @@ export function App() {
   const fileInput = useRef<HTMLInputElement>(null);
   const scaleButton = useRef<HTMLButtonElement>(null);
   const moreButton = useRef<HTMLButtonElement>(null);
+  const exportButton = useRef<HTMLButtonElement>(null);
   const automateButton = useRef<HTMLButtonElement>(null);
 
   // Load the saved project, its PDFs and its activity log.
@@ -579,6 +580,32 @@ export function App() {
       if ((await saveFile(filename, blob)) === 'failed') {
         await notify('The Excel file could not be saved here. Try again in a moment.');
       }
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  /** The drawings with takeoffs drawn over them, as one PDF with a summary page. */
+  async function exportMarkup() {
+    setBusy('Building the marked-up PDF…');
+    try {
+      const { markupPdf } = await import('./markupPdf');
+      const { bytes, sheets, missing } = await markupPdf(projectRef.current!, {
+        loadBytes: loadPdf,
+        transformOf: async (s) => (await pdfsRef.current.get(s.docId)?.getPage(s.page))?.getViewport({ scale: 1 }).transform,
+      });
+      if (!sheets) {
+        setToast({ text: 'The drawings for these takeoffs are not on this computer.', undo: false });
+        return;
+      }
+      const filename = `${project!.name.replace(/[^\w\- ]+/g, '').trim() || 'takeoff'} - marked up.pdf`;
+      if ((await saveFile(filename, new Blob([bytes as BlobPart], { type: 'application/pdf' }))) === 'failed') {
+        setToast({ text: 'The PDF could not be saved.', undo: false });
+      } else if (missing.length) {
+        setToast({ text: `Saved ${sheets} sheets. Left out (drawings missing): ${missing.join(', ')}`, undo: false });
+      }
+    } catch (e) {
+      setToast({ text: `Something went wrong: ${e instanceof Error ? e.message : String(e)}`, undo: false });
     } finally {
       setBusy(null);
     }
@@ -1140,7 +1167,14 @@ export function App() {
             <Icon name="upload" size={16} />
             <span className="hide-narrow">Add drawings</span>
           </button>
-          <button className="primary" onClick={() => void exportExcel()} disabled={!project.measurements.length} title="Export the takeoff to Excel">
+          <button
+            ref={exportButton}
+            className="primary"
+            onClick={() => setPopover(popover === 'export' ? null : 'export')}
+            disabled={!project.measurements.length}
+            title="Export the takeoff"
+            aria-haspopup="menu"
+          >
             <Icon name="download" size={16} />
             <span className="hide-narrow">Export</span>
           </button>
@@ -1570,6 +1604,19 @@ export function App() {
                 onSelect: () => copyTakeoffsTo(x),
               })),
           ].filter((g) => g.length)}
+        />
+      )}
+      {popover === 'export' && (
+        <Menu
+          anchor={exportButton}
+          onClose={() => setPopover(null)}
+          label="Export"
+          groups={[
+            [
+              { label: 'Excel workbook', hint: 'Quantities and materials', onSelect: () => void exportExcel() },
+              { label: 'Marked-up PDF', hint: 'Drawings with takeoffs', onSelect: () => void exportMarkup() },
+            ],
+          ]}
         />
       )}
       {popover === 'more' && (

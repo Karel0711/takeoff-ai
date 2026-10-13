@@ -230,7 +230,10 @@ right. Tools sit in the title bar.
 10. **More › Save sheet as image…** saves the sheet as a PNG with its takeoffs
     drawn on and a legend of each type's total on that sheet, to send a sub or
     a reviewer what was taken off.
-11. **Export** saves the takeoff to Excel, including the activity log.
+11. **Export** saves the takeoff to Excel, including the activity log, or as a
+    **marked-up PDF**: a summary page of each type's total, then every sheet with
+    takeoffs, the original drawing kept in vector with the takeoffs drawn over it
+    and a legend of that sheet's totals along the top. Attach it to a quote.
 
 Editing: select a takeoff to show its points. Drag a corner to move it, drag
 the dot in the middle of an edge to add a point there, Option-click a corner
