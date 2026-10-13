@@ -84,8 +84,8 @@ Where the project stands, for picking it up in a new session.
   The RCPs here (A6.1/A6.2, PDF pages 34–35) have no text layer (text is drawn
   as outlines), so their sheet names read "Page 34/35" and tags can't be read.
   GWB ceiling (stipple, pen 0.54 dots): A6.1 79.6 vs 81.7 m² workbook, A6.2
-  112.9 vs 127.2. ACT grid (0.30 lines) finds the matching rooms plus a false
-  hit over the entry stair. RCP walls are 1.44 (exterior) and 0.84 (interior),
+  112.9 vs 127.2. ACT grid (0.30 lines) finds the matching rooms (a false
+  hit over the entry stair went once the density bound rose to 0.45 of the sample's). RCP walls are 1.44 (exterior) and 0.84 (interior),
   so wall pen detection now keeps every paired pen ≥55% of the heaviest and
   relaxes the paired share to 40% when no pen reaches 50% (the 1.44 pen also
   draws the sheet border).
@@ -227,8 +227,9 @@ Where the project stands, for picking it up in a new session.
   diffs each change into the activity log (`src/activity.ts`, saved under the
   `activity` key in IndexedDB, exported as the Activity sheet). Typing in one
   field within 4 s counts as one change.
-- **Not yet verified:** the real model's extraction quality on real sheets. The
-  end-to-end tests intercepted the AI call with a hand-written answer.
+- **Verified since:** assembly reading ran for real on A0.3 (23/23 types, 80/80
+  layers; see Next). Sheet naming has only been tested with the AI call
+  intercepted.
 
 ## Hosted version
 
