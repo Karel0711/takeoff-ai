@@ -252,6 +252,11 @@ right. Tools sit in the title bar.
     symbol, or its tag (FH, HP), is drawn on the sheet (`src/fill/legend.ts`).
     Site plans often draw plan symbols differently from the legend; those rows
     say so and are counted with Symbols.
+16. **Sample plan:** the welcome screen's *Try a sample plan* draws a small 1:100
+    floor plan (`src/samplePlan.ts`: five tagged rooms, door tags, W1/EW1 wall
+    tags, dimension strings, title block) so anyone can try every tool without a
+    drawing set. `test/samplePlan.test.ts` runs the sheet name, scale check,
+    rooms, door tags and wall takeoff on it and checks the exact quantities.
 
 Editing: select a takeoff to show its points. Drag a corner to move it, drag
 the dot in the middle of an edge to add a point there, Option-click a corner

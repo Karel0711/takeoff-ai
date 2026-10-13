@@ -409,7 +409,7 @@ export function App() {
   const canUndo = past.current.length > 0;
   const canRedo = future.current.length > 0;
 
-  async function upload(files: FileList) {
+  async function upload(files: FileList | File[]) {
     for (const file of Array.from(files)) {
       setBusy(`Reading ${file.name}…`);
       const data = await file.arrayBuffer();
@@ -653,6 +653,20 @@ export function App() {
       }
     } finally {
       setBusy(null);
+    }
+  }
+
+  /** Adds a small generated floor plan to try the tools on. */
+  async function openSample() {
+    setBusy('Drawing the sample plan…');
+    try {
+      const { samplePlanPdf } = await import('./samplePlan');
+      const bytes = await samplePlanPdf();
+      if (project!.name === 'Untitled project' && !project!.sheets.length) commit((p) => ({ ...p, name: 'Sample project' }), 'Rename project');
+      await upload([new File([bytes as BlobPart], 'Sample floor plan.pdf', { type: 'application/pdf' })]);
+    } catch (e) {
+      setBusy(null);
+      setToast({ text: `Something went wrong: ${e instanceof Error ? e.message : String(e)}`, undo: false });
     }
   }
 
@@ -1483,6 +1497,9 @@ export function App() {
               </p>
               <button className="primary large" onClick={() => fileInput.current?.click()}>
                 <Icon name="upload" size={18} /> Add drawings
+              </button>
+              <button className="link-button try-sample" onClick={() => void openSample()}>
+                No drawings handy? Try a sample plan
               </button>
               <div className="welcome-units">
                 <span>Measure in</span>

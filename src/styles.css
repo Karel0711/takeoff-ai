@@ -2156,3 +2156,8 @@ button.link-button:hover {
 .legend-table th.num {
   text-align: right;
 }
+.welcome .try-sample {
+  display: block;
+  margin: 10px auto 0;
+  font-size: 13px;
+}
