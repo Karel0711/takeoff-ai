@@ -579,12 +579,12 @@ input[type='checkbox'] {
   background: var(--desk);
   user-select: none;
 }
-.viewer canvas,
-.viewer svg {
+.viewer > canvas,
+.viewer > svg {
   position: absolute;
   inset: 0;
 }
-.viewer canvas {
+.viewer > canvas {
   filter: drop-shadow(0 2px 10px rgba(0, 0, 0, 0.12));
 }
 .viewer .shape {
