@@ -248,7 +248,8 @@ right. Tools sit in the title bar.
     acoustic ceilings, GWB ceilings, carpet tile, LVT, porcelain, sealed
     concrete, base, paint, doors, windows, lights, receptacles, slabs,
     footings), each with its materials worked out in the project's units
-    (`src/typeLibrary.ts`).
+    (`src/typeLibrary.ts`). The same menu copies the types of any other project on
+    this computer.
 15. **Read a legend:** Automate → *Read a legend*, then box a symbols legend.
     Each line becomes a takeoff type (count, area or length, from its graphic:
     symbol, framed swatch or line type), and symbols are counted where the same
