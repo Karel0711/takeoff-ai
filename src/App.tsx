@@ -19,7 +19,7 @@ import { segmentsOf, wallModelFor } from './fill/sheetWalls';
 import { findSimilar, pointInRing } from './fill/similar';
 import { findSymbols } from './fill/symbols';
 import { isHosted, saveFile } from './host';
-import { newId, newProject, type Project, type Pt, type Sheet, type TakeoffType, type Units } from './model';
+import { defaultTypes, newId, newProject, type Project, type Pt, type Sheet, type TakeoffType, type Units } from './model';
 import { inspectPage, openPdf, type PDFDocumentProxy, type PDFPageProxy } from './pdf';
 import { typeTotals } from './quantities';
 import { deleteProject, listProjects, loadActivity, loadCurrentProject, loadPdf, loadProjectById, persistStorage, saveActivity, savePdf, saveProject } from './storage';
@@ -798,15 +798,34 @@ export function App() {
               </div>
               <h1>Start a takeoff</h1>
               <p>
-                Add a PDF drawing set. Every page becomes a sheet, with its number and scale read for you. Measure by hand, fill rooms with a click, or let
-                Wall takeoff measure every tagged wall.
+                Add a PDF drawing set. Every page becomes a sheet, with its number and scale read for you. Measure by hand, fill a room with one click,
+                count every copy of a symbol, or let Automate take off walls by type, rooms and their finishes.
               </p>
               <button className="primary large" onClick={() => fileInput.current?.click()}>
                 <Icon name="upload" size={18} /> Add drawings
               </button>
-              <p className="welcome-foot">
-                {project.units === 'metric' ? 'Metric project (m, m²).' : 'Imperial project (ft, SF).'} Drawings stay in this browser.
-              </p>
+              <div className="welcome-units">
+                <span>Measure in</span>
+                <div className="segmented small" role="radiogroup" aria-label="Units">
+                  {(['metric', 'imperial'] as const).map((u) => (
+                    <button
+                      key={u}
+                      role="radio"
+                      aria-checked={project.units === u}
+                      className={project.units === u ? 'on' : ''}
+                      disabled={project.measurements.length > 0}
+                      onClick={() => {
+                        if (project.units === u) return;
+                        // Nothing measured yet: start the starter types over in the other units.
+                        commit((p) => ({ ...p, units: u, types: defaultTypes(u) }), 'Units');
+                      }}
+                    >
+                      {u === 'metric' ? 'Metric (m, m²)' : 'Imperial (ft, SF)'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <p className="welcome-foot">Projects and drawings are saved on this computer and work offline.</p>
             </div>
           </div>
         )}

@@ -1962,3 +1962,12 @@ button.link-button {
 button.link-button:hover {
   text-decoration: underline;
 }
+.welcome-units {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 18px;
+  font-size: 13px;
+  color: var(--text-2);
+}
