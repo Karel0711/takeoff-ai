@@ -26,10 +26,10 @@ export async function pageTextRuns(page: PDFPageProxy): Promise<TextRun[]> {
   return runs;
 }
 
-export async function inspectPage(page: PDFPageProxy): Promise<SheetInfo & { width: number; height: number }> {
+export async function inspectPage(page: PDFPageProxy): Promise<SheetInfo & { width: number; height: number; textRuns: number }> {
   const viewport = page.getViewport({ scale: 1 });
   const runs = await pageTextRuns(page);
-  return { width: viewport.width, height: viewport.height, ...inspectRuns(runs, viewport.width, viewport.height) };
+  return { width: viewport.width, height: viewport.height, textRuns: runs.length, ...inspectRuns(runs, viewport.width, viewport.height) };
 }
 
 /**

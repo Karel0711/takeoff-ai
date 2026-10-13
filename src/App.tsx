@@ -437,11 +437,13 @@ export function App() {
       await savePdf(docId, data);
       const pdf = await openPdf(data);
       const sheets: Sheet[] = [];
+      let noText = 0;
       for (let n = 1; n <= pdf.numPages; n++) {
         setBusy(`Reading ${file.name}: sheet ${n} of ${pdf.numPages}`);
         const pg = await pdf.getPage(n);
         const info = await inspectPage(pg);
         pg.cleanup();
+        if (info.textRuns < 5) noText++;
         // A single standard scale on the sheet is applied automatically and flagged for checking;
         // a sheet noting its scale in both systems (1:100 and 1/8" = 1'-0") gets the project's.
         const inUnits = info.scaleHints.filter((h) => /^1:/.test(h) === (projectRef.current?.units === 'metric'));
@@ -463,6 +465,14 @@ export function App() {
       commit((p) => ({ ...p, docs: [...p.docs, { id: docId, name: file.name }], sheets: [...p.sheets, ...sheets] }), 'Add drawings');
       setSheetId((cur) => cur ?? sheets[0]?.id ?? null);
       setBusy(null);
+      // What is ready: scales read, and sheets the automatic tools can't read.
+      const scaled = sheets.filter((x) => x.metersPerPoint).length;
+      const parts = [
+        `${sheets.length} sheet${sheets.length === 1 ? '' : 's'} from ${file.name}`,
+        scaled === sheets.length ? 'every scale read' : `${scaled} with the scale read, ${sheets.length - scaled} to set`,
+        ...(noText ? [`${noText} without text (scanned, or text drawn as shapes): tags and schedules can't be read there`] : []),
+      ];
+      setToast({ text: `Added ${parts.join('; ')}.`, undo: false });
       await offerRevision(sheets);
     }
     setBusy(null);
