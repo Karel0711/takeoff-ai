@@ -27,6 +27,7 @@ import { matchSymbol, sampleSymbol, type SymbolSample } from './fill/symbols';
 import { traceLine } from './fill/trace';
 import { checkScale, type ScaleCheck } from './scaleCheck';
 import { sheetImage } from './sheetImage';
+import { compareSheets } from './compareSheets';
 import { pageTexts } from './pageText';
 import { isHosted, saveFile } from './host';
 import { defaultTypes, newId, newProject, type Project, type Pt, type Sheet, type TakeoffType, type Units } from './model';
@@ -89,6 +90,7 @@ export function App() {
   const [editingTypeId, setEditingTypeId] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [focus, setFocus] = useState<{ id: string; n: number } | null>(null);
+  const [comparison, setComparison] = useState<{ url: string; blob: Blob; name: string } | null>(null);
   const [tool, setTool] = useState<Tool>('select');
   const [busy, setBusy] = useState<string | null>(null);
   const [toast, setToast] = useState<Toast | null>(null);
@@ -694,6 +696,25 @@ export function App() {
       commit((q) => ({ ...q, types: [...q.types, ...newTypes.filter((t) => used.has(t.id))], measurements: [...q.measurements, ...added] }), 'Door tags');
       const byType = [...used].map((id) => `${added.filter((m) => m.typeId === id).length} ${([...p.types, ...newTypes].find((t) => t.id === id)?.name ?? '').split(' – ')[0]}`);
       setToast({ text: `Counted ${byType.join(', ')}`, undo: true });
+    } catch (e) {
+      setToast({ text: `Something went wrong: ${e instanceof Error ? e.message : String(e)}`, undo: false });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  /** The superseded revision of the current sheet, if one was kept. */
+  const previousRevision = sheet ? project?.sheets.find((x) => x.name === `${sheet.name} (superseded)`) ?? null : null;
+
+  /** Shows what changed between the current sheet and its superseded revision. */
+  async function compareRevision() {
+    if (!page || !sheet || !previousRevision) return;
+    setBusy('Comparing with the previous revision…');
+    try {
+      const oldPage = await pdfs.get(previousRevision.docId)?.getPage(previousRevision.page);
+      if (!oldPage) throw new Error('The previous revision’s drawing is not available.');
+      const blob = await compareSheets(oldPage, page);
+      setComparison({ url: URL.createObjectURL(blob), blob, name: sheet.name });
     } catch (e) {
       setToast({ text: `Something went wrong: ${e instanceof Error ? e.message : String(e)}`, undo: false });
     } finally {
@@ -1454,6 +1475,7 @@ export function App() {
               { label: 'Quick start', onSelect: () => setAiDialog('help') },
               { label: 'Keyboard shortcuts', onSelect: () => setAiDialog('shortcuts') },
               ...(page && sheet ? [{ label: 'Save sheet as image…', hint: 'With takeoffs', onSelect: () => void saveSheetImage() }] : []),
+              ...(previousRevision ? [{ label: 'Compare with previous revision', onSelect: () => void compareRevision() }] : []),
               ...(project.sheets.some((x) => /^Page \d+$/.test(x.name))
                 ? [{ label: 'Name sheets with Claude…', hint: 'Sheets with no text', onSelect: () => void nameSheetsWithAi() }]
                 : []),
@@ -1572,6 +1594,39 @@ export function App() {
       {aiDialog === 'settings' && <AiSettingsDialog onClose={() => setAiDialog(null)} />}
       {aiDialog === 'shortcuts' && <ShortcutsDialog onClose={() => setAiDialog(null)} />}
       {aiDialog === 'help' && <QuickStartDialog onClose={() => setAiDialog(null)} />}
+      {comparison && (
+        <div
+          className="modal-backdrop"
+          onClick={() => {
+            URL.revokeObjectURL(comparison.url);
+            setComparison(null);
+          }}
+        >
+          <div className="modal compare" role="dialog" aria-label="Compare revisions" onClick={(e) => e.stopPropagation()}>
+            <div className="panel-head">
+              <h3>{comparison.name}: what changed</h3>
+              <div className="button-row">
+                <button onClick={() => void saveFile(`${comparison.name} - changes.png`, comparison.blob)}>Save image</button>
+                <button
+                  onClick={() => {
+                    URL.revokeObjectURL(comparison.url);
+                    setComparison(null);
+                  }}
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+            <p className="muted">
+              <span className="swatch removed" /> Only on the previous revision <span className="swatch added" /> Only on this one{' '}
+              <span className="swatch same" /> On both
+            </p>
+            <div className="compare-image">
+              <img src={comparison.url} alt={`Changes on ${comparison.name}`} />
+            </div>
+          </div>
+        </div>
+      )}
       <DialogHost />
     </div>
   );

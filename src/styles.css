@@ -2047,3 +2047,34 @@ button.link-button:hover {
   padding: 4px 10px;
   font-size: 12px;
 }
+/* Compare revisions */
+.modal.compare {
+  width: min(1400px, 100%);
+}
+.compare-image {
+  max-height: calc(100vh - 200px);
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.compare-image img {
+  display: block;
+  width: 200%;
+}
+.swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin: 0 4px 0 10px;
+  border-radius: 2px;
+  vertical-align: -1px;
+}
+.swatch.removed {
+  background: rgb(225, 30, 30);
+}
+.swatch.added {
+  background: rgb(0, 90, 230);
+}
+.swatch.same {
+  background: rgb(190, 190, 190);
+}

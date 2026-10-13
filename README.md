@@ -231,7 +231,9 @@ to remove it (a count's single point drags to move it). Each drag is one undo.
 Revisions: add the new drawings (an addendum or re-issue) as usual. When new
 sheets have the numbers of sheets you've taken off, and the same page size, the
 app offers to move those takeoffs onto the new revision; the old sheets stay,
-renamed "(superseded)", and a scale you set by hand carries over.
+renamed "(superseded)", and a scale you set by hand carries over. **More ›
+Compare with previous revision** overlays the two: linework only on the old
+sheet in red, only on the new one in blue, on both in grey.
 
 Deleting: select a takeoff and press Delete, use **Delete takeoff** on the
 selection card, or open **Takeoffs** in the inspector to delete one row, a whole
