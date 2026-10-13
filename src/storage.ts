@@ -12,6 +12,7 @@ import { newId, type Project } from './model';
  *   project:<id>      Project
  *   activity:<id>     ActivityEvent[]
  *   pdf:<docId>       ArrayBuffer
+ *   starter-types     { units, types }    the user's own starting set of takeoff types
  */
 export interface ProjectSummary {
   id: string;
@@ -138,3 +139,16 @@ export async function storageEstimate(): Promise<{ usage: number; quota: number 
     return null;
   }
 }
+
+/** The takeoff types new projects start with, saved by the user, in the units they were made for. */
+export interface StarterTypes {
+  units: Project['units'];
+  types: Project['types'];
+  savedAt: string;
+}
+
+const STARTER = 'starter-types';
+export const loadStarterTypes = () => safely(() => get<StarterTypes>(STARTER), undefined);
+export const saveStarterTypes = (units: Project['units'], types: Project['types']) =>
+  safely(() => set(STARTER, { units, types, savedAt: new Date().toISOString() } satisfies StarterTypes), undefined);
+export const clearStarterTypes = () => safely(() => del(STARTER), undefined);

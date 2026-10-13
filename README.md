@@ -148,6 +148,11 @@ sheet takes one to three minutes.
   `.takeoff` files and PDFs from Finder (Chrome), and updates itself: when a new
   version is published it shows **Restart** to switch.
 
+Your own takeoff types: set up the types you use (assemblies, divisions,
+packages, heights), then **More › Use these types for new projects**. New
+projects in the same units start with them instead of the built-in set;
+**Reset types for new projects** goes back to the built-in set.
+
 ### Publishing it for your team
 
 `.github/workflows/app.yml` checks every change and, on `main`, publishes the

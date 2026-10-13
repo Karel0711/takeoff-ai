@@ -26,7 +26,21 @@ import { isHosted, saveFile } from './host';
 import { defaultTypes, newId, newProject, type Project, type Pt, type Sheet, type TakeoffType, type Units } from './model';
 import { inspectPage, openPdf, type PDFDocumentProxy, type PDFPageProxy } from './pdf';
 import { typeTotals } from './quantities';
-import { deleteProject, listProjects, loadActivity, loadCurrentProject, loadPdf, loadProjectById, persistStorage, saveActivity, savePdf, saveProject } from './storage';
+import {
+  clearStarterTypes,
+  deleteProject,
+  listProjects,
+  loadActivity,
+  loadCurrentProject,
+  loadPdf,
+  loadProjectById,
+  loadStarterTypes,
+  persistStorage,
+  saveActivity,
+  savePdf,
+  saveProject,
+  saveStarterTypes,
+} from './storage';
 import { readProjectFile, writeProjectFile } from './projectFile';
 import { canUseServiceWorker, isInstalled, onLaunchFiles, promptInstall, registerServiceWorker } from './pwa';
 import { formatQty, parseScale } from './units';
@@ -307,6 +321,11 @@ export function App() {
   async function startNewProject(units: Units) {
     await flush();
     const fresh = newProject(units);
+    // The user's own starting types, when they saved a set in these units.
+    const starter = await loadStarterTypes();
+    if (starter?.units === units && starter.types.length) {
+      fresh.types = starter.types.map((t) => ({ ...t, id: newId(), items: t.items.map((it) => ({ ...it, id: newId() })) }));
+    }
     await saveProject(fresh);
     await openProjectState(fresh);
     setToast({ text: `New ${units} project`, undo: false });
@@ -965,13 +984,15 @@ export function App() {
                       aria-checked={project.units === u}
                       className={project.units === u ? 'on' : ''}
                       disabled={project.measurements.length > 0}
-                      onClick={() => {
+                      onClick={async () => {
                         if (project.units === u) return;
                         // Nothing measured yet. The untouched starter types are swapped for the
-                        // other units' set; types the user has made or edited are kept.
-                        const starter = defaultTypes(project.units).map((t) => t.name).join('|');
-                        const untouched = project.types.map((t) => t.name).join('|') === starter;
-                        commit((p) => ({ ...p, units: u, types: untouched ? defaultTypes(u) : p.types }), 'Units');
+                        // other units' set (the user's own, if saved); types made or edited are kept.
+                        const builtIn = defaultTypes(project.units).map((t) => t.name).join('|');
+                        const untouched = project.types.map((t) => t.name).join('|') === builtIn;
+                        const own = await loadStarterTypes();
+                        const next = own?.units === u && own.types.length ? own.types.map((t) => ({ ...t, id: newId() })) : defaultTypes(u);
+                        commit((p) => ({ ...p, units: u, types: untouched ? next : p.types }), 'Units');
                         if (untouched) setActiveTypeId(null);
                       }}
                     >
@@ -1201,6 +1222,23 @@ export function App() {
               ...(isHosted ? [] : [{ label: 'AI settings…', onSelect: () => setAiDialog('settings') }]),
             ],
             project.docs.map((d) => ({ label: `Remove ${d.name}…`, danger: true, onSelect: () => void removeDrawings(d.id) })),
+            [
+              {
+                label: 'Use these types for new projects',
+                hint: `${project.units}`,
+                onSelect: async () => {
+                  await saveStarterTypes(project.units, project.types);
+                  setToast({ text: `New ${project.units} projects will start with these ${project.types.length} types`, undo: false });
+                },
+              },
+              {
+                label: 'Reset types for new projects',
+                onSelect: async () => {
+                  await clearStarterTypes();
+                  setToast({ text: 'New projects will start with the built-in types', undo: false });
+                },
+              },
+            ],
             [
               { label: 'Projects…', onSelect: () => setPopover('projects') },
               { label: 'Save project to file…', onSelect: () => void saveProjectFile() },
