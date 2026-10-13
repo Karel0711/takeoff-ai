@@ -169,9 +169,9 @@ function mergePieces(pieces: Piece[]): WallRun[] {
       if (s1 - s0 < 1) return;
       runs.push({ a: [ux * s0 - uy * offset, uy * s0 + ux * offset], b: [ux * s1 - uy * offset, uy * s1 + ux * offset], thickness });
     };
-    // Short breaks (where a column or the end of a crossing wall interrupts a face) are
-    // still the same wall.
-    const join = Math.max(2, 1.5 * thickness);
+    // Short breaks (a column, a pilaster, the end of a crossing wall interrupting a
+    // face) are still the same wall.
+    const join = Math.max(2, 2.5 * thickness);
     for (const [t0, t1] of spans.slice(1)) {
       if (t0 <= s1 + join) s1 = Math.max(s1, t1);
       else {

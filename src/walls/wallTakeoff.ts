@@ -99,8 +99,10 @@ export function wallTakeoff(
         const qy = r2.a[1] - e[1];
         const x = (qx * vy - qy * vx) / den;
         const s = (qx * uy - qy * ux) / den;
-        const slack = r.thickness / 2 + 2;
-        if (x < -1 || x > r2.thickness / 2 + 2 || s < -slack || s > L2 + slack) return;
+        // Thick walls often meet round a column or pilaster, so the reach grows with thickness.
+        const wide = Math.max(r.thickness, r2.thickness);
+        const slack = r.thickness / 2 + 2 + wide * 1.5;
+        if (x < -1 || x > r2.thickness / 2 + 2 + wide || s < -slack || s > L2 + slack) return;
         if (best && Math.abs(x) >= Math.abs(best.x)) return;
         best = { x, r2: r2i, at: [e[0] + ux * x, e[1] + uy * x], corner: s < slack || s > L2 - slack };
       });
@@ -136,7 +138,7 @@ export function wallTakeoff(
   const pieceRun: number[] = [];
   const firstPiece: number[] = [];
   const lastPiece: number[] = [];
-  const links: [number, number][] = [];
+  const links: [number, number, 'wall' | 'tee'][] = [];
   runs.forEach((r, ri) => {
     const L = runLength(r);
     const ux = (r.b[0] - r.a[0]) / L;
@@ -150,7 +152,7 @@ export function wallTakeoff(
     const bounds = [0, ...ts, L];
     firstPiece[ri] = pieces.length;
     for (let k = 0; k < bounds.length - 1; k++) {
-      if (k > 0) links.push([pieces.length - 1, pieces.length]);
+      if (k > 0) links.push([pieces.length - 1, pieces.length, 'wall']);
       pieceRun.push(ri);
       pieces.push({ a: k === 0 ? r.a : at(bounds[k]), b: k === bounds.length - 2 ? r.b : at(bounds[k + 1]), thickness: r.thickness, id: pieces.length, tags: [], how: null });
     }
@@ -160,13 +162,13 @@ export function wallTakeoff(
   for (const c of corners) {
     const r2 = runs[c.r2];
     const end2 = dist(r2.a, c.at) <= dist(r2.b, c.at) ? 'a' : 'b';
-    links.push([pieceAtEnd(c.r1, c.end1), pieceAtEnd(c.r2, end2)]);
+    links.push([pieceAtEnd(c.r1, c.end1), pieceAtEnd(c.r2, end2), 'wall']);
   }
   // A wall running into the side of another: an untagged one is most likely the same type.
   for (const t of carry === 'wall+tees' ? tees : []) {
     const stem = pieceAtEnd(t.r1, t.end1);
     for (let i = firstPiece[t.r2]; i <= lastPiece[t.r2]; i++) {
-      if (dist(pieces[i].a, t.at) < 1.5 || dist(pieces[i].b, t.at) < 1.5) links.push([stem, i]);
+      if (dist(pieces[i].a, t.at) < 1.5 || dist(pieces[i].b, t.at) < 1.5) links.push([stem, i, 'tee']);
     }
   }
 
@@ -226,13 +228,18 @@ export function wallTakeoff(
   }
 
   // Carry each kind along connected pieces of similar thickness; nearest tag wins.
-  const adj = pieces.map(() => [] as number[]);
-  for (const [i, j] of links) {
-    if (Math.abs(pieces[i].thickness - pieces[j].thickness) > 0.6) continue;
+  // Partitions and furring keep to walls of the same thickness. Exterior and
+  // foundation types follow their wall on round corners even where it thickens
+  // (cladding, footings change), but never into walls that run into it.
+  const adj = pieces.map(() => [] as { j: number; diff: number; tee: boolean }[]);
+  for (const [i, j, kind] of links) {
     if (carry === 'none') continue;
-    adj[i].push(j);
-    adj[j].push(i);
+    const diff = Math.abs(pieces[i].thickness - pieces[j].thickness) / Math.max(pieces[i].thickness, pieces[j].thickness);
+    const abs = Math.abs(pieces[i].thickness - pieces[j].thickness);
+    adj[i].push({ j, diff: abs <= 0.6 ? 0 : diff, tee: kind === 'tee' });
+    adj[j].push({ j: i, diff: abs <= 0.6 ? 0 : diff, tee: kind === 'tee' });
   }
+  const followsWall = (kind: string) => kind === 'exterior' || kind === 'foundation';
   const kinds = new Set(tagged.flatMap((m) => [...m.keys()]));
   const carried = pieces.map(() => new Map<string, string>());
   for (const kind of kinds) {
@@ -255,7 +262,10 @@ export function wallTakeoff(
       const i = queue.splice(k, 1)[0];
       if (done.has(i)) continue;
       done.add(i);
-      for (const j of adj[i]) {
+      for (const { j, diff, tee } of adj[i]) {
+        // Within a fifth of the thickness counts as the same wall for exterior and
+        // foundation walls (cladding and footing changes, pilasters); others must match.
+        if (diff > (followsWall(kind) && !tee ? 0.2 : 0)) continue;
         const d = best[i] + (runLength(pieces[i]) + runLength(pieces[j])) / 2;
         if (d < best[j]) {
           best[j] = d;
