@@ -37,7 +37,7 @@ interface Props {
   /** Adds a measurement with the active type; returns its id. */
   onAdd: (points: Pt[]) => string | undefined;
   /** Replaces a measurement's outline (used when Shift+click grows a fill). */
-  onReplacePoints: (id: string, points: Pt[]) => void;
+  onReplacePoints: (id: string, points: Pt[], source?: string) => void;
   /** The sheet's wall model for Fill, read on first use. */
   getWallModel: () => Promise<WallModel> | null;
   onAddHole: (measurementId: string, ring: Pt[]) => void;
@@ -65,6 +65,9 @@ export function Viewer(props: Props) {
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [view, setView] = useState<View>({ zoom: 0.3, x: 0, y: 0 });
   const [draft, setDraft] = useState<Pt[]>([]);
+  /** A selected takeoff's points while one is being dragged. */
+  const [edit, setEdit] = useState<{ id: string; points: Pt[] } | null>(null);
+  const drag = useRef<{ id: string; index: number; insert: boolean; moved: boolean; points: Pt[] } | null>(null);
   /** The box being dragged with Count symbols. */
   const [band, setBand] = useState<{ a: Pt; b: Pt } | null>(null);
   const [hover, setHover] = useState<{ pt: Pt; sx: number; sy: number } | null>(null);
@@ -303,6 +306,23 @@ export function Viewer(props: Props) {
     props.onToolDone();
   };
 
+  /** Starts dragging a point of the selected takeoff, or (Option-click) removes it. */
+  const grab = (e: PointerEvent<SVGElement>, m: Measurement, index: number, insert: boolean) => {
+    if (e.button !== 0) return;
+    e.stopPropagation();
+    e.preventDefault();
+    const type = typeById.get(m.typeId);
+    if (e.altKey && !insert) {
+      const min = type?.kind === 'area' ? 3 : 2;
+      if (m.points.length > min) props.onReplacePoints(m.id, m.points.filter((_, i) => i !== index), 'Edit points');
+      suppressClick.current = true;
+      return;
+    }
+    drag.current = { id: m.id, index, insert, moved: false, points: m.points };
+    setEdit({ id: m.id, points: m.points });
+    svgRef.current!.setPointerCapture(e.pointerId);
+  };
+
   const onPointerDown = (e: PointerEvent<SVGSVGElement>) => {
     if (tool === 'symbol' && e.button === 0 && !spaceHeld.current && sheet) {
       e.preventDefault();
@@ -320,6 +340,19 @@ export function Viewer(props: Props) {
   };
 
   const onPointerMove = (e: PointerEvent<SVGSVGElement>) => {
+    const d = drag.current;
+    if (d) {
+      const { pt } = toPt(e);
+      d.moved = true;
+      const points = [...d.points];
+      if (d.insert) {
+        points.splice(d.index, 0, pt);
+        d.insert = false;
+      } else points[d.index] = pt;
+      d.points = points;
+      setEdit({ id: d.id, points });
+      return;
+    }
     if (band) {
       const { pt } = toPt(e);
       setBand((b) => (b ? { ...b, b: pt } : b));
@@ -338,6 +371,14 @@ export function Viewer(props: Props) {
   };
 
   const onPointerUp = () => {
+    const d = drag.current;
+    if (d) {
+      drag.current = null;
+      suppressClick.current = true;
+      if (d.moved) props.onReplacePoints(d.id, d.points, 'Edit points');
+      setEdit(null);
+      return;
+    }
     if (band) {
       const { a, b } = band;
       setBand(null);
@@ -468,7 +509,8 @@ export function Viewer(props: Props) {
         onAuxClick={(e) => e.preventDefault()}
       >
         <g transform={`translate(${view.x} ${view.y}) scale(${z})`}>
-          {sheet && measurements.map((m) => {
+          {sheet && measurements.map((shown) => {
+            const m = edit && edit.id === shown.id ? { ...shown, points: edit.points } : shown;
             const type = typeById.get(m.typeId);
             if (!type) return null;
             const isSel = m.id === selectedId;
@@ -534,6 +576,30 @@ export function Viewer(props: Props) {
             );
           })}
 
+          {tool === 'select' && selected && sheet && (() => {
+            const m = edit && edit.id === selected.id ? { ...selected, points: edit.points } : selected;
+            const kind = typeById.get(m.typeId)?.kind;
+            const closed = kind === 'area';
+            const r = 4 / z;
+            const mids = kind === 'count' ? [] : m.points.slice(0, closed ? undefined : -1).map((p, i) => {
+              const q = m.points[(i + 1) % m.points.length];
+              return [(p[0] + q[0]) / 2, (p[1] + q[1]) / 2] as Pt;
+            });
+            return (
+              <g className="handles">
+                {mids.map((p, i) => (
+                  <circle key={`m${i}`} className="handle mid" cx={p[0]} cy={p[1]} r={r * 0.75} strokeWidth={1 / z} onPointerDown={(e) => grab(e, m, i + 1, true)}>
+                    <title>Drag to add a point</title>
+                  </circle>
+                ))}
+                {m.points.map((p, i) => (
+                  <rect key={i} className="handle" x={p[0] - r} y={p[1] - r} width={2 * r} height={2 * r} strokeWidth={1.2 / z} onPointerDown={(e) => grab(e, m, i, false)}>
+                    <title>Drag to move · Option-click to remove</title>
+                  </rect>
+                ))}
+              </g>
+            );
+          })()}
           {band && (
             <rect
               className="band"

@@ -199,6 +199,10 @@ right. Tools sit in the title bar.
 9. Hover a type on the left to edit (pencil) or delete (bin) it.
 10. **Export** saves the takeoff to Excel, including the activity log.
 
+Editing: select a takeoff to show its points. Drag a corner to move it, drag
+the dot in the middle of an edge to add a point there, Option-click a corner
+to remove it (a count's single point drags to move it). Each drag is one undo.
+
 Deleting: select a takeoff and press Delete, use **Delete takeoff** on the
 selection card, or open **Takeoffs** in the inspector to delete one row, a whole
 type or everything on the sheet. Every delete shows an **Undo** button;

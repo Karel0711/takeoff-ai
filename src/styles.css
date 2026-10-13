@@ -1971,3 +1971,18 @@ button.link-button:hover {
   font-size: 13px;
   color: var(--text-2);
 }
+/* Point editing */
+.handles .handle {
+  fill: #fff;
+  stroke: var(--accent);
+  cursor: move;
+}
+.handles .handle.mid {
+  fill: var(--accent);
+  stroke: #fff;
+  opacity: 0.75;
+  cursor: copy;
+}
+.handles .handle:hover {
+  fill: var(--accent-soft);
+}

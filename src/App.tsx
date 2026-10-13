@@ -874,8 +874,8 @@ export function App() {
             if (id) setEditingTypeId(null);
           }}
           onAdd={addMeasurement}
-          onReplacePoints={(id, points) =>
-            commit((p) => ({ ...p, measurements: p.measurements.map((m) => (m.id === id ? { ...m, points } : m)) }), 'Fill room')
+          onReplacePoints={(id, points, source = 'Fill room') =>
+            commit((p) => ({ ...p, measurements: p.measurements.map((m) => (m.id === id ? { ...m, points } : m)) }), source)
           }
           getWallModel={() => (page && sheet ? wallModelFor(page, sheet, maxOpening) : null)}
           onAddHole={(id, ring) =>
