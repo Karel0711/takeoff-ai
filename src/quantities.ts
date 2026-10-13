@@ -74,7 +74,8 @@ export function contributions(project: Project): Contribution[] {
     if (type) out.push({ m, type, sheet, vars: measurementVars(m, type, sheet, project.units) });
     if (!m.finishes) continue;
     for (const { role } of FINISH_ROLES) {
-      const t = m.finishes[role] ? types.get(m.finishes[role]!) : undefined;
+      // A finish of the room's own type would count the room twice.
+      const t = m.finishes[role] && m.finishes[role] !== m.typeId ? types.get(m.finishes[role]!) : undefined;
       if (t) out.push({ m, type: t, sheet, vars: finishVars(m, t, sheet, project.units), role });
     }
   }
@@ -110,7 +111,11 @@ export interface TypeTotals {
 
 export function typeTotals(project: Project): TypeTotals[] {
   const byType = new Map<string, Contribution[]>();
-  for (const c of contributions(project)) byType.set(c.type.id, [...(byType.get(c.type.id) ?? []), c]);
+  for (const c of contributions(project)) {
+    const list = byType.get(c.type.id);
+    if (list) list.push(c);
+    else byType.set(c.type.id, [c]);
+  }
   return project.types.map((type) => {
     const vars: Vars = { L: 0, H: type.height, A: 0, P: 0, N: 0 };
     let unscaled = 0;

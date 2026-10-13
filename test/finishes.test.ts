@@ -101,5 +101,8 @@ describe('room finish quantities', () => {
     expect(of(base.id).primary).toBeCloseTo(18);
     expect(of(walls.id).vars.A).toBeCloseTo(18 * 2.7);
     expect(of(room.id).primary).toBeCloseTo(20);
+    // A finish of the room's own type does not count it twice.
+    const again = typeTotals({ ...p, sheets: [sheet], types: [...p.types, floor], measurements: [{ ...m, finishes: { floor: room.id } }] });
+    expect(again.find((t) => t.type.id === room.id)!.primary).toBeCloseTo(20);
   });
 });

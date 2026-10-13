@@ -39,7 +39,7 @@ class Index {
     const cx = Math.floor(x / this.size);
     const cy = Math.floor(y / this.size);
     const out: Line[] = [];
-    for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) out.push(...(this.cells.get(`${cx + i},${cy + j}`) ?? []));
+    for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) for (const s of this.cells.get(`${cx + i},${cy + j}`) ?? []) out.push(s);
     return out;
   }
 }
@@ -49,6 +49,8 @@ const same = (s: Line, ax: number, ay: number, bx: number, by: number, width: nu
   Math.abs(s.width - width) <= 0.02 + width * 0.05 &&
   ((Math.hypot(s.x1 - ax, s.y1 - ay) <= tol && Math.hypot(s.x2 - bx, s.y2 - by) <= tol) ||
     (Math.hypot(s.x1 - bx, s.y1 - by) <= tol && Math.hypot(s.x2 - ax, s.y2 - ay) <= tol));
+
+export const MAX_SAMPLE_LINES = 400;
 
 /** A symbol taken from a sheet: its lines about its centre, ready to look for elsewhere. */
 export interface SymbolSample {
@@ -65,7 +67,8 @@ export function sampleSymbol(segs: Segment[], box: [number, number, number, numb
   const inBox = (x: number, y: number) => x >= x0 && x <= x1 && y >= y0 && y <= y1;
   // Lines too short to tell apart (dots, chord pieces under a point) are left out.
   const lines = segs.filter((s) => len(s) >= 0.4 && inBox(s.x1, s.y1) && inBox(s.x2, s.y2));
-  if (lines.length < 2) return null;
+  // A symbol is a few dozen lines; a box round a whole room is not a symbol.
+  if (lines.length < 2 || lines.length > MAX_SAMPLE_LINES) return null;
   return {
     lines: lines.map((s) => ({ x1: s.x1 - cx, y1: s.y1 - cy, x2: s.x2 - cx, y2: s.y2 - cy, width: s.width })),
     span: Math.max(x1 - x0, y1 - y0),
@@ -98,6 +101,15 @@ export function matchSymbol(sample: SymbolSample, segs: Segment[], minScore = 0.
   const candidates = lines.filter((s) => Math.abs(s.width - anchor.width) <= 0.02 + anchor.width * 0.05 && Math.abs(len(s) - aLen) <= tol);
 
   const found: SymbolMatch[] = [];
+  // Places already matched, on a grid one symbol wide, so a copy is counted once.
+  const placed = new Map<string, Pt[]>();
+  const taken = (x: number, y: number) => {
+    const gx = Math.floor(x / span);
+    const gy = Math.floor(y / span);
+    for (let i = -1; i <= 1; i++)
+      for (let j = -1; j <= 1; j++) for (const p of placed.get(`${gx + i},${gy + j}`) ?? []) if (Math.hypot(p[0] - x, p[1] - y) < span / 2) return true;
+    return false;
+  };
   for (let turn = 0; turn < 4; turn++) {
     const turned = rel.map((s) => {
       const [ax, ay] = rot(s.x1, s.y1, turn);
@@ -113,7 +125,7 @@ export function matchSymbol(sample: SymbolSample, segs: Segment[], minScore = 0.
         [c.x1 - pbx, c.y1 - pby],
       ]) {
         if (!same(c, pax + ox, pay + oy, pbx + ox, pby + oy, anchor.width, tol)) continue;
-        if (found.some((f) => Math.hypot(f.at[0] - ox, f.at[1] - oy) < span / 2)) continue;
+        if (taken(ox, oy)) continue;
         let hits = 0;
         for (let i = 0; i < turned.length; i++) {
           const t = turned[i];
@@ -126,7 +138,13 @@ export function matchSymbol(sample: SymbolSample, segs: Segment[], minScore = 0.
           if (hits + (turned.length - i - 1) < minScore * turned.length) break;
         }
         const score = hits / turned.length;
-        if (score >= minScore) found.push({ at: [ox, oy], turn, score });
+        if (score >= minScore) {
+          found.push({ at: [ox, oy], turn, score });
+          const k = `${Math.floor(ox / span)},${Math.floor(oy / span)}`;
+          const list = placed.get(k);
+          if (list) list.push([ox, oy]);
+          else placed.set(k, [[ox, oy]]);
+        }
       }
     }
     // A symmetric symbol matches itself again turned: those places are already found.

@@ -148,14 +148,30 @@ export function findSimilar(segs: Segment[], model: WallModel, sample: Pt[], she
       if (on[Math.floor((y + 0.5) / res / cell) * cw + Math.floor((x + 0.5) / res / cell)]) covered[id]++;
     }
   }
+  /** The space under a sheet point; -1 on a wall or off the sheet. */
+  const spaceAt = (x: number, y: number) => {
+    const px = Math.floor(x * res);
+    const py = Math.floor(y * res);
+    return px >= 0 && py >= 0 && px < g.w && py < g.h ? label[py * g.w + px] : -1;
+  };
   const weight = new Float64Array(count);
   for (const m of used) {
-    const id = label[Math.floor(m.cy * res) * g.w + Math.floor(m.cx * res)];
+    const id = spaceAt(m.cx, m.cy);
     if (id >= 0) weight[id] += markWeight(m);
   }
   const sx = sample.reduce((n, p) => n + p[0], 0) / sample.length;
   const sy = sample.reduce((n, p) => n + p[1], 0) / sample.length;
-  const sampleId = label[Math.floor(sy * res) * g.w + Math.floor(sx * res)];
+  const sampleId = spaceAt(sx, sy);
+  // The pattern's cells by the space they lie in, for outlining part-hatched spaces.
+  const cellsIn = new Map<number, number[]>();
+  for (let j = 0; j < on.length; j++) {
+    if (!on[j]) continue;
+    const id = spaceAt(((j % cw) + 0.5) * cell, (Math.floor(j / cw) + 0.5) * cell);
+    if (id < 0) continue;
+    const list = cellsIn.get(id);
+    if (list) list.push(j);
+    else cellsIn.set(id, [j]);
+  }
 
   const areas: SimilarArea[] = [];
   const minArea = (cell * cell * 4) * res * res;
@@ -165,18 +181,14 @@ export function findSimilar(segs: Segment[], model: WallModel, sample: Pt[], she
     const share = covered[id] / pixels[id];
     const ptArea = pixels[id] / (res * res);
     const dens = weight[id] / ptArea;
+    // A space the coarse raster split off from a room already found is part of it.
+    if (areas.some((a) => pointInRing(seed[id], a.points))) continue;
     if (share >= 0.5 && dens >= 0.35 * density) {
       const room = fillRoom(model, [seed[id]], sheetW, sheetH, 2);
       if (room.ok && !pointInRing([sx, sy], room.points)) areas.push({ points: room.points, area: Math.abs(ringArea(room.points)), how: 'room' });
     } else if (!lines && share >= 0.08) {
       // Part of the room: the hatched cells inside it.
-      const cells: number[] = [];
-      for (let j = 0; j < on.length; j++) {
-        if (!on[j]) continue;
-        const px = Math.floor(((j % cw) + 0.5) * cell * res);
-        const py = Math.floor((Math.floor(j / cw) + 0.5) * cell * res);
-        if (px < g.w && py < g.h && label[py * g.w + px] === id) cells.push(j);
-      }
+      const cells = cellsIn.get(id) ?? [];
       pushOutline(areas, cells, cw, ch, cell);
     }
   }
@@ -206,16 +218,25 @@ function labelSpaces(g: Grid): { label: Int32Array; count: number } {
   return { label, count };
 }
 
-/** Adds the outline of each patch of cells (closed over one-cell gaps) as an area. */
-function pushOutline(areas: SimilarArea[], cells: number[], w: number, h: number, cell: number) {
-  let region: Uint8Array = new Uint8Array(w * h);
-  for (const j of cells) region[j] = 1;
-  region = closeGrid(region, w, h);
-  const seen = new Uint8Array(w * h);
-  for (const start of cells) {
+/** Adds the outline of each patch of cells (closed over one-cell gaps) as an area. Works in the cells' own box, not the whole sheet. */
+function pushOutline(areas: SimilarArea[], cells: number[], w: number, _h: number, cell: number) {
+  if (!cells.length) return;
+  const xs = cells.map((j) => j % w);
+  const ys = cells.map((j) => Math.floor(j / w));
+  // One empty cell of margin all round, so closing and tracing never touch the edge.
+  const ox = Math.min(...xs) - 1;
+  const oy = Math.min(...ys) - 1;
+  const bw = Math.max(...xs) - ox + 2;
+  const bh = Math.max(...ys) - oy + 2;
+  const local = cells.map((j) => (Math.floor(j / w) - oy) * bw + (j % w) - ox);
+  let region: Uint8Array = new Uint8Array(bw * bh);
+  for (const j of local) region[j] = 1;
+  region = closeGrid(region, bw, bh);
+  const seen = new Uint8Array(bw * bh);
+  for (const start of local) {
     if (seen[start] || !region[start]) continue;
     // One 4-connected piece of the closed region.
-    const piece = new Uint8Array(w * h);
+    const piece = new Uint8Array(bw * bh);
     const stack = [start];
     seen[start] = 1;
     let n = 0;
@@ -223,8 +244,8 @@ function pushOutline(areas: SimilarArea[], cells: number[], w: number, h: number
       const j = stack.pop()!;
       piece[j] = 1;
       n++;
-      const x = j % w;
-      for (const k of [x > 0 ? j - 1 : -1, x < w - 1 ? j + 1 : -1, j - w, j + w]) {
+      const x = j % bw;
+      for (const k of [x > 0 ? j - 1 : -1, x < bw - 1 ? j + 1 : -1, j - bw, j + bw]) {
         if (k >= 0 && k < region.length && region[k] && !seen[k]) {
           seen[k] = 1;
           stack.push(k);
@@ -232,7 +253,7 @@ function pushOutline(areas: SimilarArea[], cells: number[], w: number, h: number
       }
     }
     if (n < 4) continue;
-    const ring = simplify(traceBoundary(piece, w, h), 0.5).map(([x, y]) => [x * cell, y * cell] as Pt);
+    const ring = simplify(traceBoundary(piece, bw, bh), 0.5).map(([x, y]) => [(x + ox) * cell, (y + oy) * cell] as Pt);
     if (ring.length >= 3) areas.push({ points: ring, area: Math.abs(ringArea(ring)), how: 'hatch' });
   }
 }

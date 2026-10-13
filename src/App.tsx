@@ -464,7 +464,13 @@ export function App() {
   /** Measures the drawn line under a click, as the active length type. */
   async function traceAt(at: Pt, reach: number) {
     if (!page || !sheet || activeType?.kind !== 'linear') return;
-    const line = traceLine(await segmentsOf(page), at, reach);
+    let line: Pt[] | null;
+    try {
+      line = traceLine(await segmentsOf(page), at, reach);
+    } catch (e) {
+      setToast({ text: `Couldn’t read this sheet’s linework: ${e instanceof Error ? e.message : String(e)}`, undo: false });
+      return;
+    }
     if (!line) {
       setToast({ text: 'No line there. Click right on a drawn line.', undo: false });
       return;
@@ -484,7 +490,7 @@ export function App() {
       const sample = sampleSymbol(segs, box);
       const found = sample ? matchSymbol(sample, segs) : [];
       if (!sample || !found.length) {
-        setToast({ text: 'Nothing to match in that box. Drag it around one symbol’s linework.', undo: false });
+        setToast({ text: 'Nothing to match in that box. Drag it tightly around one symbol’s linework.', undo: false });
         return;
       }
       // Copies already counted as this type are left alone.
@@ -503,6 +509,9 @@ export function App() {
         undo: true,
         action: project!.sheets.length > 1 ? { label: 'Count on all sheets', run: () => void countEverywhere(sample, typeId, sheet.id) } : undefined,
       });
+    } catch (e) {
+      setToast({ text: `Something went wrong: ${e instanceof Error ? e.message : String(e)}`, undo: false });
+      return;
     } finally {
       setBusy(null);
     }
@@ -561,6 +570,9 @@ export function App() {
         perSheet.push(`${other.name} ${fresh.length}`);
         for (const f of fresh) added.push({ id: newId(), sheetId: other.id, typeId, points: [f.at], holes: [] });
       }
+    } catch (e) {
+      setToast({ text: `Something went wrong: ${e instanceof Error ? e.message : String(e)}`, undo: false });
+      return;
     } finally {
       setBusy(null);
     }
@@ -597,6 +609,9 @@ export function App() {
       const added = fresh.map((a) => ({ id: newId(), sheetId: sheet.id, typeId: m.typeId, points: a.points, holes: [] }));
       commit((p) => ({ ...p, measurements: [...p.measurements, ...added] }), 'Find similar');
       setToast({ text: `Added ${added.length} area${added.length === 1 ? '' : 's'} hatched like this one`, undo: true });
+    } catch (e) {
+      setToast({ text: `Something went wrong: ${e instanceof Error ? e.message : String(e)}`, undo: false });
+      return;
     } finally {
       setBusy(null);
     }
@@ -903,8 +918,12 @@ export function App() {
                       disabled={project.measurements.length > 0}
                       onClick={() => {
                         if (project.units === u) return;
-                        // Nothing measured yet: start the starter types over in the other units.
-                        commit((p) => ({ ...p, units: u, types: defaultTypes(u) }), 'Units');
+                        // Nothing measured yet. The untouched starter types are swapped for the
+                        // other units' set; types the user has made or edited are kept.
+                        const starter = defaultTypes(project.units).map((t) => t.name).join('|');
+                        const untouched = project.types.map((t) => t.name).join('|') === starter;
+                        commit((p) => ({ ...p, units: u, types: untouched ? defaultTypes(u) : p.types }), 'Units');
+                        if (untouched) setActiveTypeId(null);
                       }}
                     >
                       {u === 'metric' ? 'Metric (m, m²)' : 'Imperial (ft, SF)'}

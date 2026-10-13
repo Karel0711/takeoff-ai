@@ -130,7 +130,11 @@ function TakeoffList({ project, sheet, selectedId, onShow, onDelete }: Props) {
   const list = scope === 'sheet' && sheet ? project.measurements.filter((m) => m.sheetId === sheet.id) : project.measurements;
   const groups = useMemo(() => {
     const byType = new Map<string, Measurement[]>();
-    for (const m of list) byType.set(m.typeId, [...(byType.get(m.typeId) ?? []), m]);
+    for (const m of list) {
+      const items = byType.get(m.typeId);
+      if (items) items.push(m);
+      else byType.set(m.typeId, [m]);
+    }
     return project.types.filter((t) => byType.has(t.id)).map((t) => ({ type: t, items: byType.get(t.id)! }));
   }, [list, project.types]);
   const sheetName = (id: string) => project.sheets.find((s) => s.id === id)?.name ?? '';

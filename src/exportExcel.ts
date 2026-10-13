@@ -88,7 +88,12 @@ function measuredRows(project: Project): Map<string, Row[]> {
   const all = contributions(project);
   for (const sheet of project.sheets) {
     const onSheet = new Map<string, typeof all>();
-    for (const c of all) if (c.sheet.id === sheet.id) onSheet.set(c.type.id, [...(onSheet.get(c.type.id) ?? []), c]);
+    for (const c of all) {
+      if (c.sheet.id !== sheet.id) continue;
+      const list = onSheet.get(c.type.id);
+      if (list) list.push(c);
+      else onSheet.set(c.type.id, [c]);
+    }
     for (const type of project.types) {
       const cs = onSheet.get(type.id);
       if (!cs) continue;
@@ -98,7 +103,10 @@ function measuredRows(project: Project): Map<string, Row[]> {
         if (c.vars) qty += primaryOf(type.kind, c.vars);
         else unscaled++;
       }
-      byType.set(type.id, [...(byType.get(type.id) ?? []), { type, sheetName: sheet.name, inst: cs.length, qty, unscaled }]);
+      const row = { type, sheetName: sheet.name, inst: cs.length, qty, unscaled };
+      const list = byType.get(type.id);
+      if (list) list.push(row);
+      else byType.set(type.id, [row]);
     }
   }
   return byType;

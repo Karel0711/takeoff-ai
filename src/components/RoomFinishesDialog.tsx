@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { readFinishSchedule, roomNumbersOf, type ScheduleRow } from '../finishSchedule';
 import { FINISH_ROLES, finishType, type FinishRole, type Measurement, type Project, type Sheet, type TakeoffType } from '../model';
 import { pageTexts } from '../pageText';
@@ -40,6 +40,8 @@ export function RoomFinishesDialog({ project, palette, getPage, onApply, onClose
   );
   const [draft, setDraft] = useState<Map<string, Finishes>>(() => new Map(rooms.map((m) => [m.id, { ...m.finishes }])));
   const [added, setAdded] = useState<TakeoffType[]>([]);
+  /** The types made in this dialog so far, current even inside a long-running read. */
+  const addedRef = useRef<TakeoffType[]>([]);
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [bulkRole, setBulkRole] = useState<FinishRole>('floor');
   const [bulkType, setBulkType] = useState(NONE);
@@ -48,15 +50,18 @@ export function RoomFinishesDialog({ project, palette, getPage, onApply, onClose
   const types = [...project.types, ...added];
   const sheets = new Map(project.sheets.map((s) => [s.id, s]));
 
-  const optionsFor = (role: FinishRole) => {
+  /** Types a finish can be: the right kind, and not the type the room itself is (that would count it twice). */
+  const optionsFor = (role: FinishRole, room?: Measurement) => {
     const kind = FINISH_ROLES.find((r) => r.role === role)!.kind;
-    return types.filter((t) => t.kind === kind);
+    return types.filter((t) => t.kind === kind && t.id !== room?.typeId);
   };
 
   const set = (ids: string[], role: FinishRole, typeId: string) =>
     setDraft((d) => {
       const next = new Map(d);
       for (const id of ids) {
+        // Never a room's own type (see optionsFor).
+        if (typeId && rooms.find((m) => m.id === id)?.typeId === typeId) continue;
         const f = { ...next.get(id) };
         if (typeId) f[role] = typeId;
         else delete f[role];
@@ -81,8 +86,9 @@ export function RoomFinishesDialog({ project, palette, getPage, onApply, onClose
     });
     if (!code?.trim()) return;
     const fresh: TakeoffType[] = [];
-    const id = typeFor(role, code.trim(), types, fresh);
-    setAdded((a) => [...a, ...fresh]);
+    const id = typeFor(role, code.trim(), [...project.types, ...addedRef.current], fresh);
+    addedRef.current = [...addedRef.current, ...fresh];
+    setAdded(addedRef.current);
     set(ids, role, id);
   }
 
@@ -108,17 +114,28 @@ export function RoomFinishesDialog({ project, palette, getPage, onApply, onClose
       setReadNote('No room finish schedule found on these drawings. Pick the finishes by hand, or select rooms and set them together.');
       return;
     }
+    // Applied to the latest picks and types: the dialog stays usable while the sheets are read.
     const fresh: TakeoffType[] = [];
-    const next = new Map(draft);
+    const pool = [...project.types, ...addedRef.current];
+    const roomType = new Map(rooms.map((m) => [m.id, m.typeId]));
+    const picks = new Map<string, Finishes>();
     for (const row of best.rows) {
       for (const id of numbers.get(row.number) ?? []) {
-        const f = { ...next.get(id) };
-        for (const [role, code] of Object.entries(row.finishes) as [FinishRole, string][]) f[role] = typeFor(role, code, types, fresh);
-        next.set(id, f);
+        const f: Finishes = { ...picks.get(id) };
+        for (const [role, code] of Object.entries(row.finishes) as [FinishRole, string][]) {
+          const t = typeFor(role, code, pool, fresh);
+          if (t !== roomType.get(id)) f[role] = t;
+        }
+        picks.set(id, f);
       }
     }
-    setAdded((a) => [...a, ...fresh]);
-    setDraft(next);
+    addedRef.current = [...addedRef.current, ...fresh];
+    setAdded(addedRef.current);
+    setDraft((d) => {
+      const next = new Map(d);
+      for (const [id, f] of picks) next.set(id, { ...next.get(id), ...f });
+      return next;
+    });
     setReadNote(
       `Read the schedule on ${best.sheet.name}: ${best.rows.length} room${best.rows.length === 1 ? '' : 's'}, ${best.matched} matched to your room takeoffs` +
         (fresh.length ? `, ${fresh.length} new finish type${fresh.length === 1 ? '' : 's'}.` : '.'),
@@ -260,7 +277,7 @@ export function RoomFinishesDialog({ project, palette, getPage, onApply, onClose
                               onChange={(e) => (e.target.value === NEW ? void newType([m.id], r.role) : set([m.id], r.role, e.target.value))}
                             >
                               <option value={NONE}>—</option>
-                              {optionsFor(r.role).map((t) => (
+                              {optionsFor(r.role, m).map((t) => (
                                 <option key={t.id} value={t.id} title={t.name}>
                                   {t.name.split(' – ')[0]}
                                 </option>
