@@ -167,7 +167,13 @@ export function App() {
         setScaleCheck({ sheetId: sheet.id, result });
         // A scale read from the title block that the dimensions confirm needs no checking.
         if (result && result.agree >= 5 && sheet.scaleSource === 'detected' && sheet.metersPerPoint && Math.abs(result.metersPerPoint / sheet.metersPerPoint - 1) < 0.02) {
-          updateSheet(sheet.id, { scaleSource: 'verified' }, 'Scale check');
+          // Not a user change: kept out of undo and history.
+          const prev = projectRef.current;
+          if (prev) {
+            const next = { ...prev, sheets: prev.sheets.map((x) => (x.id === sheet.id ? { ...x, scaleSource: 'verified' as const } : x)) };
+            projectRef.current = next;
+            setProject(next);
+          }
         }
       })
       .catch(() => live && setScaleCheck({ sheetId: sheet.id, result: null }));
@@ -408,21 +414,22 @@ export function App() {
   async function openProjectFile(file: File) {
     setBusy(`Opening ${file.name}…`);
     try {
-      const all = await readProjectFiles(await file.arrayBuffer());
       // Opening a file always makes new projects; say so when a name is already taken.
       const names = new Set((await listProjects()).map((p) => p.name));
       await flush();
       let last: Project | null = null;
-      for (const opened of all) {
+      // Each project is saved as soon as it is read, so a big backup is never all in memory.
+      const count = await readProjectFiles(file, async (opened) => {
         if (names.has(opened.project.name)) opened.project = { ...opened.project, name: `${opened.project.name} (copy)` };
         names.add(opened.project.name);
         for (const [id, data] of opened.pdfs) await savePdf(id, data);
         await saveProject(opened.project);
         if (opened.project.id) await saveActivity(opened.project.id, opened.activity);
         last = opened.project;
-      }
-      if (last) await openProjectState(last);
-      setToast({ text: all.length === 1 ? `Opened ${last?.name}` : `Restored ${all.length} projects from the backup`, undo: false });
+      });
+      const opened = last as Project | null;
+      if (opened) await openProjectState(opened);
+      setToast({ text: count === 1 ? `Opened ${opened?.name}` : `Restored ${count} projects from the backup`, undo: false });
     } catch (e) {
       await notify(e instanceof Error ? e.message : 'That file could not be opened.');
     } finally {
@@ -441,9 +448,11 @@ export function App() {
         const p = await loadProjectById(summary.id);
         if (p) entries.push({ project: p, activity: await loadActivity(summary.id) });
       }
-      const blob = await writeBackup(entries, loadPdf);
+      const { blob, missing } = await writeBackup(entries, loadPdf);
       const date = new Date().toISOString().slice(0, 10);
       if ((await saveFile(`Takeoff AI backup ${date}.zip`, blob)) === 'failed') setToast({ text: 'The backup could not be saved.', undo: false });
+      else if (missing.length)
+        await notify(`Backed up ${entries.length} projects, but these drawings were not in this browser and are not in the backup: ${missing.join(', ')}. Add them again to those projects.`);
       else setToast({ text: `Backed up ${entries.length} project${entries.length === 1 ? '' : 's'}`, undo: false });
     } catch (e) {
       setToast({ text: `Something went wrong: ${e instanceof Error ? e.message : String(e)}`, undo: false });
@@ -1128,9 +1137,11 @@ export function App() {
                         if (project.units === u) return;
                         // Nothing measured yet. The untouched starter types are swapped for the
                         // other units' set (the user's own, if saved); types made or edited are kept.
-                        const builtIn = defaultTypes(project.units).map((t) => t.name).join('|');
-                        const untouched = project.types.map((t) => t.name).join('|') === builtIn;
                         const own = await loadStarterTypes();
+                        const names = project.types.map((t) => t.name).join('|');
+                        const untouched =
+                          names === defaultTypes(project.units).map((t) => t.name).join('|') ||
+                          (own?.units === project.units && names === own.types.map((t) => t.name).join('|'));
                         const next = own?.units === u && own.types.length ? own.types.map((t) => ({ ...t, id: newId() })) : defaultTypes(u);
                         commit((p) => ({ ...p, units: u, types: untouched ? next : p.types }), 'Units');
                         if (untouched) setActiveTypeId(null);

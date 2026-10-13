@@ -35,14 +35,16 @@ describe('backups', () => {
     const { writeBackup, readProjectFiles } = await import('../src/projectFile');
     const a = { ...newProject('metric'), name: 'Lodge' };
     const b = { ...newProject('imperial'), name: 'Garage' };
-    const blob = await writeBackup(
+    const { blob, missing } = await writeBackup(
       [
         { project: a, activity: [] },
         { project: b, activity: [] },
       ],
       async () => undefined,
     );
-    const opened = await readProjectFiles(await blob.arrayBuffer());
+    expect(missing).toEqual([]);
+    const opened: Awaited<ReturnType<typeof import('../src/projectFile').readProjectFile>>[] = [];
+    expect(await readProjectFiles(await blob.arrayBuffer(), async (o) => void opened.push(o))).toBe(2);
     expect(opened.map((o) => [o.project.name, o.project.units])).toEqual([
       ['Lodge', 'metric'],
       ['Garage', 'imperial'],

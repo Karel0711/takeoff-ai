@@ -71,7 +71,9 @@ export function findRoomLabels(texts: PageText[], segs: Segment[]): RoomLabel[] 
     const name = nameAbove(texts, t, t.cx, t.cy - t.h / 2, t.w);
     if (!name) continue;
     const r = Math.max(t.w, t.h) * 0.5 + 14;
-    const local = dedupe(index.query(t.cx - r, t.cy - r, t.cx + r, t.cy + r).map((i) => lines[i]));
+    // Only lines wholly near the number: a small room's own walls are not a symbol round it.
+    const near = (x: number, y: number) => Math.hypot(x - t.cx, y - t.cy) <= r;
+    const local = dedupe(index.query(t.cx - r, t.cy - r, t.cx + r, t.cy + r).map((i) => lines[i])).filter((s) => near(s.x1, s.y1) && near(s.x2, s.y2));
     const enclosed = [...new Set(local.map((s) => s.width))].some((pen) => symbolLoop(local.filter((s) => s.width === pen), t.cx, t.cy).length > 0);
     if (enclosed) continue;
     out.push({ number: t.str, name, at: [t.cx, t.cy] });

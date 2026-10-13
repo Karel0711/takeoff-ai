@@ -370,6 +370,13 @@ export function Viewer(props: Props) {
     setHover({ ...h, pt: snap(h.pt, e.shiftKey) });
   };
 
+  /** A drag the browser took away (touch cancel, window lost focus) is dropped, not saved. */
+  const cancelDrag = () => {
+    if (!drag.current) return;
+    drag.current = null;
+    setEdit(null);
+  };
+
   const onPointerUp = () => {
     const d = drag.current;
     if (d) {
@@ -504,6 +511,8 @@ export function Viewer(props: Props) {
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
+        onPointerCancel={cancelDrag}
+        onLostPointerCapture={cancelDrag}
         onPointerLeave={() => setHover(null)}
         onClick={onClick}
         onAuxClick={(e) => e.preventDefault()}

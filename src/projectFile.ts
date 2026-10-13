@@ -71,7 +71,8 @@ const BACKUP = 'takeoff-ai-backup';
 
 /**
  * A backup of every project: one zip holding each project's .takeoff file, so it can
- * be restored whole or any one project opened from it on its own.
+ * be restored whole or any one project opened from it on its own. Returns the names of
+ * drawings that were not in this browser's storage and so are not in the backup.
  *
  *   backup.json                 { format, version, savedAt, projects: names }
  *   projects/<n> <name>.takeoff
@@ -79,20 +80,30 @@ const BACKUP = 'takeoff-ai-backup';
 export async function writeBackup(
   projects: { project: Project; activity: ActivityEvent[] }[],
   loadPdf: (docId: string) => Promise<ArrayBuffer | undefined>,
-): Promise<Blob> {
+): Promise<{ blob: Blob; missing: string[] }> {
   const { default: JSZip } = await import('jszip');
   const zip = new JSZip();
   zip.file('backup.json', JSON.stringify({ format: BACKUP, version: 1, savedAt: new Date().toISOString(), projects: projects.map((p) => p.project.name) }));
+  const missing: string[] = [];
+  let bytes = 0;
   for (const [i, { project, activity }] of projects.entries()) {
-    const { blob } = await writeProjectFile(project, activity, loadPdf);
+    const file = await writeProjectFile(project, activity, loadPdf);
+    missing.push(...file.missing.map((m) => `${project.name}: ${m}`));
+    bytes += file.blob.size;
+    // Zip files over 4 GB need a format JSZip does not write.
+    if (bytes > 3.9e9) throw new Error('These projects are too big for one backup file (over 4 GB). Save the largest ones to their own files from Projects › Save to file.');
     const safe = project.name.replace(/[^\w\- ]+/g, '').trim() || 'project';
-    zip.file(`projects/${String(i + 1).padStart(2, '0')} ${safe}.takeoff`, await blob.arrayBuffer());
+    zip.file(`projects/${String(i + 1).padStart(2, '0')} ${safe}.takeoff`, file.blob);
   }
-  return zip.generateAsync({ type: 'blob', compression: 'STORE', mimeType: 'application/zip' });
+  const blob = await zip.generateAsync({ type: 'blob', compression: 'STORE', mimeType: 'application/zip' });
+  return { blob, missing };
 }
 
-/** Reads a project file or a backup of several, each as a new project. */
-export async function readProjectFiles(data: ArrayBuffer): Promise<OpenedProject[]> {
+/**
+ * Reads a project file or a backup of several, handing each project over as it is read
+ * (so a large backup is never all in memory at once). Returns how many there were.
+ */
+export async function readProjectFiles(data: Blob | ArrayBuffer, onProject: (opened: OpenedProject) => Promise<void>): Promise<number> {
   const { default: JSZip } = await import('jszip');
   let zip;
   try {
@@ -100,10 +111,12 @@ export async function readProjectFiles(data: ArrayBuffer): Promise<OpenedProject
   } catch {
     throw new Error('That file is not a Takeoff AI project file.');
   }
-  if (!zip.file('backup.json')) return [await readProjectFile(data)];
+  if (!zip.file('backup.json')) {
+    await onProject(await readProjectFile(data instanceof Blob ? await data.arrayBuffer() : data));
+    return 1;
+  }
   const entries = zip.file(/^projects\/.+\.takeoff$/).sort((a, b) => a.name.localeCompare(b.name));
-  const out: OpenedProject[] = [];
-  for (const e of entries) out.push(await readProjectFile(await e.async('arraybuffer')));
-  if (!out.length) throw new Error('That backup has no projects in it.');
-  return out;
+  if (!entries.length) throw new Error('That backup has no projects in it.');
+  for (const e of entries) await onProject(await readProjectFile(await e.async('arraybuffer')));
+  return entries.length;
 }
