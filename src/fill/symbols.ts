@@ -4,7 +4,7 @@ import type { Segment } from './vectors';
 export interface SymbolMatch {
   /** Centre of the matched symbol, in sheet points. */
   at: Pt;
-  /** Quarter turns from the sample (0–3). */
+  /** Quarter turns from the sample (0–3); 4–7 are the same turns of its mirror image. */
   turn: number;
   /** Share of the sample's lines found at this place (0–1). */
   score: number;
@@ -15,8 +15,12 @@ type Line = { x1: number; y1: number; x2: number; y2: number; width: number };
 const len = (s: Line) => Math.hypot(s.x2 - s.x1, s.y2 - s.y1);
 
 /** Turns a point by quarter turns about the origin (sheet y points down). */
-const rot = (x: number, y: number, turn: number): [number, number] =>
-  turn === 0 ? [x, y] : turn === 1 ? [-y, x] : turn === 2 ? [-x, -y] : [y, -x];
+const rot = (x: number, y: number, turn: number): [number, number] => {
+  // Turns 4–7 mirror the symbol left to right first (a left-hand door is a right-hand one flipped).
+  const mx = turn >= 4 ? -x : x;
+  const q = turn % 4;
+  return q === 0 ? [mx, y] : q === 1 ? [-y, mx] : q === 2 ? [-mx, -y] : [y, -mx];
+};
 
 /** Segments bucketed by midpoint for quick lookups around a point. */
 class Index {
@@ -77,7 +81,7 @@ export function sampleSymbol(segs: Segment[], box: [number, number, number, numb
 
 /**
  * Finds every copy of the symbol drawn inside `box`: the same lines, in the same pens,
- * at the same size, moved and turned by quarter turns. CAD blocks repeat exactly, so a
+ * at the same size, moved, turned by quarter turns or mirrored. CAD blocks repeat exactly, so a
  * copy must have nearly all of the sample's lines.
  */
 export function findSymbols(segs: Segment[], box: [number, number, number, number], minScore = 0.85): SymbolMatch[] {
@@ -110,7 +114,7 @@ export function matchSymbol(sample: SymbolSample, segs: Segment[], minScore = 0.
       for (let j = -1; j <= 1; j++) for (const p of placed.get(`${gx + i},${gy + j}`) ?? []) if (Math.hypot(p[0] - x, p[1] - y) < span / 2) return true;
     return false;
   };
-  for (let turn = 0; turn < 4; turn++) {
+  for (let turn = 0; turn < 8; turn++) {
     const turned = rel.map((s) => {
       const [ax, ay] = rot(s.x1, s.y1, turn);
       const [bx, by] = rot(s.x2, s.y2, turn);
