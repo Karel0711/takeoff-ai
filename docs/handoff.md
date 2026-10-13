@@ -165,6 +165,19 @@ Where the project stands, for picking it up in a new session.
     outside the box; door swings then come off rooms, a few percent), sheets
     saved turned (scale check uses the text's angle), text written a
     character at a time (pdf.js joins it already).
+  - **Floor finishes from a legend:** the sample's A1.02 finish plan (tile grid,
+    carpet stipple, concrete hatch) is taken off in one step by Read a legend
+    (swatches sampled with looser minimums, since a swatch at plan scale may
+    hold only two grid lines each way; areas named by the room tag inside).
+    That found a bug: stipple dots in the wall pen were wall lines; lines
+    under 0.3 pt no longer are (Kelso rooms and walls unchanged).
+  - **Hatch matches** need ≥ 0.45 of the sample's density (was 0.35): A6.1's
+    entry stair under an ACT sample was 0.36, real matches 0.56–1.07. Find on
+    all sheets now lists results per sheet to untick before adding (Kelso
+    millwork pages 44/45 pick up the GWB stipple; they have no scale to compare).
+  - Tried and dropped: rejecting gap bridges that cut through a wall (meant for
+    tag boxes lined up across rooms on one-pen drawings) changed A2.1 rooms
+    105 and 221 and needed tuning to keep the wall score; not worth it.
   - **Count a text tag** from the search (exact matches, every current sheet),
     **duplicate project** (drawings copied under new ids), an upload note
     (scales read, sheets without text), quiet scale verification when a sheet
