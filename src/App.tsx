@@ -7,6 +7,7 @@ import { Icon, type IconName } from './components/Icons';
 import { Inspector, type InspectorTab } from './components/Inspector';
 import { Menu, Popover } from './components/Popover';
 import { RoomsDialog } from './components/RoomsDialog';
+import { ProjectsPanel } from './components/ProjectsPanel';
 import { ScalePicker } from './components/ScalePicker';
 import { ShortcutsDialog } from './components/ShortcutsDialog';
 import { TypeEditor } from './components/TypeEditor';
@@ -18,7 +19,9 @@ import { isHosted, saveFile } from './host';
 import { newId, newProject, type Project, type Pt, type Sheet, type TakeoffType, type Units } from './model';
 import { inspectPage, openPdf, type PDFDocumentProxy, type PDFPageProxy } from './pdf';
 import { typeTotals } from './quantities';
-import { deletePdf, loadActivity, loadPdf, loadProject, saveActivity, savePdf, saveProject } from './storage';
+import { deleteProject, listProjects, loadActivity, loadCurrentProject, loadPdf, loadProjectById, persistStorage, saveActivity, savePdf, saveProject } from './storage';
+import { readProjectFile, writeProjectFile } from './projectFile';
+import { canUseServiceWorker, isInstalled, onLaunchFiles, promptInstall, registerServiceWorker } from './pwa';
 import { formatQty, parseScale } from './units';
 
 const PALETTE = ['#0a84ff', '#ff9f0a', '#30d158', '#bf5af2', '#ff375f', '#64d2ff', '#ffd60a', '#ac8e68', '#5e5ce6', '#ff6961'];
@@ -27,6 +30,10 @@ const UNDO_LIMIT = 200;
 interface Toast {
   text: string;
   undo: boolean;
+  /** A button other than Undo, e.g. "Restart" for an update. */
+  action?: { label: string; run: () => void };
+  /** Stay until dismissed. */
+  sticky?: boolean;
 }
 
 const TOOLS: { id: Tool; label: string; icon: IconName; key: string; help: string }[] = [
@@ -57,8 +64,11 @@ export function App() {
   const [toast, setToast] = useState<Toast | null>(null);
   const [sheetFilter, setSheetFilter] = useState('');
   const [aiDialog, setAiDialog] = useState<'assemblies' | 'settings' | 'walls' | 'rooms' | 'shortcuts' | null>(null);
-  const [popover, setPopover] = useState<'scale' | 'more' | 'automate' | null>(null);
+  const [popover, setPopover] = useState<'scale' | 'more' | 'automate' | 'projects' | null>(null);
   const [tab, setTab] = useState<InspectorTab>('quantities');
+  const [persisted, setPersisted] = useState(false);
+  const projectFileInput = useRef<HTMLInputElement>(null);
+  const projectsButton = useRef<HTMLButtonElement>(null);
   /** Fill closes wall openings up to this width (metres); wider ones count as open. */
   const [maxOpening, setMaxOpening] = useState(3);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -67,23 +77,43 @@ export function App() {
   const automateButton = useRef<HTMLButtonElement>(null);
 
   // Load the saved project, its PDFs and its activity log.
+  /** Opens a project: its drawings, its history, a fresh undo stack. */
+  const openProjectState = useCallback(async (p: Project) => {
+    const opened = new Map<string, PDFDocumentProxy>();
+    for (const doc of p.docs) {
+      const data = await loadPdf(doc.id);
+      if (data) opened.set(doc.id, await openPdf(data));
+    }
+    const log = p.id ? await loadActivity(p.id) : [];
+    past.current = [];
+    future.current = [];
+    lastCommit.current = null;
+    activityRef.current = log;
+    setActivity(log);
+    setPdfs(opened);
+    projectRef.current = p;
+    setProject(p);
+    setSheetId(p.sheets[0]?.id ?? null);
+    setActiveTypeId(null);
+    setEditingTypeId(null);
+    setSelectedId(null);
+    setTool('select');
+  }, []);
+
   useEffect(() => {
     (async () => {
-      const saved = (await loadProject()) ?? newProject('metric');
-      const opened = new Map<string, PDFDocumentProxy>();
-      for (const doc of saved.docs) {
-        const data = await loadPdf(doc.id);
-        if (data) opened.set(doc.id, await openPdf(data));
-      }
-      const log = await loadActivity();
-      activityRef.current = log;
-      setActivity(log);
-      setPdfs(opened);
-      projectRef.current = saved;
-      setProject(saved);
-      setSheetId(saved.sheets[0]?.id ?? null);
+      const saved = (await loadCurrentProject()) ?? newProject('metric');
+      await openProjectState(saved.id ? saved : { ...saved, id: newId() });
+      setPersisted(await persistStorage());
     })();
-  }, []);
+    registerServiceWorker((apply) =>
+      setToast({ text: 'A new version of Takeoff AI is ready', undo: false, sticky: true, action: { label: 'Restart', run: apply } }),
+    );
+  }, [openProjectState]);
+
+  // Files the installed app was opened with from Finder.
+  const launchHandler = useRef<(files: File[]) => void>(() => {});
+  useEffect(() => onLaunchFiles((files) => launchHandler.current(files)), []);
 
   // Autosave.
   useEffect(() => {
@@ -110,7 +140,7 @@ export function App() {
   }, [sheet?.id, sheet?.docId, sheet?.page, pdfs]);
 
   useEffect(() => {
-    if (!toast) return;
+    if (!toast || toast.sticky) return;
     const t = window.setTimeout(() => setToast(null), 6000);
     return () => window.clearTimeout(t);
   }, [toast]);
@@ -123,7 +153,8 @@ export function App() {
     const all = [...kept, ...events];
     activityRef.current = all;
     setActivity(all);
-    void saveActivity(all);
+    const id = projectRef.current?.id;
+    if (id) void saveActivity(id, all);
   }, []);
 
   /**
@@ -258,29 +289,98 @@ export function App() {
     setBusy(null);
   }
 
+  /** Saves the open project now (rather than on the autosave timer), before switching away. */
+  const flush = async () => {
+    if (projectRef.current) await saveProject(projectRef.current);
+  };
+
   async function startNewProject(units: Units) {
+    await flush();
+    const fresh = newProject(units);
+    await saveProject(fresh);
+    await openProjectState(fresh);
+    setToast({ text: `New ${units} project`, undo: false });
+  }
+
+  async function switchProject(id: string) {
+    await flush();
+    const p = await loadProjectById(id);
+    if (!p) {
+      await notify('That project could not be opened. It may have been deleted in another window.');
+      return;
+    }
+    await openProjectState(p);
+  }
+
+  async function removeProject(id: string) {
+    const target = id === project!.id ? project! : await loadProjectById(id);
+    if (!target) return;
     const ok = await askConfirm(
-      `Start a new ${units} project? This project, its drawings and its history are removed from this browser. Export it to Excel first if you need it.`,
-      { confirmLabel: 'Start new project', danger: true },
+      `Delete “${target.name}” with its drawings, takeoffs and history from this computer? Save it to a file first if you may need it again.`,
+      { confirmLabel: 'Delete project', danger: true },
     );
     if (!ok) return;
-    for (const d of project!.docs) await deletePdf(d.id);
-    const fresh = newProject(units);
-    past.current = [];
-    future.current = [];
-    lastCommit.current = null;
-    activityRef.current = [];
-    setActivity([]);
-    void saveActivity([]);
-    setPdfs(new Map());
-    projectRef.current = fresh;
-    setProject(fresh);
-    setSheetId(null);
-    setActiveTypeId(null);
-    setEditingTypeId(null);
-    setSelectedId(null);
-    setTool('select');
+    await deleteProject(target);
+    if (id === project!.id) {
+      const next = await loadCurrentProject();
+      await openProjectState(next ?? newProject(project!.units));
+    }
+    setPopover(null);
+    setToast({ text: `Deleted ${target.name}`, undo: false });
   }
+
+  async function saveProjectFile() {
+    setBusy('Saving the project file…');
+    try {
+      await flush();
+      const { blob, missing } = await writeProjectFile(project!, activityRef.current, async (id) => await loadPdf(id));
+      const filename = `${project!.name.replace(/[^\w\- ]+/g, '').trim() || 'takeoff'}.takeoff`;
+      const result = await saveFile(filename, blob);
+      if (result === 'failed') await notify('The project file could not be saved here. Try again in a moment.');
+      else if (missing.length) await notify(`Saved, but these drawings were missing from this browser and are not in the file: ${missing.join(', ')}.`);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function openProjectFile(file: File) {
+    setBusy(`Opening ${file.name}…`);
+    try {
+      const opened = await readProjectFile(await file.arrayBuffer());
+      // Opening a file always makes a new project; say so when the name is already taken.
+      const names = new Set((await listProjects()).map((p) => p.name));
+      if (names.has(opened.project.name)) opened.project = { ...opened.project, name: `${opened.project.name} (copy)` };
+      await flush();
+      for (const [id, data] of opened.pdfs) await savePdf(id, data);
+      await saveProject(opened.project);
+      if (opened.project.id) await saveActivity(opened.project.id, opened.activity);
+      await openProjectState(opened.project);
+      setToast({ text: `Opened ${opened.project.name}`, undo: false });
+    } catch (e) {
+      await notify(e instanceof Error ? e.message : 'That file could not be opened.');
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function installApp() {
+    const result = await promptInstall();
+    if (result === 'manual')
+      await notify(
+        'To install Takeoff AI: in Safari choose File › Add to Dock; in Chrome or Edge click the install button at the right of the address bar. It then opens in its own window, works offline and updates itself.',
+      );
+  }
+
+  launchHandler.current = (files: File[]) => {
+    const takeoff = files.find((f) => /\.(takeoff|zip)$/i.test(f.name));
+    if (takeoff) void openProjectFile(takeoff);
+    const pdfFiles = files.filter((f) => /\.pdf$/i.test(f.name));
+    if (pdfFiles.length) {
+      const dt = new DataTransfer();
+      pdfFiles.forEach((f) => dt.items.add(f));
+      void upload(dt.files);
+    }
+  };
 
   async function removeDrawings(docId: string) {
     const doc = project!.docs.find((d) => d.id === docId);
@@ -379,6 +479,17 @@ export function App() {
   return (
     <div className="app">
       <header className="titlebar">
+        <input
+          ref={projectFileInput}
+          type="file"
+          accept=".takeoff,.zip,application/zip"
+          hidden
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) void openProjectFile(f);
+            e.target.value = '';
+          }}
+        />
         <div className="tb-left">
           <div className="app-mark" aria-hidden="true">
             <svg viewBox="0 0 20 20" width="20" height="20">
@@ -398,6 +509,16 @@ export function App() {
               setProject(next);
             }}
           />
+          <button
+            ref={projectsButton}
+            className="icon-button small"
+            onClick={() => setPopover(popover === 'projects' ? null : 'projects')}
+            aria-expanded={popover === 'projects'}
+            aria-label="Projects"
+            title="Projects"
+          >
+            <Icon name="chevronDown" size={14} />
+          </button>
         </div>
 
         <div className="tb-center">
@@ -639,6 +760,21 @@ export function App() {
         {toast && (
           <div className="toast" role="status">
             <span>{toast.text}</span>
+            {toast.action && (
+              <button
+                onClick={() => {
+                  toast.action!.run();
+                  setToast(null);
+                }}
+              >
+                {toast.action.label}
+              </button>
+            )}
+            {toast.sticky && (
+              <button aria-label="Dismiss" onClick={() => setToast(null)}>
+                Later
+              </button>
+            )}
             {toast.undo && (
               <button
                 onClick={() => {
@@ -700,6 +836,31 @@ export function App() {
           />
         </Popover>
       )}
+      {popover === 'projects' && (
+        <Popover anchor={projectsButton} onClose={() => setPopover(null)} width={400} label="Projects">
+          <ProjectsPanel
+            currentId={project.id}
+            persisted={persisted}
+            onOpen={(id) => {
+              setPopover(null);
+              void switchProject(id);
+            }}
+            onNew={(units) => {
+              setPopover(null);
+              void startNewProject(units);
+            }}
+            onDelete={(id) => void removeProject(id)}
+            onSaveFile={() => {
+              setPopover(null);
+              void saveProjectFile();
+            }}
+            onOpenFile={() => {
+              setPopover(null);
+              projectFileInput.current?.click();
+            }}
+          />
+        </Popover>
+      )}
       {popover === 'automate' && sheet && (
         <Popover anchor={automateButton} onClose={() => setPopover(null)} width={360} label="Automate">
           <div className="automate-menu" role="menu">
@@ -757,12 +918,14 @@ export function App() {
             [
               { label: 'History', hint: 'Every change', onSelect: () => setTab('history') },
               { label: 'Keyboard shortcuts', onSelect: () => setAiDialog('shortcuts') },
+              ...(canUseServiceWorker() && !isInstalled() ? [{ label: 'Install as an app…', onSelect: () => void installApp() }] : []),
               ...(isHosted ? [] : [{ label: 'AI settings…', onSelect: () => setAiDialog('settings') }]),
             ],
             project.docs.map((d) => ({ label: `Remove ${d.name}…`, danger: true, onSelect: () => void removeDrawings(d.id) })),
             [
-              { label: 'New metric project…', onSelect: () => void startNewProject('metric') },
-              { label: 'New imperial project…', onSelect: () => void startNewProject('imperial') },
+              { label: 'Projects…', onSelect: () => setPopover('projects') },
+              { label: 'Save project to file…', onSelect: () => void saveProjectFile() },
+              { label: 'Open project file…', onSelect: () => projectFileInput.current?.click() },
             ],
           ].filter((g) => g.length)}
         />

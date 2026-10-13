@@ -1832,3 +1832,78 @@ progress.progress {
   color: var(--text-2);
   line-height: 1.4;
 }
+
+.project-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 8px 8px;
+  max-height: 320px;
+  overflow: auto;
+}
+.project-list li {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: var(--radius);
+}
+.project-list li:hover {
+  background: var(--window);
+}
+.project-list li.current {
+  background: var(--accent-soft);
+}
+.project-row {
+  flex: 1;
+  min-width: 0;
+  justify-content: space-between;
+  min-height: 0;
+  padding: 8px;
+  border: none;
+  background: none;
+  box-shadow: none;
+  text-align: left;
+  font-weight: 400;
+}
+.project-row:disabled {
+  opacity: 1;
+  cursor: default;
+}
+.project-row:hover:not(:disabled) {
+  background: none;
+}
+.project-name-cell {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.project-title {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.project-meta {
+  font-size: 11px;
+  color: var(--text-2);
+  white-space: normal;
+}
+.open-badge {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent);
+}
+.project-empty {
+  padding: 8px;
+}
+.button-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.button-row button {
+  flex: 1;
+}
+.storage-line {
+  font-size: 11px;
+  color: var(--text-3);
+}

@@ -106,6 +106,8 @@ export interface Measurement {
 
 export interface Project {
   version: 1;
+  /** Set when the project is first saved; projects from older versions get one on load. */
+  id?: string;
   name: string;
   units: Units;
   docs: Doc[];
@@ -209,6 +211,7 @@ export function defaultTypes(units: Units): TakeoffType[] {
 export function newProject(units: Units = 'metric'): Project {
   return {
     version: 1,
+    id: newId(),
     name: 'Untitled project',
     units,
     docs: [],

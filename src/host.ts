@@ -75,6 +75,7 @@ export async function saveFile(filename: string, data: Blob): Promise<SaveOutcom
   a.href = URL.createObjectURL(data);
   a.download = filename;
   a.click();
-  URL.revokeObjectURL(a.href);
+  // Some browsers start the download after this returns, so the URL is released later.
+  window.setTimeout(() => URL.revokeObjectURL(a.href), 60_000);
   return 'saved';
 }

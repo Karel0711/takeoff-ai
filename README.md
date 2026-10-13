@@ -98,6 +98,30 @@ browser. When you use an AI feature, the sheet you chose (as images and its text
 is sent to Anthropic's API; nothing else leaves your computer. Reading one legend
 sheet takes one to three minutes.
 
+## Saving, projects and installing
+
+- **Projects:** click the arrow beside the project name. Every project is saved
+  automatically in the browser's database on this computer (IndexedDB), with
+  its drawings and its history; the app asks the browser to keep this data
+  permanently. Open, create (metric or imperial) and delete projects there.
+- **Project files:** **Save to file…** writes one `.takeoff` file holding the
+  project, its history and its drawings, for backups or another computer;
+  **Open file…** opens one as a new project.
+- **Install as an app:** when served from a normal web host (see below), Chrome
+  and Edge offer to install it (More › Install as an app…) and Safari adds it
+  with File › Add to Dock. It then opens in its own window, works offline, opens
+  `.takeoff` files and PDFs from Finder (Chrome), and updates itself: when a new
+  version is published it shows **Restart** to switch.
+
+### Publishing it for your team
+
+`.github/workflows/app.yml` checks every change and, on `main`, publishes the
+built app to GitHub Pages. Turn it on once under Settings › Pages › Source:
+GitHub Actions (Pages on private repositories needs a paid GitHub plan).
+Any static host works too: run `npm run build` and upload the `dist` folder
+(Netlify, Cloudflare Pages, S3). Each person's projects stay in their own
+browser; share work as Excel exports or `.takeoff` files.
+
 ## Using it
 
 The window works like a Mac document: sheets and takeoff types on the left, the
