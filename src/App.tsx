@@ -743,6 +743,28 @@ export function App() {
     }
   }
 
+  /** Counts every place the searched text is drawn exactly (a fixture or equipment tag) as one count type. */
+  async function countTextTags() {
+    const tag = sheetFilter.trim();
+    const name = await askText(`Count the ${exactTags} “${tag}” tags as`, { initial: tag.toUpperCase(), hint: 'A new count type, with one count at each tag on every sheet.' });
+    if (!name?.trim()) return;
+    const p = projectRef.current!;
+    const type: TakeoffType = {
+      id: newId(),
+      name: name.trim(),
+      color: PALETTE[p.types.length % PALETTE.length],
+      kind: 'count',
+      height: p.units === 'metric' ? 3 : 10,
+      division: guessDivision(name),
+      items: [{ id: newId(), name: name.trim(), unit: 'ea', formula: 'N' }],
+    };
+    const added = exactHits.map(({ sheetId, t }) => ({ id: newId(), sheetId, typeId: type.id, points: [[t.cx, t.cy]] as Pt[], holes: [] }));
+    commit((q) => ({ ...q, types: [...q.types, type], measurements: [...q.measurements, ...added] }), 'Count tags');
+    setActiveTypeId(type.id);
+    const sheets = new Set(added.map((m) => m.sheetId)).size;
+    setToast({ text: `Counted ${added.length} ${type.name} on ${sheets} sheet${sheets === 1 ? '' : 's'}`, undo: true });
+  }
+
   /** Sets how many times a sheet's takeoffs count: a typical floor drawn once for several floors. */
   async function setRepeat(s: Sheet) {
     const answer = await askText(`How many floors does ${s.name} stand for?`, {
@@ -1302,6 +1324,9 @@ export function App() {
   const query = sheetFilter.trim().toLowerCase();
   const hitsOn = (id: string) => (textHits && textHits.q === query ? textHits.hits.get(id) : undefined);
   const filteredSheets = project.sheets.filter((s) => s.name.toLowerCase().includes(query) || hitsOn(s.id));
+  // Text that is exactly the search (a tag such as WC-1 or EX-1, not WC-10), on current sheets.
+  const exactHits = textHits && textHits.q === query ? project.sheets.filter((s) => !s.superseded).flatMap((s) => (hitsOn(s.id) ?? []).filter((t) => t.str.trim().toLowerCase() === query).map((t) => ({ sheetId: s.id, t }))) : [];
+  const exactTags = exactHits.length;
   const totalFor = (typeId: string) => totals.find((t) => t.type.id === typeId);
   const scaleState = !sheet ? 'none' : !sheet.metersPerPoint ? 'unset' : sheet.scaleSource === 'detected' ? 'check' : 'set';
   const toolDisabled = (id: Tool) =>
@@ -1503,6 +1528,11 @@ export function App() {
           {project.sheets.length === 0 && <p className="source-empty">Drawings you add appear here, one row per sheet.</p>}
           {query.length >= 2 && textHits?.q !== query && <p className="source-empty">Searching the drawings…</p>}
           {query.length >= 2 && textHits?.q === query && !filteredSheets.length && <p className="source-empty">No sheet or drawing text matches “{sheetFilter.trim()}”.</p>}
+          {exactTags > 0 && (
+            <button className="link-button count-tags" onClick={() => void countTextTags()}>
+              Count the {exactTags} “{sheetFilter.trim()}” tag{exactTags === 1 ? '' : 's'} as a takeoff…
+            </button>
+          )}
         </section>
 
         <section className="source types">

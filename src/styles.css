@@ -2164,3 +2164,9 @@ button.link-button:hover {
 .legend-everywhere {
   margin-right: auto;
 }
+.source .count-tags {
+  display: block;
+  margin: 6px 16px 0;
+  font-size: 12px;
+  text-align: left;
+}

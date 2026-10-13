@@ -240,6 +240,9 @@ right. Tools sit in the title bar.
 13. **Search sheets and text:** the sheet search also finds text drawn on the
     sheets (room names, tags, notes). Matching sheets show how many hits; open
     one to see them outlined, and click it again for the next hit.
+    When the search is a tag drawn as text (WC-1, EX-1, RWL), *Count the N tags
+    as a takeoff* makes a count type with one count at each exact match on
+    every sheet.
 14. **Type library:** + beside Takeoff types → *From the library…* adds
     ready-made types by trade (partitions, furring, bulkheads, 2×4 and 2×2
     acoustic ceilings, GWB ceilings, carpet tile, LVT, porcelain, sealed
