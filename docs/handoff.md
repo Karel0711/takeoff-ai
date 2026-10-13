@@ -178,6 +178,11 @@ Where the project stands, for picking it up in a new session.
   - Tried and dropped: rejecting gap bridges that cut through a wall (meant for
     tag boxes lined up across rooms on one-pen drawings) changed A2.1 rooms
     105 and 221 and needed tuning to keep the wall score; not worth it.
+  - **Doorways:** bridges carry `bridge: true` (and `window: true` when glazing
+    covers half the gap); `openingLength()` in `roomFill.ts` measures the outline
+    beside door bridges (parallel, between their ends), `Measurement.openings`
+    stores it (sheet points, cleared by hand edits), `O` in formulas, and base
+    and wall room finishes use P less it. Sample: lobby 5.4 m, rooms 0.9 m (±0.1).
   - **Count a text tag** from the search (exact matches, every current sheet),
     **duplicate project** (drawings copied under new ids), an upload note
     (scales read, sheets without text), quiet scale verification when a sheet
