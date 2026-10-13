@@ -297,6 +297,17 @@ export function App() {
         return;
       }
       if (mod || e.altKey) return;
+      if (e.key === '[' || e.key === ']') {
+        // Previous / next sheet.
+        const sheets = projectRef.current?.sheets ?? [];
+        setSheetId((cur) => {
+          const i = sheets.findIndex((x) => x.id === cur);
+          const next = sheets[Math.min(sheets.length - 1, Math.max(0, i + (e.key === ']' ? 1 : -1)))];
+          return next?.id ?? cur;
+        });
+        setSelectedId(null);
+        return;
+      }
       const found = TOOLS.find((x) => x.key.toLowerCase() === e.key.toLowerCase());
       if (found) setTool(found.id);
     };

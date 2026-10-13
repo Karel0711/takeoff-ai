@@ -129,7 +129,12 @@ function SelectionCard({ m, project, sheet: current, onDelete, onRetype, onSelec
 
 function TakeoffList({ project, sheet, selectedId, onShow, onDelete }: Props) {
   const [scope, setScope] = useState<'sheet' | 'all'>('sheet');
-  const list = scope === 'sheet' && sheet ? project.measurements.filter((m) => m.sheetId === sheet.id) : project.measurements;
+  const [query, setQuery] = useState('');
+  const typeName = useMemo(() => new Map(project.types.map((t) => [t.id, t.name.toLowerCase()])), [project.types]);
+  const q = query.trim().toLowerCase();
+  const list = (scope === 'sheet' && sheet ? project.measurements.filter((m) => m.sheetId === sheet.id) : project.measurements).filter(
+    (m) => !q || (m.label ?? '').toLowerCase().includes(q) || (typeName.get(m.typeId) ?? '').includes(q),
+  );
   const groups = useMemo(() => {
     const byType = new Map<string, Measurement[]>();
     for (const m of list) {
@@ -158,10 +163,16 @@ function TakeoffList({ project, sheet, selectedId, onShow, onDelete }: Props) {
           </button>
         )}
       </div>
+      <label className="search takeoff-search">
+        <Icon name="search" size={14} />
+        <input id="takeoff-filter" placeholder="Find a room, door or type" value={query} onChange={(e) => setQuery(e.target.value)} />
+      </label>
       {groups.length === 0 && (
         <div className="empty-note">
           <Icon name="list" size={22} />
-          <p>No takeoffs {scope === 'sheet' ? 'on this sheet' : 'yet'}. Pick a type on the left and measure, fill a room, or run a wall takeoff.</p>
+          <p>
+            {q ? `Nothing matches “${query.trim()}”.` : `No takeoffs ${scope === 'sheet' ? 'on this sheet' : 'yet'}. Pick a type on the left and measure, fill a room, or run a wall takeoff.`}
+          </p>
         </div>
       )}
       {groups.map(({ type, items }) => (

@@ -2078,3 +2078,6 @@ button.link-button:hover {
 .swatch.same {
   background: rgb(190, 190, 190);
 }
+.takeoff-search {
+  margin: 0 12px 8px;
+}

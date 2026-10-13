@@ -16,6 +16,7 @@ const SHORTCUTS: [string, string][] = [
   ['⌘Z', 'Undo'],
   ['⇧⌘Z', 'Redo'],
   ['F', 'Fit the sheet in the window'],
+  ['[ and ]', 'Previous and next sheet'],
   ['Scroll', 'Zoom'],
   ['Drag, or Space-drag', 'Move around the sheet'],
 ];
