@@ -3,7 +3,7 @@ import { useEffect } from 'react';
 const STEPS: { title: string; text: string }[] = [
   {
     title: 'Add your drawings',
-    text: 'Add drawings (top right) takes a PDF set. Every page becomes a sheet on the left, named from its title block, with its scale read from the sheet.',
+    text: 'Add drawings (top right) takes a PDF set. Every page becomes a sheet on the left, named from its title block, with its scale read from the sheet. The search box finds sheets and any text on them (a room name, a tag).',
   },
   {
     title: 'Check the scale',
@@ -11,7 +11,7 @@ const STEPS: { title: string; text: string }[] = [
   },
   {
     title: 'Pick a takeoff type, then a tool',
-    text: 'Types on the left are what you price (walls, floors, ceilings, doors). Measure (M) draws by hand; Fill (R) takes a room’s area in one click; Trace (T) measures a drawn line’s whole run; Symbols (S) counts every copy of a symbol you box.',
+    text: 'Types on the left are what you price (walls, floors, ceilings, doors); + adds a blank one or ready-made ones for your trade from the library. Measure (M) draws by hand; Fill (R) takes a room’s area in one click; Trace (T) measures a drawn line’s whole run; Symbols (S) counts every copy of a symbol you box.',
   },
   {
     title: 'Let Automate do the repetitive part',
@@ -23,7 +23,7 @@ const STEPS: { title: string; text: string }[] = [
   },
   {
     title: 'Export and keep your work',
-    text: 'Export makes the Excel workbook. Projects are saved on this computer as you work; Projects › Save to file or Back up all projects makes files you can keep or move to another computer.',
+    text: 'Export makes the Excel workbook, or a marked-up PDF of the drawings with your takeoffs to attach to a quote. A typical floor drawn once can count for several (More › Count this sheet more than once). Projects are saved on this computer as you work; Projects › Save to file or Back up all projects makes files you can keep or move to another computer.',
   },
 ];
 
