@@ -11,6 +11,11 @@ export interface MarkupSource {
   loadBytes: (docId: string) => Promise<ArrayBuffer | undefined>;
   /** The sheet's viewport transform at scale 1 (`page.getViewport({ scale: 1 }).transform`). */
   transformOf: (sheet: Sheet) => Promise<ViewportTransform | undefined>;
+  /**
+   * The sheet as a JPEG, upright, for drawings whose pages can't be copied (an encrypted
+   * file: pdf-lib can't decrypt it, and copying would carry the scrambled content across).
+   */
+  renderJpeg?: (sheet: Sheet) => Promise<Uint8Array | undefined>;
 }
 
 const hex = (c: string) => {
@@ -30,9 +35,14 @@ export function toUser([a, b, c, d, e, f]: ViewportTransform, [x, y]: Pt): Pt {
 }
 
 /** Keeps the characters the standard font can draw. */
-function safeText(font: PDFFont, text: string): string {
+export function safeText(font: PDFFont, text: string): string {
   let out = '';
   for (const ch of text) {
+    // Locale number spacing (narrow and non-breaking spaces) as a plain space.
+    if (ch === '\u202f' || ch === '\u00a0' || ch === '\u2009') {
+      out += ' ';
+      continue;
+    }
     try {
       font.encodeText(ch);
       out += ch;
@@ -57,23 +67,37 @@ export async function markupPdf(project: Project, source: MarkupSource): Promise
   const types = new Map(project.types.map((t) => [t.id, t]));
   const withTakeoffs = project.sheets.filter((s) => project.measurements.some((m) => m.sheetId === s.id && types.has(m.typeId)));
 
-  const loaded = new Map<string, PDFDocument | null>();
   const missing: string[] = [];
+  // Pages copy one document at a time, all of its sheets in one call, so resources the
+  // sheets share (title block images, fonts) are copied once.
+  const copied = new Map<string, PDFPage>();
+  for (const docId of new Set(withTakeoffs.map((s) => s.docId))) {
+    const data = await source.loadBytes(docId);
+    const doc = data ? await PDFDocument.load(data, { ignoreEncryption: true, updateMetadata: false }) : null;
+    if (!doc || doc.isEncrypted) continue;
+    const sheets = withTakeoffs.filter((s) => s.docId === docId && s.page >= 1 && s.page <= doc.getPageCount());
+    const pages = await out.copyPages(doc, sheets.map((s) => s.page - 1));
+    sheets.forEach((s, i) => copied.set(s.id, pages[i]));
+  }
   const placed: { sheet: Sheet; page: PDFPage; transform: ViewportTransform }[] = [];
   for (const sheet of withTakeoffs) {
-    if (!loaded.has(sheet.docId)) {
-      const data = await source.loadBytes(sheet.docId);
-      loaded.set(sheet.docId, data ? await PDFDocument.load(data, { ignoreEncryption: true, updateMetadata: false }) : null);
-    }
-    const doc = loaded.get(sheet.docId);
-    const transform = await source.transformOf(sheet);
-    if (!doc || !transform || sheet.page < 1 || sheet.page > doc.getPageCount()) {
-      missing.push(sheet.name);
+    const page = copied.get(sheet.id);
+    const transform = page && (await source.transformOf(sheet));
+    if (page && transform) {
+      out.addPage(page);
+      placed.push({ sheet, page, transform });
       continue;
     }
-    const [page] = await out.copyPages(doc, [sheet.page - 1]);
-    out.addPage(page);
-    placed.push({ sheet, page, transform });
+    // Not copyable: the sheet as an image, in sheet space (y down from the top).
+    const jpeg = !page ? await source.renderJpeg?.(sheet) : undefined;
+    if (jpeg) {
+      const img = await out.embedJpg(jpeg);
+      const flat = out.addPage([sheet.width, sheet.height]);
+      flat.drawImage(img, { x: 0, y: 0, width: sheet.width, height: sheet.height });
+      placed.push({ sheet, page: flat, transform: [1, 0, 0, -1, 0, sheet.height] });
+      continue;
+    }
+    missing.push(sheet.name);
   }
 
   for (const { sheet, page, transform } of placed) drawTakeoffs(project, sheet, page, transform, font, bold);
@@ -132,7 +156,7 @@ function drawTakeoffs(project: Project, sheet: Sheet, page: PDFPage, transform: 
   }
 
   // The sheet's legend along the top edge, inside the margin.
-  const totals = typeTotals({ ...project, measurements: project.measurements.filter((m) => m.sheetId === sheet.id) }).filter((t) => t.vars.N > 0);
+  const totals = typeTotals({ ...project, measurements: project.measurements.filter((m) => m.sheetId === sheet.id) }).filter((t) => t.vars.N > 0 || t.unscaled > 0);
   const fs = 9;
   let cx = 18;
   let top = 16;
@@ -192,7 +216,7 @@ function drawCover(project: Project, out: PDFDocument, sheets: Sheet[], font: PD
     let shown = name;
     while (shown.length > 4 && font.widthOfTextAtSize(shown, 10) > 440) shown = shown.slice(0, -2);
     col(64, shown === name ? name : `${shown.trimEnd()}...`);
-    col(520, formatQty(t.primary), bold, 10, ink, true);
+    col(520, safeText(bold, formatQty(t.primary)), bold, 10, ink, true);
     col(530, safeText(font, t.unit));
     if (t.unscaled) col(580, `${t.unscaled} on sheets without a scale`, font, 9, rgb(0.75, 0.4, 0.05));
     y -= 18;

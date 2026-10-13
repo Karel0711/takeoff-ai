@@ -45,7 +45,8 @@ function entry(
   };
 }
 
-// Common sizes: 4×8 board, standard heights, ceiling grid modules.
+// Common sizes: 4×8 board, standard heights. Ceiling grids are 600/1200 mm in metric
+// and 2'/4' in imperial.
 const board = (u: (m: number, ft: number) => number) => u(2.973, 32);
 
 export const TYPE_LIBRARY: LibraryEntry[] = [
@@ -99,10 +100,10 @@ export const TYPE_LIBRARY: LibraryEntry[] = [
     items: [
       item('Ceiling area', area, 'A'),
       item('Tiles 2×4 + 5%', 'ea', `ceil(A * 1.05 / ${u(0.72, 8)})`),
-      item('Main tees @ 4\', 12\' long', 'ea', metric ? 'ceil(A / 1.22 / 3.66 * 1.05)' : 'ceil(A / 4 / 12 * 1.05)'),
-      item('4\' cross tees @ 2\'', 'ea', `ceil(A * 1.05 / ${u(0.743, 8)})`),
+      item('Main tees @ 4\', 12\' long', 'ea', metric ? 'ceil(A / 1.2 / 3.6 * 1.05)' : 'ceil(A / 4 / 12 * 1.05)'),
+      item('4\' cross tees @ 2\'', 'ea', `ceil(A * 1.05 / ${u(0.72, 8)})`),
       item('Wall angle', len, 'P * 1.05'),
-      item('Hanger wires @ 4\'×4\'', 'ea', `ceil(A / ${u(1.486, 16)})`),
+      item('Hanger wires @ 4\'×4\'', 'ea', `ceil(A / ${u(1.44, 16)})`),
     ],
   })),
   entry('act-2x2', 'Ceilings', 'Acoustic ceiling – 2×2 grid', 'area', 'Ceiling areas', ({ u, len, area, metric }) => ({
@@ -113,11 +114,11 @@ export const TYPE_LIBRARY: LibraryEntry[] = [
     items: [
       item('Ceiling area', area, 'A'),
       item('Tiles 2×2 + 5%', 'ea', `ceil(A * 1.05 / ${u(0.36, 4)})`),
-      item('Main tees @ 4\', 12\' long', 'ea', metric ? 'ceil(A / 1.22 / 3.66 * 1.05)' : 'ceil(A / 4 / 12 * 1.05)'),
-      item('4\' cross tees @ 2\'', 'ea', `ceil(A * 1.05 / ${u(0.743, 8)})`),
-      item('2\' cross tees', 'ea', `ceil(A * 1.05 / ${u(0.743, 8)})`),
+      item('Main tees @ 4\', 12\' long', 'ea', metric ? 'ceil(A / 1.2 / 3.6 * 1.05)' : 'ceil(A / 4 / 12 * 1.05)'),
+      item('4\' cross tees @ 2\'', 'ea', `ceil(A * 1.05 / ${u(0.72, 8)})`),
+      item('2\' cross tees', 'ea', `ceil(A * 1.05 / ${u(0.72, 8)})`),
       item('Wall angle', len, 'P * 1.05'),
-      item('Hanger wires @ 4\'×4\'', 'ea', `ceil(A / ${u(1.486, 16)})`),
+      item('Hanger wires @ 4\'×4\'', 'ea', `ceil(A / ${u(1.44, 16)})`),
     ],
   })),
   entry('gwb-ceiling', 'Ceilings', 'GWB ceiling – suspended', 'area', 'Ceiling areas', ({ u, len, area }) => ({
@@ -130,8 +131,8 @@ export const TYPE_LIBRARY: LibraryEntry[] = [
       item('GWB + 10% waste', area, 'A * 1.1'),
       item('GWB sheets 4×8', 'ea', `ceil(A * 1.1 / ${board(u)})`),
       item('Furring channel @ 16"', len, `A / ${u(0.406, 1.333)}`),
-      item('Main carrying channel @ 4\'', len, `A / ${u(1.22, 4)}`),
-      item('Hanger wires @ 4\'×4\'', 'ea', `ceil(A / ${u(1.486, 16)})`),
+      item('Main carrying channel @ 4\'', len, `A / ${u(1.2, 4)}`),
+      item('Hanger wires @ 4\'×4\'', 'ea', `ceil(A / ${u(1.44, 16)})`),
       item('Perimeter track', len, 'P'),
       item('Tape & finish', area, 'A'),
     ],

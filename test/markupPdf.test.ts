@@ -1,6 +1,6 @@
-import { PDFDocument } from 'pdf-lib';
+import { PDFDocument, PDFName, StandardFonts } from 'pdf-lib';
 import { describe, expect, it } from 'vitest';
-import { markupPdf, toUser } from '../src/markupPdf';
+import { markupPdf, safeText, toUser } from '../src/markupPdf';
 import { newProject, type Sheet } from '../src/model';
 import { parseScale } from '../src/units';
 
@@ -53,5 +53,39 @@ describe('marked-up PDF', () => {
     expect(out.getPageCount()).toBe(3);
     expect(out.getPage(0).getSize()).toEqual({ width: 792, height: 612 });
     expect(out.getPage(1).getSize()).toEqual({ width: 600, height: 400 });
+  });
+
+  it('writes numbers with locale spacing and drops what the font cannot draw', async () => {
+    const font = await (await PDFDocument.create()).embedFont(StandardFonts.Helvetica);
+    expect(safeText(font, '12\u202f346,5 m²')).toBe('12 346,5 m²');
+    expect(safeText(font, 'Room 一 101')).toBe('Room  101');
+  });
+
+  it('copies resources the sheets share once', async () => {
+    const src = await PDFDocument.create();
+    const big = src.context.register(src.context.stream(new Uint8Array(200_000).map((_, i) => (i * 7919) % 251)));
+    for (let i = 0; i < 3; i++) src.addPage([600, 400]).node.setXObject(PDFName.of('Shared'), big);
+    const bytes = await src.save({ useObjectStreams: false });
+    const p = newProject('metric');
+    const [, , floor] = p.types;
+    p.sheets = [1, 2, 3].map((page) => ({
+      id: `s${page}`,
+      docId: 'd',
+      page,
+      name: `A${page}`,
+      width: 600,
+      height: 400,
+      metersPerPoint: mpp,
+      scaleLabel: '1:100',
+      scaleSource: 'preset' as const,
+      scaleHints: [],
+    }));
+    p.measurements = p.sheets.map((s) => ({ id: s.id, sheetId: s.id, typeId: floor.id, points: [[10, 10], [90, 10], [90, 90]], holes: [] }));
+    const r = await markupPdf(p, {
+      loadBytes: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer,
+      transformOf: async (s) => [1, 0, 0, -1, 0, s.height],
+    });
+    expect(r.sheets).toBe(3);
+    expect(r.bytes.length).toBeLessThan(300_000);
   });
 });

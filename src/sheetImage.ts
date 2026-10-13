@@ -87,7 +87,9 @@ export async function sheetImage(page: PDFPageProxy, sheet: Sheet, project: Proj
       const v = measurementVars(m, t, sheet, project.units);
       if (v) total += primaryOf(t.kind, v);
     }
-    return [{ color: t.color, text: `${t.name}`, qty: `${formatQty(total)} ${primaryUnit(t.kind, project.units)}` }];
+    // As drawn on this sheet; a typical floor's multiple is noted, the totals elsewhere include it.
+    const times = sheet.repeat && sheet.repeat > 1 ? ` (×${sheet.repeat} in totals)` : '';
+    return [{ color: t.color, text: `${t.name}`, qty: `${formatQty(total)} ${primaryUnit(t.kind, project.units)}${times}` }];
   });
   if (rows.length) {
     const f = 11 * px * 2;

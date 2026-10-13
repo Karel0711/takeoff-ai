@@ -257,7 +257,11 @@ export function App() {
         const key = `${s.docId}:${s.page}`;
         let texts = textCache.current.get(key);
         if (!texts) {
-          const pg = await pdfsRef.current.get(s.docId)?.getPage(s.page);
+          // A drawing not loaded yet is searched when it is (the effect reruns on pdfs).
+          const pg = await pdfsRef.current
+            .get(s.docId)
+            ?.getPage(s.page)
+            .catch(() => null);
           if (!pg) continue;
           texts = await pageTexts(pg).catch(() => []);
           textCache.current.set(key, texts);
@@ -271,7 +275,7 @@ export function App() {
       stop = true;
       window.clearTimeout(t);
     };
-  }, [sheetFilter, sheetList]);
+  }, [sheetFilter, sheetList, pdfs]);
 
   const totals = useMemo(() => (project ? typeTotals(project) : []), [project]);
   const sheetTotals = useMemo(
@@ -668,6 +672,21 @@ export function App() {
       const { bytes, sheets, missing } = await markupPdf(projectRef.current!, {
         loadBytes: loadPdf,
         transformOf: async (s) => (await pdfsRef.current.get(s.docId)?.getPage(s.page))?.getViewport({ scale: 1 }).transform,
+        renderJpeg: async (s) => {
+          const pg = await pdfsRef.current.get(s.docId)?.getPage(s.page);
+          if (!pg) return undefined;
+          const base = pg.getViewport({ scale: 1 });
+          const scale = Math.min(3, 5000 / Math.max(base.width, base.height));
+          const canvas = document.createElement('canvas');
+          canvas.width = Math.ceil(base.width * scale);
+          canvas.height = Math.ceil(base.height * scale);
+          const ctx = canvas.getContext('2d')!;
+          ctx.fillStyle = '#fff';
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          await pg.render({ canvas, viewport: pg.getViewport({ scale }) }).promise;
+          const blob = await new Promise<Blob | null>((r) => canvas.toBlob(r, 'image/jpeg', 0.85));
+          return blob ? new Uint8Array(await blob.arrayBuffer()) : undefined;
+        },
       });
       if (!sheets) {
         setToast({ text: 'The drawings for these takeoffs are not on this computer.', undo: false });

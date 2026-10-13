@@ -304,6 +304,7 @@ export async function buildWorkbook(project: Project, activity: ActivityEvent[] 
     { header: 'Name', key: 'label', width: 34 },
     { header: 'Quantity', key: 'qty', width: 14, style: { numFmt: '#,##0.000' } },
     { header: 'Unit', key: 'unit', width: 8 },
+    { header: 'Sheet counts', key: 'times', width: 12 },
     { header: 'Perimeter', key: 'perim', width: 12, style: { numFmt: '#,##0.000' } },
     { header: 'Sheet scale', key: 'scale', width: 16 },
   ];
@@ -317,10 +318,12 @@ export async function buildWorkbook(project: Project, activity: ActivityEvent[] 
         sheet: s.name,
         type: type.name,
         label: [c.m.label, c.role ? `(${roleLabel.get(c.role)})` : ''].filter(Boolean).join(' '),
-        qty: v ? primaryOf(type.kind, v) : 'not scaled',
+        // As drawn, the same as the app shows for the takeoff; a typical floor's count is beside it.
+        qty: v ? primaryOf(type.kind, v) / sheetRepeat(s) : 'not scaled',
         unit: primaryUnit(type.kind, project.units),
-        perim: type.kind === 'area' && v ? v.P : null,
-        scale: [s.scaleLabel ?? '', sheetRepeat(s) > 1 ? `counts ×${sheetRepeat(s)}` : ''].filter(Boolean).join(' · '),
+        times: sheetRepeat(s),
+        perim: type.kind === 'area' && v ? v.P / sheetRepeat(s) : null,
+        scale: s.scaleLabel ?? '',
       });
     }
   }
@@ -350,7 +353,7 @@ export async function buildWorkbook(project: Project, activity: ActivityEvent[] 
       const v = sheet ? measurementVars(m, type, sheet, project.units) : null;
       ws.addRow({
         room: m.label ?? '',
-        sheet: sheet?.name ?? '',
+        sheet: sheet ? (sheetRepeat(sheet) > 1 ? `${sheet.name} ×${sheetRepeat(sheet)}` : sheet.name) : '',
         area: v ? v.A : 'not scaled',
         perim: v ? v.P : null,
         ...Object.fromEntries(FINISH_ROLES.map((r) => [r.role, m.finishes?.[r.role] ? (typeById.get(m.finishes[r.role]!)?.name ?? '') : ''])),
