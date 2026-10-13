@@ -45,8 +45,8 @@ export interface WallTakeoffOptions {
 
 /** Kinds of wall tag. A wall has at most one of each; a tag's type spreads only within its kind. */
 export function tagKind(code: string): string {
-  const prefix = code.replace(/\d.*$/, '');
-  if (prefix === 'EW') return 'exterior';
+  const prefix = code.replace(/-?\d.*$/, '');
+  if (prefix === 'EW' || prefix === 'EXT' || prefix === 'EP') return 'exterior';
   if (prefix === 'FR') return 'furring';
   if (prefix === 'FW') return 'foundation';
   return 'partition';

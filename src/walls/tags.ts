@@ -26,7 +26,11 @@ export interface WallTag extends TagText {
 }
 
 /** Wall type tags (W1, EW3A, FR2, CB1, …). */
-export const WALL_TAG = /^(?:EW|IW|W|FR|FW|CB|PW|SW)\d{1,2}[A-Z]?$/;
+/**
+ * Wall type tags as drawing sets write them: EW3A, W1, FR2, CB1, and with a dash or
+ * other common prefixes (W-1, EW-2A, WT1, IP2, EXT1, INT4).
+ */
+export const WALL_TAG = /^(?:EW|IW|W|FR|FW|CB|PW|SW|WT|IP|EP|EXT|INT)-?\d{1,2}[A-Z]?$/;
 
 const near = (ax: number, ay: number, bx: number, by: number, tol: number) => Math.abs(ax - bx) <= tol && Math.abs(ay - by) <= tol;
 

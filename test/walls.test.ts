@@ -175,6 +175,8 @@ describe('wall takeoff', () => {
     expect(tagKind('FR1')).toBe('furring');
     expect(tagKind('W1A')).toBe('partition');
     expect(tagKind('CB2')).toBe('partition');
+    expect(tagKind('EW-2A')).toBe('exterior');
+    expect(tagKind('W-1')).toBe('partition');
   });
 });
 
