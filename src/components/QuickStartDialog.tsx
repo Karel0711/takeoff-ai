@@ -19,7 +19,7 @@ const STEPS: { title: string; text: string }[] = [
   },
   {
     title: 'Check, fix, export',
-    text: 'Select a takeoff to change or delete it; ⌘Z undoes anything. Export makes the Excel workbook or a marked-up PDF for your quote.',
+    text: 'Select a takeoff to change or delete it, or Box select (B) several at once; ⌘Z undoes anything. Export makes the Excel workbook or a marked-up PDF for your quote.',
   },
   {
     title: 'Your work stays here',

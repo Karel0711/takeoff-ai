@@ -18,6 +18,9 @@ undo/redo, and an activity log of every change.
   when a sheet has exactly one; detected scales are flagged "verify".
 - Set scales from metric or imperial presets, or calibrate from a known dimension.
 - Area (with cutouts), linear and count measurements, coloured by takeoff type.
+- **Box select** (B, or Shift-drag in Select): drag left to right to pick the takeoffs
+  wholly inside, right to left for everything the box touches; Delete removes them
+  all at once (one undo). Click a takeoff to add or drop it from the selection.
 - Doorways: a room filled by Fill, Rooms or its hatch remembers how much of
   its outline crosses door openings (`O` in formulas; windows, with glazing
   along them, don't count, since the wall carries on below). Base set on rooms

@@ -35,7 +35,7 @@ import { sheetImage } from './sheetImage';
 import { compareSheets } from './compareSheets';
 import { pageTexts, type PageText } from './pageText';
 import { isHosted, saveFile } from './host';
-import { defaultTypes, newId, newProject, type Kind, type Project, type Pt, type Sheet, type TakeoffType, type Units } from './model';
+import { defaultTypes, newId, newProject, type Kind, type Measurement, type Project, type Pt, type Sheet, type TakeoffType, type Units } from './model';
 import { inspectPage, openPdf, type PDFDocumentProxy, type PDFPageProxy } from './pdf';
 import { typeTotals } from './quantities';
 import {
@@ -78,6 +78,7 @@ interface Toast {
 
 const TOOLS: { id: Tool; label: string; icon: IconName; key: string; help: string }[] = [
   { id: 'select', label: 'Select', icon: 'select', key: 'V', help: 'Select, move around and delete takeoffs' },
+  { id: 'box', label: 'Box select', icon: 'marquee', key: 'B', help: 'Drag a box over several takeoffs to select them, then Delete' },
   { id: 'measure', label: 'Measure', icon: 'measure', key: 'M', help: 'Measure with the chosen takeoff type' },
   { id: 'fill', label: 'Fill', icon: 'fill', key: 'R', help: 'Click inside a room to take off its area' },
   { id: 'trace', label: 'Trace', icon: 'linear', key: 'T', help: 'Click a drawn line to measure the whole run' },
@@ -112,6 +113,10 @@ export function App() {
   const [activeTypeId, setActiveTypeId] = useState<string | null>(null);
   const [editingTypeId, setEditingTypeId] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  /** Takeoffs picked together (Box select), on the open sheet. */
+  const [multiIds, setMultiIds] = useState<string[]>([]);
+  // A selection belongs to its sheet.
+  useEffect(() => setMultiIds([]), [sheetId]);
   const [focus, setFocus] = useState<{ id?: string; box?: [number, number, number, number]; n: number } | null>(null);
   /** Text runs per drawing page, read once for the sheet search. */
   const textCache = useRef(new Map<string, PageText[]>());
@@ -494,6 +499,8 @@ export function App() {
   const selected = project.measurements.find((m) => m.id === selectedId) ?? null;
   const selectedType = selected ? project.types.find((t) => t.id === selected.typeId) : undefined;
   const sheetMeasurements = sheet ? project.measurements.filter((m) => m.sheetId === sheet.id) : [];
+  // Picked takeoffs still on this sheet (an undo may have taken some away).
+  const picked = sheetMeasurements.filter((m) => multiIds.includes(m.id));
   const canUndo = past.current.length > 0;
   const canRedo = future.current.length > 0;
 
@@ -1432,6 +1439,7 @@ export function App() {
     const gone = new Set(ids);
     commit((p) => ({ ...p, measurements: p.measurements.filter((m) => !gone.has(m.id)) }), 'Delete');
     if (selectedId && gone.has(selectedId)) setSelectedId(null);
+    setMultiIds((cur) => cur.filter((id) => !gone.has(id)));
     setToast({ text: `Deleted ${ids.length} takeoff${ids.length === 1 ? '' : 's'}`, undo: true });
   }
 
@@ -1516,7 +1524,7 @@ export function App() {
                 title={toolTitle(t)}
               >
                 <Icon name={t.icon} size={16} />
-                <span className={t.id === 'trace' || t.id === 'cutout' ? 'tool-label minor' : 'tool-label'}>{t.label}</span>
+                <span className={t.id === 'trace' || t.id === 'cutout' ? 'tool-label minor' : t.id === 'box' ? 'tool-label box' : 'tool-label'}>{t.label}</span>
               </button>
             ))}
           </div>
@@ -1721,8 +1729,15 @@ export function App() {
           selectedId={selectedId}
           onSelect={(id) => {
             setSelectedId(id);
+            setMultiIds([]);
             if (id) setEditingTypeId(null);
           }}
+          multiIds={picked.map((m) => m.id)}
+          onMultiSelect={(ids, add) => {
+            setSelectedId(null);
+            setMultiIds((cur) => (add ? [...new Set([...cur, ...ids])] : ids));
+          }}
+          onDeleteMany={deleteMeasurements}
           onAdd={addMeasurement}
           onReplacePoints={(id, points, source = 'Fill room', openings) =>
             commit((p) => ({ ...p, measurements: p.measurements.map((m) => (m.id === id ? { ...m, points, openings } : m)) }), source)
@@ -1742,6 +1757,17 @@ export function App() {
           focus={focus}
           highlights={sheet ? hitsOn(sheet.id) : undefined}
         />
+
+        {picked.length > 0 && (
+          <div className="selection-bar" role="toolbar" aria-label="Selected takeoffs">
+            <span className="selection-count">{picked.length} selected</span>
+            <span className="selection-types">{pickedSummary(picked, project.types)}</span>
+            <button onClick={() => setMultiIds([])}>Clear</button>
+            <button className="danger-solid" onClick={() => deleteMeasurements(picked.map((m) => m.id))}>
+              <Icon name="trash" size={15} /> Delete {picked.length}
+            </button>
+          </div>
+        )}
 
         {project.sheets.length === 0 && (
           <div className="welcome">
@@ -2337,11 +2363,23 @@ export function App() {
   );
 }
 
+/** What a selection holds, by type: "DOWNLIGHT ×8 · W1 ×4", the largest first. */
+function pickedSummary(picked: Measurement[], types: TakeoffType[]): string {
+  const n = new Map<string, number>();
+  for (const m of picked) n.set(m.typeId, (n.get(m.typeId) ?? 0) + 1);
+  const parts = [...n]
+    .sort((a, b) => b[1] - a[1])
+    .map(([id, k]) => `${(types.find((t) => t.id === id)?.name ?? 'Unknown').split(' – ')[0]} ×${k}`);
+  return parts.length > 3 ? `${parts.slice(0, 3).join(' · ')} · +${parts.length - 3} more` : parts.join(' · ');
+}
+
 function toolHint(tool: Tool, type: TakeoffType | null, sheet: Sheet | null): string {
-  if (sheet && !sheet.metersPerPoint && tool !== 'calibrate') return 'Set this sheet’s scale before measuring';
+  if (sheet && !sheet.metersPerPoint && tool !== 'calibrate' && tool !== 'box') return 'Set this sheet’s scale before measuring';
   switch (tool) {
     case 'select':
       return 'Click a takeoff to select it · Delete removes it';
+    case 'box':
+      return 'Drag left to right for what’s inside, right to left for what it touches';
     case 'measure':
       if (!type) return 'Choose a takeoff type on the left';
       if (type.kind === 'count') return `Click each ${type.name.split(' – ')[0]} to count it`;

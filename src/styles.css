@@ -700,6 +700,32 @@ input[type='checkbox'] {
   width: 60px;
 }
 .busy,
+/* Box select: what is picked, and what to do with it, over the top of the drawing. */
+.selection-bar {
+  position: absolute;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: calc(100% - 32px);
+  padding: 6px 6px 6px 14px;
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: var(--shadow-2);
+  white-space: nowrap;
+}
+.selection-count {
+  font-weight: 600;
+}
+.selection-types {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-2);
+  font-size: 12px;
+}
 .toast {
   position: absolute;
   left: 50%;
@@ -1675,9 +1701,9 @@ table.items th {
 
 /* ---------- Narrow windows ---------- */
 
-/* Six tools with labels need about 1400 px. Below that the two used least (Trace, Cutout)
-   show icons only, so the main tools keep their names on a laptop-sized window. */
-@media (max-width: 1400px) {
+/* Seven tools with labels need about 1550 px. Below that the two used least (Trace, Cutout)
+   show icons only, then Box select, so the main tools keep their names on a laptop-sized window. */
+@media (max-width: 1550px) {
   .tool-label.minor,
   .hide-medium {
     display: none;
@@ -1686,8 +1712,16 @@ table.items th {
     width: 200px;
   }
 }
-/* The main tools with labels fit down to about 1260 px. */
-@media (max-width: 1260px) {
+@media (max-width: 1360px) {
+  .tool-label.box {
+    display: none;
+  }
+  .tb-left {
+    width: 184px;
+  }
+}
+/* The main tools with labels fit down to about 1280 px. */
+@media (max-width: 1275px) {
   .tool-label {
     display: none;
   }

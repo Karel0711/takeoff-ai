@@ -8,8 +8,9 @@ import { areaUnit, equivalentScale, formatQty, lengthUnit, parseLength, toArea, 
 import { askText, notify } from './Dialogs';
 import { Icon } from './Icons';
 import { fillRoom, type WallModel } from '../fill/roomFill';
+import { boxSelect, isCrossing } from '../boxSelect';
 
-export type Tool = 'select' | 'measure' | 'calibrate' | 'cutout' | 'fill' | 'symbol' | 'trace';
+export type Tool = 'select' | 'box' | 'measure' | 'calibrate' | 'cutout' | 'fill' | 'symbol' | 'trace';
 
 const FILL_FAILURES = {
   'on-wall': 'That click landed on a wall. Click inside the room.',
@@ -35,6 +36,11 @@ interface Props {
   tool: Tool;
   selectedId: string | null;
   onSelect: (id: string | null) => void;
+  /** Takeoffs picked together with Box select (or Shift-drag in Select). */
+  multiIds: string[];
+  /** A new multi-selection; `add` keeps the takeoffs already picked (Shift). */
+  onMultiSelect: (ids: string[], add: boolean) => void;
+  onDeleteMany: (ids: string[]) => void;
   /** Adds a measurement with the active type; returns its id. */
   /** `openings`: for a filled room, its outline length across doorways (sheet points). */
   onAdd: (points: Pt[], openings?: number) => string | undefined;
@@ -75,7 +81,8 @@ export function Viewer(props: Props) {
   const [edit, setEdit] = useState<{ id: string; points: Pt[] } | null>(null);
   const drag = useRef<{ id: string; index: number; insert: boolean; moved: boolean; points: Pt[] } | null>(null);
   /** The box being dragged with Count symbols. */
-  const [band, setBand] = useState<{ a: Pt; b: Pt } | null>(null);
+  /** A box being dragged: around a symbol to count, or over takeoffs to select (`add` with Shift). */
+  const [band, setBand] = useState<{ a: Pt; b: Pt; select?: boolean; add?: boolean } | null>(null);
   const [hover, setHover] = useState<{ pt: Pt; sx: number; sy: number } | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const base = useRef<{ canvas: HTMLCanvasElement; pageRef: PDFPageProxy } | null>(null);
@@ -338,6 +345,13 @@ export function Viewer(props: Props) {
       return;
     }
     const background = e.target === svgRef.current || (e.target as Element).classList.contains('bg');
+    if (e.button === 0 && !spaceHeld.current && sheet && (tool === 'box' || (tool === 'select' && e.shiftKey && background))) {
+      e.preventDefault();
+      const { pt } = toPt(e);
+      setBand({ a: pt, b: pt, select: true, add: e.shiftKey });
+      svgRef.current!.setPointerCapture(e.pointerId);
+      return;
+    }
     if (e.button === 1 || spaceHeld.current || (tool === 'select' && e.button === 0 && background)) {
       e.preventDefault();
       pan.current = { sx: e.clientX, sy: e.clientY, vx: view.x, vy: view.y, moved: false };
@@ -392,6 +406,18 @@ export function Viewer(props: Props) {
       setEdit(null);
       return;
     }
+    if (band?.select) {
+      const { a, b, add } = band;
+      setBand(null);
+      // A box a few screen pixels across is a click: on a takeoff it picks that one, below.
+      if (Math.abs(b[0] - a[0]) * view.zoom <= 4 && Math.abs(b[1] - a[1]) * view.zoom <= 4) return;
+      suppressClick.current = true;
+      props.onMultiSelect(
+        boxSelect(measurements, [a[0], a[1], b[0], b[1]], (m) => typeById.get(m.typeId)?.kind === 'area'),
+        !!add,
+      );
+      return;
+    }
     if (band) {
       const { a, b } = band;
       setBand(null);
@@ -414,6 +440,10 @@ export function Viewer(props: Props) {
     if (e.button !== 0 || spaceHeld.current) return;
     if (tool === 'select') {
       props.onSelect(null);
+      return;
+    }
+    if (tool === 'box') {
+      if (!e.shiftKey) props.onMultiSelect([], false);
       return;
     }
     if (!sheet) return;
@@ -466,9 +496,11 @@ export function Viewer(props: Props) {
         finish();
       } else if (e.key === 'Escape') {
         if (draft.length) setDraft([]);
+        else if (props.multiIds.length) props.onMultiSelect([], false);
         else props.onSelect(null);
       } else if (e.key === 'Backspace' || e.key === 'Delete') {
         if (draft.length && e.key === 'Backspace') setDraft((d) => d.slice(0, -1));
+        else if (props.multiIds.length) props.onDeleteMany(props.multiIds);
         else if (selectedId) props.onDelete(selectedId);
         e.preventDefault();
       } else if (e.key === 'f' || e.key === 'F') {
@@ -503,7 +535,8 @@ export function Viewer(props: Props) {
   }
 
   const z = view.zoom;
-  const shapesInteractive = tool === 'select';
+  const shapesInteractive = tool === 'select' || tool === 'box';
+  const multi = new Set(props.multiIds);
   // Named takeoffs (rooms) show their number with the quantity.
   const labelOf = (m: Measurement, type: TakeoffType, sheet: Sheet) => {
     const v = measurementVars(m, type, sheet, units);
@@ -547,13 +580,15 @@ export function Viewer(props: Props) {
             const m = edit && edit.id === shown.id ? { ...shown, points: edit.points } : shown;
             const type = typeById.get(m.typeId);
             if (!type) return null;
-            const isSel = m.id === selectedId;
+            const isSel = m.id === selectedId || multi.has(m.id);
             const common = {
               className: shapesInteractive ? 'shape interactive' : 'shape',
               onClick: (e: MouseEvent) => {
                 if (!shapesInteractive) return;
                 e.stopPropagation();
-                props.onSelect(m.id);
+                // Box select: a click adds a takeoff to the picked ones, or takes it out.
+                if (tool === 'box') props.onMultiSelect(multi.has(m.id) ? props.multiIds.filter((id) => id !== m.id) : [...props.multiIds, m.id], false);
+                else props.onSelect(m.id);
               },
             };
             const label = labelOf(m, type, sheet);
@@ -648,11 +683,12 @@ export function Viewer(props: Props) {
               y={Math.min(band.a[1], band.b[1])}
               width={Math.abs(band.b[0] - band.a[0])}
               height={Math.abs(band.b[1] - band.a[1])}
-              fill={activeType?.color ?? '#0a84ff'}
+              fill={band.select ? (isCrossing([band.a[0], 0, band.b[0], 0]) ? '#30d158' : '#0a84ff') : activeType?.color ?? '#0a84ff'}
               fillOpacity={0.12}
-              stroke={activeType?.color ?? '#0a84ff'}
+              stroke={band.select ? (isCrossing([band.a[0], 0, band.b[0], 0]) ? '#30d158' : '#0a84ff') : activeType?.color ?? '#0a84ff'}
               strokeWidth={1.5}
-              strokeDasharray="5 3"
+              // Selecting: a solid box takes what is wholly inside, a dashed one what it touches too.
+              strokeDasharray={band.select && !isCrossing([band.a[0], 0, band.b[0], 0]) ? undefined : '5 3'}
               vectorEffect="non-scaling-stroke"
             />
           )}

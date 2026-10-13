@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 
 const SHORTCUTS: [string, string][] = [
   ['V', 'Select'],
+  ['B, or Shift-drag in Select', 'Box select: drag over several takeoffs, then Delete removes them all'],
   ['M', 'Measure with the chosen type'],
   ['R', 'Fill a room'],
   ['C', 'Cut a hole out of the selected area'],
