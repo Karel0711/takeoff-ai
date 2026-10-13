@@ -1,3 +1,4 @@
+import type { ActivityEvent } from './activity';
 import type { Workbook, Worksheet } from 'exceljs';
 import type { Measurement, Project, TakeoffType } from './model';
 import { measurementVars, primaryOf, primaryUnit, typeTotals } from './quantities';
@@ -198,7 +199,7 @@ function writeDivision(ws: Worksheet, division: string, types: TakeoffType[], ro
 }
 
 /** Builds the workbook; separate from the Blob step so it can be tested in Node. */
-export async function buildWorkbook(project: Project): Promise<Workbook> {
+export async function buildWorkbook(project: Project, activity: ActivityEvent[] = []): Promise<Workbook> {
   const { default: ExcelJS } = await import('exceljs');
   const wb = new ExcelJS.Workbook();
   wb.created = new Date();
@@ -321,11 +322,31 @@ export async function buildWorkbook(project: Project): Promise<Workbook> {
   detail.getRow(1).fill = solid(COLOR.header);
   detail.views = [{ state: 'frozen', ySplit: 1 }];
 
+  // The activity log: every takeoff added, changed or deleted, newest first.
+  if (activity.length) {
+    const log = wb.addWorksheet(sheetName('Activity', used));
+    log.columns = [
+      { header: 'When', key: 'at', width: 20, style: { numFmt: 'yyyy-mm-dd hh:mm' } },
+      { header: 'Action', key: 'action', width: 10 },
+      { header: 'What', key: 'what', width: 10 },
+      { header: 'Name', key: 'name', width: 40 },
+      { header: 'Sheet', key: 'sheet', width: 10 },
+      { header: 'Detail', key: 'detail', width: 24 },
+      { header: 'By', key: 'source', width: 16 },
+    ];
+    for (const e of [...activity].reverse()) {
+      log.addRow({ at: new Date(e.at), action: e.action, what: e.what, name: e.name, sheet: e.sheet ?? '', detail: e.detail ?? '', source: e.source });
+    }
+    log.getRow(1).font = { bold: true };
+    log.getRow(1).fill = solid(COLOR.header);
+    log.views = [{ state: 'frozen', ySplit: 1 }];
+  }
+
   return wb;
 }
 
-export async function exportWorkbook(project: Project): Promise<Blob> {
-  const wb = await buildWorkbook(project);
+export async function exportWorkbook(project: Project, activity: ActivityEvent[] = []): Promise<Blob> {
+  const wb = await buildWorkbook(project, activity);
   const buffer = await wb.xlsx.writeBuffer();
   return new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
 }

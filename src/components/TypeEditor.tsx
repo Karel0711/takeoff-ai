@@ -2,7 +2,7 @@ import { evaluate } from '../formula';
 import { DIVISIONS, newId, type Kind, type TakeoffType, type Units } from '../model';
 import type { Vars } from '../quantities';
 import { formatQty, lengthUnit } from '../units';
-import { askConfirm } from './Dialogs';
+import { Icon } from './Icons';
 
 interface Props {
   type: TakeoffType;
@@ -13,60 +13,64 @@ interface Props {
   onClose: () => void;
 }
 
-const VARS_HELP: [string, string][] = [
-  ['L', 'total length (linear)'],
-  ['H', 'height of this type'],
-  ['A', 'area (area types), or L × H (linear)'],
-  ['P', 'perimeter incl. cutouts (area)'],
-  ['N', 'number of runs / rooms / items'],
+const VARS_HELP: [keyof Vars, string][] = [
+  ['L', 'Total length'],
+  ['H', 'Height'],
+  ['A', 'Area (L × H for linear types)'],
+  ['P', 'Perimeter, incl. cutouts'],
+  ['N', 'Number of runs, rooms or items'],
 ];
 
+/** Edits a takeoff type: name, kind, colour, height, estimate grouping and its assembly items. */
 export function TypeEditor({ type, units, totals, onChange, onDelete, onClose }: Props) {
   const set = (patch: Partial<TakeoffType>) => onChange({ ...type, ...patch });
   const vars = totals ?? { L: 0, H: type.height, A: 0, P: 0, N: 0 };
 
   return (
-    <div className="panel type-editor">
-      <div className="panel-head">
-        <h3>Edit takeoff type</h3>
-        <button onClick={onClose}>Done</button>
-      </div>
-      <label>
-        Name
-        <input value={type.name} onChange={(e) => set({ name: e.target.value })} />
-      </label>
-      <div className="row">
-        <label>
-          Kind
-          <select value={type.kind} onChange={(e) => set({ kind: e.target.value as Kind })}>
-            <option value="area">Area</option>
-            <option value="linear">Linear</option>
-            <option value="count">Count</option>
-          </select>
-        </label>
-        <label>
-          Colour
-          <input type="color" value={type.color} onChange={(e) => set({ color: e.target.value })} />
-        </label>
-        <label>
-          Height ({lengthUnit(units)})
-          <input
-            type="number"
-            min={0}
-            step={0.1}
-            value={type.height}
-            onChange={(e) => set({ height: Math.max(0, Number(e.target.value) || 0) })}
-          />
-        </label>
+    <div className="type-editor">
+      <div className="editor-head">
+        <button className="back" onClick={onClose}>
+          <Icon name="chevron" size={14} /> Done
+        </button>
+        <span className="editor-title">Takeoff type</span>
       </div>
 
-      <div className="row">
-        <label>
-          Estimate division
+      <div className="form-group">
+        <label className="field">
+          <span>Name</span>
+          <input id="type-name" value={type.name} onChange={(e) => set({ name: e.target.value })} />
+        </label>
+        <div className="field-row">
+          <label className="field">
+            <span>Measured as</span>
+            <select id="type-kind" value={type.kind} onChange={(e) => set({ kind: e.target.value as Kind })}>
+              <option value="area">Area</option>
+              <option value="linear">Length</option>
+              <option value="count">Count</option>
+            </select>
+          </label>
+          <label className="field narrow">
+            <span>Height ({lengthUnit(units)})</span>
+            <input
+              id="type-height"
+              type="number"
+              min={0}
+              step={0.1}
+              value={type.height}
+              onChange={(e) => set({ height: Math.max(0, Number(e.target.value) || 0) })}
+            />
+          </label>
+          <label className="field color">
+            <span>Colour</span>
+            <input id="type-color" type="color" value={type.color} onChange={(e) => set({ color: e.target.value })} />
+          </label>
+        </div>
+        <label className="field">
+          <span>Estimate division</span>
           <input
             id="type-division"
             list="division-list"
-            placeholder="e.g. 09 Finishes"
+            placeholder="09 Finishes"
             value={type.division ?? ''}
             onChange={(e) => set({ division: e.target.value || undefined })}
           />
@@ -76,91 +80,72 @@ export function TypeEditor({ type, units, totals, onChange, onDelete, onClose }:
             ))}
           </datalist>
         </label>
-        <label>
-          Subtrade package
+        <label className="field">
+          <span>Subtrade package</span>
           <input
             id="type-package"
-            placeholder="e.g. Drywall & ceiling sub"
+            placeholder="Drywall & ceilings"
             value={type.package ?? ''}
             onChange={(e) => set({ package: e.target.value || undefined })}
           />
         </label>
       </div>
 
-      <h4>Assembly items</h4>
-      <table className="items">
-        <thead>
-          <tr>
-            <th>Item</th>
-            <th>Unit</th>
-            <th>Formula</th>
-            <th className="num">Qty</th>
-            <th />
-          </tr>
-        </thead>
-        <tbody>
-          {type.items.map((it, i) => {
-            const r = evaluate(it.formula, { ...vars });
-            const update = (patch: Partial<typeof it>) =>
-              set({ items: type.items.map((x, j) => (j === i ? { ...x, ...patch } : x)) });
-            return (
-              <tr key={it.id}>
-                <td>
-                  <input value={it.name} onChange={(e) => update({ name: e.target.value })} />
-                </td>
-                <td>
-                  <input className="unit" value={it.unit} onChange={(e) => update({ unit: e.target.value })} />
-                </td>
-                <td>
-                  <input
-                    className={r.ok ? 'formula' : 'formula bad'}
-                    value={it.formula}
-                    title={r.ok ? '' : r.error}
-                    onChange={(e) => update({ formula: e.target.value })}
-                  />
-                </td>
-                <td className="num">{r.ok ? formatQty(r.value) : <span className="err">{r.error}</span>}</td>
-                <td>
-                  <button
-                    className="icon"
-                    title="Remove item"
-                    onClick={() => set({ items: type.items.filter((_, j) => j !== i) })}
-                  >
-                    ×
-                  </button>
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-      <button
-        onClick={() => set({ items: [...type.items, { id: newId(), name: 'New item', unit: 'ea', formula: 'N' }] })}
-      >
-        + Add item
-      </button>
-
-      <div className="help">
-        <strong>Formula variables</strong> (totals for this type):
-        <ul>
-          {VARS_HELP.map(([k, d]) => (
-            <li key={k}>
-              <code>{k}</code> {d} = {formatQty(vars[k as keyof Vars])}
-            </li>
-          ))}
-        </ul>
-        Functions: <code>ceil</code> <code>floor</code> <code>round</code> <code>min</code> <code>max</code>{' '}
-        <code>abs</code>. Example: <code>ceil(L / 0.61) + N</code>
+      <div className="group-title">Assembly</div>
+      <div className="assembly-items">
+        {type.items.length === 0 && <p className="muted small-text">Add the materials this type needs. Each one is a formula of the totals below.</p>}
+        {type.items.map((it, i) => {
+          const r = evaluate(it.formula, { ...vars });
+          const update = (patch: Partial<typeof it>) => set({ items: type.items.map((x, j) => (j === i ? { ...x, ...patch } : x)) });
+          return (
+            <div className="assembly-item" key={it.id}>
+              <div className="item-top">
+                <input id={`item-name-${it.id}`} className="item-name" value={it.name} aria-label="Material" onChange={(e) => update({ name: e.target.value })} />
+                <span className="item-qty">{r.ok ? formatQty(r.value) : '—'}</span>
+                <button className="icon-button" title="Remove material" aria-label="Remove material" onClick={() => set({ items: type.items.filter((_, j) => j !== i) })}>
+                  <Icon name="trash" size={14} />
+                </button>
+              </div>
+              <div className="item-bottom">
+                <input
+                  id={`item-formula-${it.id}`}
+                  className={r.ok ? 'formula' : 'formula bad'}
+                  value={it.formula}
+                  aria-label="Formula"
+                  title={r.ok ? '' : r.error}
+                  onChange={(e) => update({ formula: e.target.value })}
+                />
+                <input id={`item-unit-${it.id}`} className="unit" value={it.unit} aria-label="Unit" onChange={(e) => update({ unit: e.target.value })} />
+              </div>
+              {!r.ok && <div className="field-hint error">{r.error}</div>}
+            </div>
+          );
+        })}
+        <button className="add-row" onClick={() => set({ items: [...type.items, { id: newId(), name: 'New material', unit: 'ea', formula: 'N' }] })}>
+          <Icon name="plus" size={14} /> Add material
+        </button>
       </div>
 
-      <button
-        className="danger"
-        onClick={async () => {
-          if (await askConfirm(`Delete "${type.name}" and all of its measurements?`, { confirmLabel: 'Delete', danger: true }))
-            onDelete();
-        }}
-      >
-        Delete type
+      <div className="vars-card">
+        <div className="vars-title">Totals for this type</div>
+        <dl>
+          {VARS_HELP.map(([k, d]) => (
+            <div key={k}>
+              <dt>
+                <code>{k}</code> {d}
+              </dt>
+              <dd>{formatQty(vars[k])}</dd>
+            </div>
+          ))}
+        </dl>
+        <p className="small-text muted">
+          Formulas use these letters with + - * / and <code>ceil</code> <code>floor</code> <code>round</code> <code>min</code> <code>max</code>, e.g.{' '}
+          <code>ceil(L / 0.61) + N</code>.
+        </p>
+      </div>
+
+      <button className="destructive wide" onClick={onDelete}>
+        <Icon name="trash" size={16} /> Delete type and its takeoffs
       </button>
     </div>
   );
