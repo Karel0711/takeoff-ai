@@ -241,6 +241,10 @@ renamed "(superseded)", and a scale you set by hand carries over. **More ›
 Compare with previous revision** overlays the two: linework only on the old
 sheet in red, only on the new one in blue, on both in grey.
 
+Typical floors: **More › Copy takeoffs to another sheet…** copies every
+takeoff on the sheet to another sheet of the same page size, in the same place,
+as new takeoffs (the target sheet's scale applies). Undo removes the copy.
+
 Deleting: select a takeoff and press Delete, use **Delete takeoff** on the
 selection card, or open **Takeoffs** in the inspector to delete one row, a whole
 type or everything on the sheet. Every delete shows an **Undo** button;

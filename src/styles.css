@@ -1319,6 +1319,8 @@ input.unit {
 }
 .menu {
   padding: 5px;
+  max-height: min(70vh, 560px);
+  overflow-y: auto;
 }
 .menu-group + .menu-group {
   margin-top: 5px;

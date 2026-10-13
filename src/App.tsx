@@ -96,7 +96,7 @@ export function App() {
   const [toast, setToast] = useState<Toast | null>(null);
   const [sheetFilter, setSheetFilter] = useState('');
   const [aiDialog, setAiDialog] = useState<'assemblies' | 'settings' | 'walls' | 'rooms' | 'finishes' | 'shortcuts' | 'help' | null>(null);
-  const [popover, setPopover] = useState<'scale' | 'more' | 'automate' | 'projects' | null>(null);
+  const [popover, setPopover] = useState<'scale' | 'more' | 'automate' | 'projects' | 'copy' | null>(null);
   const [tab, setTab] = useState<InspectorTab>('quantities');
   const [persisted, setPersisted] = useState(false);
   const projectFileInput = useRef<HTMLInputElement>(null);
@@ -775,6 +775,31 @@ export function App() {
     } finally {
       setBusy(null);
     }
+  }
+
+  /**
+   * Copies every takeoff on this sheet to another sheet of the same size at the same
+   * place on the page: for typical floors drawn on their own sheets. Copies are new
+   * takeoffs; the scale of the sheet they land on applies.
+   */
+  function copyTakeoffsTo(target: Sheet) {
+    if (!sheet) return;
+    const source = projectRef.current!.measurements.filter((m) => m.sheetId === sheet.id);
+    if (!source.length) return;
+    const copies = source.map((m) => ({
+      ...m,
+      id: newId(),
+      sheetId: target.id,
+      points: m.points.map((pt) => [...pt] as Pt),
+      holes: m.holes.map((h) => h.map((pt) => [...pt] as Pt)),
+      source: undefined,
+    }));
+    commit((p) => ({ ...p, measurements: [...p.measurements, ...copies] }), 'Copy takeoffs');
+    setToast({
+      text: `Copied ${copies.length} takeoff${copies.length === 1 ? '' : 's'} to ${target.name}${target.metersPerPoint ? '' : ' (set its scale to count them)'}`,
+      undo: true,
+      action: { label: `Go to ${target.name}`, run: () => setSheetId(target.id) },
+    });
   }
 
   /** Saves the current sheet as a PNG with its takeoffs drawn on and a legend of totals. */
@@ -1519,6 +1544,22 @@ export function App() {
           </div>
         </Popover>
       )}
+      {popover === 'copy' && sheet && (
+        <Menu
+          anchor={moreButton}
+          onClose={() => setPopover(null)}
+          label="Copy takeoffs to"
+          groups={[
+            project.sheets
+              .filter((x) => x.id !== sheet.id && Math.abs(x.width - sheet.width) < 1 && Math.abs(x.height - sheet.height) < 1)
+              .map((x) => ({
+                label: `Copy to ${x.name}`,
+                hint: x.metersPerPoint ? x.scaleLabel ?? '' : 'no scale',
+                onSelect: () => copyTakeoffsTo(x),
+              })),
+          ].filter((g) => g.length)}
+        />
+      )}
       {popover === 'more' && (
         <Menu
           anchor={moreButton}
@@ -1531,6 +1572,9 @@ export function App() {
               { label: 'Keyboard shortcuts', onSelect: () => setAiDialog('shortcuts') },
               ...(page && sheet ? [{ label: 'Save sheet as image…', hint: 'With takeoffs', onSelect: () => void saveSheetImage() }] : []),
               ...(previousRevision ? [{ label: 'Compare with previous revision', onSelect: () => void compareRevision() }] : []),
+              ...(sheet && project.measurements.some((m) => m.sheetId === sheet.id)
+                ? [{ label: 'Copy takeoffs to another sheet…', hint: 'Typical floors', onSelect: () => setTimeout(() => setPopover('copy'), 0) }]
+                : []),
               ...(project.sheets.some((x) => /^Page \d+$/.test(x.name))
                 ? [{ label: 'Name sheets with Claude…', hint: 'Sheets with no text', onSelect: () => void nameSheetsWithAi() }]
                 : []),
