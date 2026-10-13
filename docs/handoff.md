@@ -218,9 +218,11 @@ Where the project stands, for picking it up in a new session.
       Door tags has its own icon, "?" opens the shortcuts, the More menu is wider,
       the selected line's label sits above its handle, and the Projects panel
       marks the open project "Current".
+    - Wall finish types show their total as area (`TakeoffType.headline`, set by
+      `finishType('walls')`, a checkbox in the type editor for any length type).
+      Only `typeTotals().primary/unit` change; the Excel export reads items.
     - Not done: the sample's starter types (W1/FR1, Floor finish, Ceiling) sit
-      unused beside the types read from the sample. Wall finishes still lead with
-      length, with m² as an item.
+      unused beside the types read from the sample.
 - **Interface (redesigned):** light, Mac-style (system font, segmented tools,
   source-list sidebar, inspector with Quantities / Takeoffs / History). State
   changes go through `commit()` in `App.tsx`, which keeps undo/redo stacks and

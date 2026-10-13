@@ -72,6 +72,8 @@ export interface TakeoffType {
   items: AssemblyItem[];
   /** Wall takeoff stops this partition type at door openings (the estimator measures it without them). */
   stopsAtDoors?: boolean;
+  /** A length type whose total is shown as its area (length × height), as wall finishes are priced. */
+  headline?: 'area';
   /** Estimate division the type is priced in, e.g. "09 Finishes". */
   division?: string;
   /** Subtrade package it is grouped under, e.g. "Drywall / ceiling sub". */
@@ -263,7 +265,7 @@ export function finishType(role: FinishRole, code: string, units: Units, color: 
     case 'base':
       return { ...base, name: `${code} – Base`, kind: 'linear', package: 'Flooring sub', items: [item('Base', len, 'L'), item('Base + 5% waste', len, 'L * 1.05')] };
     case 'walls':
-      return { ...base, name: `${code} – Wall finish`, kind: 'linear', package: 'Painting sub', items: [item('Wall finish area (perimeter × height, less door openings)', area, 'A')] };
+      return { ...base, name: `${code} – Wall finish`, kind: 'linear', headline: 'area', package: 'Painting sub', items: [item('Wall finish area (perimeter × height, less door openings)', area, 'A')] };
     case 'ceiling':
       return { ...base, name: `${code} – Ceiling`, kind: 'area', package: 'Drywall & ceiling sub', items: [item('Ceiling area', area, 'A'), item('Perimeter trim', len, 'P')] };
   }

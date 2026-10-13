@@ -183,11 +183,13 @@ export function typeTotals(project: Project): TypeTotals[] {
         ? { name: it.name, unit: it.unit, formula: it.formula, value: r.value, error: null }
         : { name: it.name, unit: it.unit, formula: it.formula, value: null, error: r.error };
     });
+    // Wall finishes are priced by area: their total shows as one.
+    const asArea = type.kind === 'linear' && type.headline === 'area';
     return {
       type,
       vars,
-      primary: primaryOf(type.kind, vars),
-      unit: primaryUnit(type.kind, project.units),
+      primary: asArea ? vars.A : primaryOf(type.kind, vars),
+      unit: asArea ? areaUnit(project.units) : primaryUnit(type.kind, project.units),
       unscaled,
       items,
     };

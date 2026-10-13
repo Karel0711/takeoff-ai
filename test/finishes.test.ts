@@ -100,6 +100,9 @@ describe('room finish quantities', () => {
     expect(of(floor.id).primary).toBeCloseTo(20);
     expect(of(base.id).primary).toBeCloseTo(18);
     expect(of(walls.id).vars.A).toBeCloseTo(18 * 2.7);
+    // Wall finishes are priced by area, so that is their total.
+    expect(of(walls.id).primary).toBeCloseTo(18 * 2.7);
+    expect(of(walls.id).unit).toBe('m²');
     expect(of(room.id).primary).toBeCloseTo(20);
     // A finish of the room's own type does not count it twice.
     const again = typeTotals({ ...p, sheets: [sheet], types: [...p.types, floor], measurements: [{ ...m, finishes: { floor: room.id } }] });

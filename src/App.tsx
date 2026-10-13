@@ -1684,7 +1684,7 @@ export function App() {
                     <span className="row-main">
                       <span className="row-title type-name">{t.name}</span>
                       <span className="row-sub">
-                        {t.kind === 'area' ? 'Area' : t.kind === 'linear' ? 'Length' : 'Count'}
+                        {t.kind === 'area' ? 'Area' : t.kind === 'linear' ? (t.headline === 'area' ? 'Wall area' : 'Length') : 'Count'}
                         {tt && tt.vars.N > 0 ? ` · ${formatQty(tt.primary)} ${tt.unit}` : ''}
                       </span>
                     </span>

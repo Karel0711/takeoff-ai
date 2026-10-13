@@ -93,6 +93,12 @@ export function TypeEditor({ type, units, totals, onChange, onDelete, onDuplicat
             door openings
           </label>
         )}
+        {type.kind === 'linear' && (
+          <label className="inline check-row">
+            <input type="checkbox" checked={type.headline === 'area'} onChange={(e) => set({ headline: e.target.checked ? 'area' : undefined })} /> Show the total as
+            area (length × height), as for paint
+          </label>
+        )}
         <label className="field">
           <span>Estimate division</span>
           <input
