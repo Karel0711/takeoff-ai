@@ -86,6 +86,12 @@ export function TypeEditor({ type, units, totals, onChange, onDelete, onDuplicat
             </label>
           ))}
         </div>
+        {type.kind === 'linear' && (
+          <label className="inline check-row">
+            <input type="checkbox" checked={!!type.stopsAtDoors} onChange={(e) => set({ stopsAtDoors: e.target.checked })} /> Wall takeoff stops this type at
+            door openings
+          </label>
+        )}
         <label className="field">
           <span>Estimate division</span>
           <input

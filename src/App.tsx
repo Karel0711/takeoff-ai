@@ -1526,11 +1526,13 @@ export function App() {
           palette={PALETTE}
           legend={project.sheets.flatMap((s) => s.aiAssemblies?.assemblies ?? [])}
           maxOpening={maxOpening}
-          onApply={({ types, measurements, replaceEarlier }) =>
+          onApply={({ types, measurements, replaceEarlier, stopsAtDoors }) =>
             commit(
               (p) => ({
                 ...p,
-                types: [...p.types, ...types],
+                types: [...p.types, ...types].map((t) =>
+                  stopsAtDoors.has(t.id) && (t.stopsAtDoors ?? false) !== stopsAtDoors.get(t.id) ? { ...t, stopsAtDoors: stopsAtDoors.get(t.id) } : t,
+                ),
                 measurements: [...p.measurements.filter((m) => !(replaceEarlier && m.sheetId === sheet.id && m.source === 'walls')), ...measurements],
               }),
               'Wall takeoff',

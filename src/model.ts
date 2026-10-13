@@ -64,6 +64,8 @@ export interface TakeoffType {
   depth?: number;
   thickness?: number;
   items: AssemblyItem[];
+  /** Wall takeoff stops this partition type at door openings (the estimator measures it without them). */
+  stopsAtDoors?: boolean;
   /** Estimate division the type is priced in, e.g. "09 Finishes". */
   division?: string;
   /** Subtrade package it is grouped under, e.g. "Drywall / ceiling sub". */

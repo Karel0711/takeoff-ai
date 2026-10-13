@@ -23,7 +23,8 @@ interface Props {
   legend: ExtractedAssembly[];
   /** Wall openings up to this width (metres) are measured through. */
   maxOpening: number;
-  onApply: (result: { types: TakeoffType[]; measurements: Measurement[]; replaceEarlier: boolean }) => void;
+  /** `stopsAtDoors` maps every type the walls went to (new or existing) to whether it stops at doors. */
+  onApply: (result: { types: TakeoffType[]; measurements: Measurement[]; replaceEarlier: boolean; stopsAtDoors: Map<string, boolean> }) => void;
   onClose: () => void;
 }
 
@@ -56,7 +57,12 @@ export function WallTakeoffDialog({ page, sheet, units, types, earlier, palette,
     const finishOnly = (text: string) => /finish(es)?\s+only/i.test(text);
     const out = new Set<string>();
     for (const a of legend) if (finishOnly([a.title, ...a.notes].join(' '))) out.add(a.code.replace('-', ''));
-    for (const t of types) if (t.kind === 'linear' && finishOnly(`${t.name} ${t.assemblyTitle ?? ''} ${t.description ?? ''}`)) out.add(codeOf(t.name).replace('-', ''));
+    for (const t of types) {
+      if (t.kind !== 'linear') continue;
+      // A type remembers the choice from an earlier wall takeoff.
+      if (t.stopsAtDoors ?? finishOnly(`${t.name} ${t.assemblyTitle ?? ''} ${t.description ?? ''}`)) out.add(codeOf(t.name).replace('-', ''));
+      else if (t.stopsAtDoors === false) out.delete(codeOf(t.name).replace('-', ''));
+    }
     return out;
   });
   const stopKey = [...stopAt].sort().join(',');
@@ -116,6 +122,7 @@ export function WallTakeoffDialog({ page, sheet, units, types, earlier, palette,
     if (state.phase !== 'done') return;
     const newTypes: TakeoffType[] = [];
     const measurements: Measurement[] = [];
+    const stopsAtDoors = new Map<string, boolean>();
     for (const l of state.lines) {
       const c = choice.get(l.code) ?? SKIP;
       if (c === SKIP) continue;
@@ -130,11 +137,12 @@ export function WallTakeoffDialog({ page, sheet, units, types, earlier, palette,
         newTypes.push(t);
         typeId = t.id;
       }
+      if (tagKind(l.code) === 'partition') stopsAtDoors.set(typeId, stopAt.has(l.code));
       for (const points of l.lines) {
         measurements.push({ id: newId(), sheetId: sheet.id, typeId, points: points.map((p) => [...p] as Pt), holes: [], source: 'walls' });
       }
     }
-    onApply({ types: newTypes, measurements, replaceEarlier: earlier > 0 && replaceEarlier });
+    onApply({ types: newTypes, measurements, replaceEarlier: earlier > 0 && replaceEarlier, stopsAtDoors });
     onClose();
   }
 
@@ -142,7 +150,7 @@ export function WallTakeoffDialog({ page, sheet, units, types, earlier, palette,
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal wide" onClick={(e) => e.stopPropagation()}>
+      <div className="modal wide" role="dialog" aria-label="Wall takeoff" onClick={(e) => e.stopPropagation()}>
         <div className="panel-head">
           <h3>Wall takeoff · {sheet.name}</h3>
           <button onClick={onClose}>Close</button>
@@ -306,7 +314,7 @@ export function WallTakeoffDialog({ page, sheet, units, types, earlier, palette,
                 </label>
               )}
               <div className="spacer" />
-              <button className="on" disabled={!picked.length} onClick={add}>
+              <button className="primary" disabled={!picked.length} onClick={add}>
                 Add {picked.length} wall type{picked.length === 1 ? '' : 's'} · {len(picked.reduce((n, l) => n + (lengths.get(l.code) ?? 0), 0))}
               </button>
             </div>
