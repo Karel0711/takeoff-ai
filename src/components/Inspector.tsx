@@ -22,6 +22,9 @@ interface Props {
   onEditType: (typeId: string) => void;
   onEditFinishes: () => void;
   onFindSimilar: (id: string) => void;
+  /** Selects a takeoff and brings it into view, switching sheets when needed. */
+  onShow: (id: string) => void;
+  onRename: (id: string, label: string) => void;
   canFindSimilar: boolean;
 }
 
@@ -62,7 +65,7 @@ function qtyOf(m: Measurement, type: TakeoffType | undefined, project: Project):
   return v ? `${formatQty(primaryOf(type.kind, v))} ${primaryUnit(type.kind, project.units)}` : 'no scale';
 }
 
-function SelectionCard({ m, project, sheet: current, onDelete, onRetype, onSelect, onEditFinishes, onFindSimilar, canFindSimilar }: Props & { m: Measurement }) {
+function SelectionCard({ m, project, sheet: current, onDelete, onRetype, onSelect, onEditFinishes, onFindSimilar, canFindSimilar, onRename }: Props & { m: Measurement }) {
   const type = project.types.find((t) => t.id === m.typeId);
   const sheet = project.sheets.find((s) => s.id === m.sheetId);
   return (
@@ -71,7 +74,6 @@ function SelectionCard({ m, project, sheet: current, onDelete, onRetype, onSelec
         <span className="dot" style={{ background: type?.color }} />
         <div className="selection-text">
           <div className="selection-qty">{qtyOf(m, type, project)}</div>
-          {m.label && <div className="selection-label">{m.label}</div>}
           <div className="selection-sub">
             Selected takeoff · {sheet?.name}
             {m.source === 'walls' ? ' · wall takeoff' : ''}
@@ -81,6 +83,10 @@ function SelectionCard({ m, project, sheet: current, onDelete, onRetype, onSelec
           <Icon name="close" size={16} />
         </button>
       </div>
+      <label className="field">
+        <span>Name</span>
+        <input id="takeoff-name" value={m.label ?? ''} placeholder="e.g. 112 Receiving" onChange={(e) => onRename(m.id, e.target.value)} />
+      </label>
       <label className="field">
         <span>Type</span>
         <select value={m.typeId} onChange={(e) => onRetype(m.id, e.target.value)}>
@@ -119,7 +125,7 @@ function SelectionCard({ m, project, sheet: current, onDelete, onRetype, onSelec
   );
 }
 
-function TakeoffList({ project, sheet, selectedId, onSelect, onDelete }: Props) {
+function TakeoffList({ project, sheet, selectedId, onShow, onDelete }: Props) {
   const [scope, setScope] = useState<'sheet' | 'all'>('sheet');
   const list = scope === 'sheet' && sheet ? project.measurements.filter((m) => m.sheetId === sheet.id) : project.measurements;
   const groups = useMemo(() => {
@@ -164,7 +170,7 @@ function TakeoffList({ project, sheet, selectedId, onSelect, onDelete }: Props) 
           </header>
           <ul>
             {items.map((m, i) => (
-              <li key={m.id} className={m.id === selectedId ? 'selected' : ''} onClick={() => onSelect(m.id)}>
+              <li key={m.id} className={m.id === selectedId ? 'selected' : ''} onClick={() => onShow(m.id)} title="Show on the sheet">
                 <span className="row-index">{i + 1}</span>
                 <span className="row-qty">
                   {m.label && <span className="row-label">{m.label}</span>}

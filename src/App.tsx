@@ -63,6 +63,7 @@ export function App() {
   const [activeTypeId, setActiveTypeId] = useState<string | null>(null);
   const [editingTypeId, setEditingTypeId] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [focus, setFocus] = useState<{ id: string; n: number } | null>(null);
   const [tool, setTool] = useState<Tool>('select');
   const [busy, setBusy] = useState<string | null>(null);
   const [toast, setToast] = useState<Toast | null>(null);
@@ -786,6 +787,7 @@ export function App() {
           onCalibrate={(mpp, label) => sheet && updateSheet(sheet.id, { metersPerPoint: mpp, scaleLabel: label, scaleSource: 'calibrated' }, 'Calibrate')}
           onToolDone={() => setTool('select')}
           onFindSymbols={(box) => void countSymbols(box)}
+          focus={focus}
         />
 
         {project.sheets.length === 0 && (
@@ -890,6 +892,20 @@ export function App() {
             onEditType={setEditingTypeId}
             onEditFinishes={() => setAiDialog('finishes')}
             onFindSimilar={(id) => void addSimilar(id)}
+            onShow={(id) => {
+              const m = project.measurements.find((x) => x.id === id);
+              if (!m) return;
+              if (m.sheetId !== sheetId) setSheetId(m.sheetId);
+              setSelectedId(id);
+              setFocus((f) => ({ id, n: (f?.n ?? 0) + 1 }));
+            }}
+            onRename={(id, label) =>
+              commit(
+                (p) => ({ ...p, measurements: p.measurements.map((m) => (m.id === id ? { ...m, label: label || undefined } : m)) }),
+                'Rename',
+                `label:${id}`,
+              )
+            }
             canFindSimilar={!!page && !!sheet?.metersPerPoint && !busy}
           />
         )}

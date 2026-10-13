@@ -44,6 +44,8 @@ interface Props {
   onDelete: (id: string) => void;
   onCalibrate: (metersPerPoint: number, label: string) => void;
   onToolDone: () => void;
+  /** A takeoff to bring into view; a new `n` asks again for the same one. */
+  focus: { id: string; n: number } | null;
   /** Count by symbol: the box dragged around one symbol (x0, y0, x1, y1). */
   onFindSymbols: (box: [number, number, number, number]) => void;
 }
@@ -101,6 +103,26 @@ export function Viewer(props: Props) {
     setDraft([]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sheet?.id, size.w > 0]);
+
+  // Bring a takeoff picked from the list into view (after the fit above when the sheet changed).
+  const shownFocus = useRef(0);
+  useEffect(() => {
+    const f = props.focus;
+    if (!f || f.n === shownFocus.current || !sheet || !size.w) return;
+    const m = measurements.find((x) => x.id === f.id);
+    if (!m) return;
+    shownFocus.current = f.n;
+    const xs = m.points.map((p) => p[0]);
+    const ys = m.points.map((p) => p[1]);
+    const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
+    // A count is a point: show the area around it.
+    const bw = Math.max(x1 - x0, 80);
+    const bh = Math.max(y1 - y0, 80);
+    const fitZoom = Math.min(size.w / sheet.width, size.h / sheet.height) * 0.95;
+    const zoom = Math.max(fitZoom, Math.min(8, Math.min(size.w / (bw * 1.6), size.h / (bh * 1.6))));
+    setView({ zoom, x: size.w / 2 - ((x0 + x1) / 2) * zoom, y: size.h / 2 - ((y0 + y1) / 2) * zoom });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.focus?.n, sheet?.id, size.w > 0, measurements]);
 
   useEffect(() => {
     setDraft([]);
