@@ -51,6 +51,7 @@ export function QuickStartDialog({ onClose }: { onClose: () => void }) {
             </li>
           ))}
         </ol>
+        <p className="field-hint build-line">Version {__BUILD__}</p>
       </div>
     </div>
   );
