@@ -86,7 +86,10 @@ undo/redo, and an activity log of every change.
   one carrying that hatch is added as the same type: whole rooms to their
   walls, part-hatched rooms (bulkheads, bands) as the hatched part. On the
   sample set's A6.1, one GWB-ceiling room finds 79.6 m² of GWB ceiling against
-  81.7 m² in the bid workbook (A6.2: 112.9 against 127.2 m²).
+  81.7 m² in the bid workbook (A6.2: 112.9 against 127.2 m²). **Find on all
+  sheets** (on the result) looks for the same hatch on every other sheet:
+  A6.1's sample adds 35 areas on A6.2 in about 25 s; check the sheets it lists,
+  since a detail drawn with the same stipple can match too.
 - **Count symbols (done):** pick a count type, choose **Symbols** (S) and
   drag a box around one symbol (a light fixture, a toilet, a receptacle). Every
   copy on the sheet drawn with the same lines and pens, turned or not, is

@@ -11,6 +11,7 @@ const SHORTCUTS: [string, string][] = [
   ['Shift', 'Keep lines straight while measuring; join spaces when filling'],
   ['Backspace', 'Remove the last point while measuring'],
   ['Delete', 'Delete the selected takeoff'],
+  ['Option-click a point', 'Remove that point from the selected takeoff'],
   ['Esc', 'Cancel, or deselect'],
   ['⌘Z', 'Undo'],
   ['⇧⌘Z', 'Redo'],

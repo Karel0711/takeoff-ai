@@ -18,7 +18,8 @@ import { exportWorkbook } from './exportExcel';
 import { segmentsOf, segmentsOnce, wallModelFor } from './fill/sheetWalls';
 import { canAskClaude, readSheetName } from './ai/sheetName';
 import { describeAiError } from './ai/readLegend';
-import { findSimilar, pointInRing } from './fill/similar';
+import { findPatternOn, findSimilar, pointInRing, type Pattern } from './fill/similar';
+import { buildWallModel } from './fill/roomFill';
 import { matchSymbol, sampleSymbol, type SymbolSample } from './fill/symbols';
 import { traceLine } from './fill/trace';
 import { isHosted, saveFile } from './host';
@@ -544,6 +545,49 @@ export function App() {
     setToast({ text: `Named ${names.size} sheet${names.size === 1 ? '' : 's'}: ${[...names.values()].join(', ')}`, undo: true });
   }
 
+  /** Adds the areas carrying a sampled hatch on every other sheet drawn at that scale, as one change. */
+  async function findEverywhere(pattern: Pattern, typeId: string, fromSheet: string) {
+    const p = projectRef.current!;
+    const type = p.types.find((t) => t.id === typeId);
+    const source = p.sheets.find((x) => x.id === fromSheet);
+    if (!type || !source) return;
+    const added: Project['measurements'] = [];
+    const perSheet: string[] = [];
+    const centroid = (pts: Pt[]): Pt => [pts.reduce((n, q) => n + q[0], 0) / pts.length, pts.reduce((n, q) => n + q[1], 0) / pts.length];
+    try {
+      // A hatch is only the same at the same drawing scale.
+      const others = p.sheets.filter(
+        (x) => x.id !== fromSheet && !(x.metersPerPoint && source.metersPerPoint && Math.abs(x.metersPerPoint / source.metersPerPoint - 1) > 0.01),
+      );
+      for (const [i, other] of others.entries()) {
+        setBusy(`Looking on every sheet… ${i + 1} of ${others.length}`);
+        await new Promise((r) => setTimeout(r, 0));
+        const pg = await pdfs.get(other.docId)?.getPage(other.page);
+        if (!pg) continue;
+        const segs = await segmentsOnce(pg);
+        const model = () => buildWallModel(segs, other.metersPerPoint ?? source.metersPerPoint, { maxOpening });
+        const own = p.measurements.filter((x) => x.sheetId === other.id && x.typeId === typeId);
+        const fresh = findPatternOn(segs, model, pattern, other.width, other.height).areas.filter(
+          (a) => !own.some((x) => pointInRing(centroid(a.points), x.points)),
+        );
+        if (!fresh.length) continue;
+        perSheet.push(`${other.name} ${fresh.length}`);
+        for (const a of fresh) added.push({ id: newId(), sheetId: other.id, typeId, points: a.points, holes: [] });
+      }
+    } catch (e) {
+      setToast({ text: `Something went wrong: ${e instanceof Error ? e.message : String(e)}`, undo: false });
+      return;
+    } finally {
+      setBusy(null);
+    }
+    if (!added.length) {
+      setToast({ text: 'No areas with this hatch on the other sheets.', undo: false });
+      return;
+    }
+    commit((q) => ({ ...q, measurements: [...q.measurements, ...added] }), 'Find similar');
+    setToast({ text: `Added ${added.length} more areas: ${perSheet.slice(0, 4).join(', ')}${perSheet.length > 4 ? '…' : ''}`, undo: true });
+  }
+
   /** Counts a sampled symbol on every other sheet, as one change. */
   async function countEverywhere(sample: SymbolSample, typeId: string, fromSheet: string) {
     const p = projectRef.current!;
@@ -593,7 +637,7 @@ export function App() {
       // Let the busy note paint before the sheet-wide search.
       await new Promise((r) => setTimeout(r, 30));
       const [segs, model] = await Promise.all([segmentsOf(page), wallModelFor(page, sheet, maxOpening)]);
-      const { pattern, areas } = findSimilar(segs, model, m.points, sheet.width, sheet.height);
+      const { pattern, areas, found } = findSimilar(segs, model, m.points, sheet.width, sheet.height);
       if (!pattern) {
         setToast({ text: 'This area has no hatch pattern to match. Pick an area drawn with a hatch (dots, tile grid, lines).', undo: false });
         return;
@@ -608,7 +652,12 @@ export function App() {
       }
       const added = fresh.map((a) => ({ id: newId(), sheetId: sheet.id, typeId: m.typeId, points: a.points, holes: [] }));
       commit((p) => ({ ...p, measurements: [...p.measurements, ...added] }), 'Find similar');
-      setToast({ text: `Added ${added.length} area${added.length === 1 ? '' : 's'} hatched like this one`, undo: true });
+      const typeId = m.typeId;
+      setToast({
+        text: `Added ${added.length} area${added.length === 1 ? '' : 's'} hatched like this one`,
+        undo: true,
+        action: found && project!.sheets.length > 1 ? { label: 'Find on all sheets', run: () => void findEverywhere(found, typeId, sheet.id) } : undefined,
+      });
     } catch (e) {
       setToast({ text: `Something went wrong: ${e instanceof Error ? e.message : String(e)}`, undo: false });
       return;

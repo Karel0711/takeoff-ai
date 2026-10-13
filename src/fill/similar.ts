@@ -17,6 +17,8 @@ export interface SimilarResult {
   /** The hatch the sample was matched by, e.g. "S0.54 dot"; null when the sample has none. */
   pattern: string | null;
   areas: SimilarArea[];
+  /** The sample's pattern, to look for on other sheets. */
+  found?: Pattern;
 }
 
 export function pointInRing([x, y]: Pt, ring: Pt[]): boolean {
@@ -106,6 +108,23 @@ export function findSimilar(segs: Segment[], model: WallModel, sample: Pt[], she
   const marks = marksOf(segs);
   const pattern = samplePattern(marks, sample, sheetW * sheetH);
   if (!pattern) return { pattern: null, areas: [] };
+  return { ...findPattern(marks, model, pattern, sheetW, sheetH, sample), found: pattern };
+}
+
+/**
+ * Every space on another sheet carrying a pattern sampled elsewhere. The wall model is
+ * only built when the sheet has enough of the pattern to be worth looking at.
+ */
+export function findPatternOn(segs: Segment[], model: () => WallModel, pattern: Pattern, sheetW: number, sheetH: number): SimilarResult {
+  const marks = marksOf(segs);
+  // At least a sample's worth of the pattern somewhere on the sheet.
+  let weight = 0;
+  for (const m of marks) if (pattern.keys.includes(m.key)) weight += markWeight(m);
+  if (weight < 30) return { pattern: pattern.keys.join(' + '), areas: [] };
+  return findPattern(marks, model(), pattern, sheetW, sheetH, null);
+}
+
+function findPattern(marks: Mark[], model: WallModel, pattern: Pattern, sheetW: number, sheetH: number, sample: Pt[] | null): SimilarResult {
   const { keys, cell, density } = pattern;
   const lines = keys.some((k) => k.includes(' line'));
 
@@ -159,9 +178,9 @@ export function findSimilar(segs: Segment[], model: WallModel, sample: Pt[], she
     const id = spaceAt(m.cx, m.cy);
     if (id >= 0) weight[id] += markWeight(m);
   }
-  const sx = sample.reduce((n, p) => n + p[0], 0) / sample.length;
-  const sy = sample.reduce((n, p) => n + p[1], 0) / sample.length;
-  const sampleId = spaceAt(sx, sy);
+  const sx = sample ? sample.reduce((n, p) => n + p[0], 0) / sample.length : -1;
+  const sy = sample ? sample.reduce((n, p) => n + p[1], 0) / sample.length : -1;
+  const sampleId = sample ? spaceAt(sx, sy) : -1;
   // The pattern's cells by the space they lie in, for outlining part-hatched spaces.
   const cellsIn = new Map<number, number[]>();
   for (let j = 0; j < on.length; j++) {
@@ -185,7 +204,7 @@ export function findSimilar(segs: Segment[], model: WallModel, sample: Pt[], she
     if (areas.some((a) => pointInRing(seed[id], a.points))) continue;
     if (share >= 0.5 && dens >= 0.35 * density) {
       const room = fillRoom(model, [seed[id]], sheetW, sheetH, 2);
-      if (room.ok && !pointInRing([sx, sy], room.points)) areas.push({ points: room.points, area: Math.abs(ringArea(room.points)), how: 'room' });
+      if (room.ok && !(sample && pointInRing([sx, sy], room.points))) areas.push({ points: room.points, area: Math.abs(ringArea(room.points)), how: 'room' });
     } else if (!lines && share >= 0.08) {
       // Part of the room: the hatched cells inside it.
       const cells = cellsIn.get(id) ?? [];
