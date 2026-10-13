@@ -37,6 +37,8 @@ export interface Sheet {
   scaleSource: ScaleSource | null;
   /** Scale notations found on the sheet, offered as one-click choices. */
   scaleHints: string[];
+  /** An older revision kept for reference after its takeoffs moved to a newer sheet. */
+  superseded?: boolean;
   /** The last AI reading of this sheet's assembly legend, kept so it can be reviewed again without re-running. */
   aiAssemblies?: SavedLegendRead;
 }

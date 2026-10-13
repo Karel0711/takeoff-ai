@@ -64,7 +64,7 @@ const divisionTitle = (division: string) => {
 };
 
 /** A linear type priced as wall area (its height matters) when its assembly uses A or H. */
-const pricedByHeight = (t: TakeoffType) => t.kind === 'linear' && t.items.some((i) => /\b[AH]\b/.test(i.formula));
+const pricedByHeight = (t: TakeoffType) => t.kind === 'linear' && t.items.some((i) => /\b(A|H|Area|Height)\b/.test(i.formula));
 
 const unitLabel = (t: TakeoffType, project: Project) =>
   t.kind === 'count' ? 'EA' : project.units === 'metric' ? (t.kind === 'area' ? 'M2' : 'M') : t.kind === 'area' ? 'SF' : 'LF';

@@ -87,8 +87,12 @@ export function RoomsDialog({ page, sheet, units, types, earlier, palette, maxOp
       const room = state.rooms[i];
       const res = fillRoom(model, room.labels.map((l) => l.at), sheet.width, sheet.height, 2);
       if (res.ok) {
-        const rooms = state.rooms.map((r, j) => (j === i ? { ...r, points: res.points, reason: undefined, area: Math.abs(ringArea(res.points)), wider: true } : r));
-        setState({ ...state, rooms });
+        // From the latest state: another retry may have finished meanwhile.
+        setState((cur) =>
+          cur.phase === 'done'
+            ? { ...cur, rooms: cur.rooms.map((r, j) => (j === i ? { ...r, points: res.points, reason: undefined, area: Math.abs(ringArea(res.points)), wider: true } : r)) }
+            : cur,
+        );
         setPicked((s) => new Set(s).add(i));
       } else setStillOpen((s) => new Set(s).add(i));
     } finally {

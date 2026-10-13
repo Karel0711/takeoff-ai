@@ -83,7 +83,16 @@ export function App() {
   const [activity, setActivity] = useState<ActivityEvent[]>([]);
   const activityRef = useRef<ActivityEvent[]>([]);
 
-  const [pdfs, setPdfs] = useState<Map<string, PDFDocumentProxy>>(new Map());
+  const [pdfs, setPdfsState] = useState<Map<string, PDFDocumentProxy>>(new Map());
+  /** The open drawings, current even in callbacks made before a later upload (toast buttons). */
+  const pdfsRef = useRef(pdfs);
+  const setPdfs = useCallback((next: Map<string, PDFDocumentProxy> | ((m: Map<string, PDFDocumentProxy>) => Map<string, PDFDocumentProxy>)) => {
+    setPdfsState((cur) => {
+      const value = typeof next === 'function' ? next(cur) : next;
+      pdfsRef.current = value;
+      return value;
+    });
+  }, []);
   const [sheetId, setSheetId] = useState<string | null>(null);
   const [page, setPage] = useState<PDFPageProxy | null>(null);
   const [activeTypeId, setActiveTypeId] = useState<string | null>(null);
@@ -378,7 +387,7 @@ export function App() {
     const pairs = added.flatMap((n) => {
       if (/^Page \d+$/.test(n.name)) return [];
       const old = p.sheets.find(
-        (o) => !addedIds.has(o.id) && o.name === n.name && Math.abs(o.width - n.width) < 1 && Math.abs(o.height - n.height) < 1,
+        (o) => !addedIds.has(o.id) && !o.superseded && o.name === n.name && Math.abs(o.width - n.width) < 1 && Math.abs(o.height - n.height) < 1,
       );
       return old ? [{ old, n }] : [];
     });
@@ -397,9 +406,11 @@ export function App() {
         measurements: q.measurements.map((m) => (move.has(m.sheetId) ? { ...m, sheetId: move.get(m.sheetId)!.id } : m)),
         sheets: q.sheets.map((x) => {
           // The old sheet is kept for reference; the new one keeps a scale set by hand on the old.
-          if (move.has(x.id)) return { ...x, name: `${x.name} (superseded)` };
+          if (move.has(x.id)) return { ...x, name: `${x.name} (superseded)`, superseded: true };
+          // A scale set by hand on the old sheet wins over one read from the new sheet's text.
           const from = withTakeoffs.find((w) => w.n.id === x.id)?.old;
-          return from && from.metersPerPoint && from.scaleSource !== 'detected' && !x.metersPerPoint
+          const handSet = from?.metersPerPoint && (from.scaleSource === 'preset' || from.scaleSource === 'calibrated');
+          return from && handSet && (!x.metersPerPoint || x.scaleSource === 'detected')
             ? { ...x, metersPerPoint: from.metersPerPoint, scaleLabel: from.scaleLabel, scaleSource: from.scaleSource }
             : x;
         }),
@@ -675,10 +686,10 @@ export function App() {
     try {
       const p = projectRef.current!;
       const found: { sheetId: string; tags: ReturnType<typeof findDoorTags> }[] = [];
-      const targets = everywhere ? p.sheets : [sheet];
+      const targets = everywhere ? p.sheets.filter((x) => !x.superseded || x.id === sheet.id) : [sheet];
       for (const [i, x] of targets.entries()) {
         if (everywhere) setBusy(`Finding door tags… sheet ${i + 1} of ${targets.length}`);
-        const pg = x.id === sheet.id ? page : await pdfs.get(x.docId)?.getPage(x.page);
+        const pg = x.id === sheet.id ? page : await pdfsRef.current.get(x.docId)?.getPage(x.page);
         if (!pg) continue;
         const segs = x.id === sheet.id ? await segmentsOf(pg) : await segmentsOnce(pg);
         const texts = await pageTexts(pg);
@@ -690,9 +701,11 @@ export function App() {
         const rooms = findRoomLabels(texts, segs).map((r) => parseInt(r.number.replace(/^\D/, ''), 10));
         if (rooms.length) {
           const [lo, hi] = [Math.min(...rooms) - 20, Math.max(...rooms) + 20];
+          // On the sheet being counted, doors numbered on their own (D001) are kept; only
+          // numbers well above the rooms' (level markers) go. Other sheets keep the range.
           tags = tags.filter((d) => {
             const n = parseInt(d.number.replace(/^\D/, ''), 10);
-            return n >= lo && n <= hi;
+            return x.id === sheet.id ? n <= hi : n >= lo && n <= hi;
           });
         }
         if (x.id !== sheet.id && (!rooms.length || tags.length < 4)) continue;
@@ -752,7 +765,7 @@ export function App() {
   }
 
   /** The superseded revision of the current sheet, if one was kept. */
-  const previousRevision = sheet ? project?.sheets.find((x) => x.name === `${sheet.name} (superseded)`) ?? null : null;
+  const previousRevision = sheet ? ([...(project?.sheets ?? [])].reverse().find((x) => x.name === `${sheet.name} (superseded)`) ?? null) : null;
 
   /** Shows what changed between the current sheet and its superseded revision. */
   async function compareRevision() {
@@ -792,7 +805,6 @@ export function App() {
       sheetId: target.id,
       points: m.points.map((pt) => [...pt] as Pt),
       holes: m.holes.map((h) => h.map((pt) => [...pt] as Pt)),
-      source: undefined,
     }));
     commit((p) => ({ ...p, measurements: [...p.measurements, ...copies] }), 'Copy takeoffs');
     setToast({
@@ -829,7 +841,7 @@ export function App() {
     try {
       for (const [i, x] of unnamed.entries()) {
         setBusy(`Reading sheet names… ${i + 1} of ${unnamed.length}`);
-        const pg = await pdfs.get(x.docId)?.getPage(x.page);
+        const pg = await pdfsRef.current.get(x.docId)?.getPage(x.page);
         if (!pg) continue;
         const read = await readSheetName(pg);
         if (read.number) names.set(x.id, read.number);
@@ -868,12 +880,12 @@ export function App() {
     try {
       // A hatch is only the same at the same drawing scale.
       const others = p.sheets.filter(
-        (x) => x.id !== fromSheet && !(x.metersPerPoint && source.metersPerPoint && Math.abs(x.metersPerPoint / source.metersPerPoint - 1) > 0.01),
+        (x) => x.id !== fromSheet && !x.superseded && !(x.metersPerPoint && source.metersPerPoint && Math.abs(x.metersPerPoint / source.metersPerPoint - 1) > 0.01),
       );
       for (const [i, other] of others.entries()) {
         setBusy(`Looking on every sheet… ${i + 1} of ${others.length}`);
         await new Promise((r) => setTimeout(r, 0));
-        const pg = await pdfs.get(other.docId)?.getPage(other.page);
+        const pg = await pdfsRef.current.get(other.docId)?.getPage(other.page);
         if (!pg) continue;
         const segs = await segmentsOnce(pg);
         if (!(await sameScale(other, source, pg, segs))) continue;
@@ -911,12 +923,12 @@ export function App() {
       const source = p.sheets.find((x) => x.id === fromSheet);
       // A symbol only matches at the scale it was drawn at.
       const others = p.sheets.filter(
-        (x) => x.id !== fromSheet && !(x.metersPerPoint && source?.metersPerPoint && Math.abs(x.metersPerPoint / source.metersPerPoint - 1) > 0.01),
+        (x) => x.id !== fromSheet && !x.superseded && !(x.metersPerPoint && source?.metersPerPoint && Math.abs(x.metersPerPoint / source.metersPerPoint - 1) > 0.01),
       );
       for (const [i, other] of others.entries()) {
         setBusy(`Counting on every sheet… ${i + 1} of ${others.length}`);
         await new Promise((r) => setTimeout(r, 0));
-        const pg = await pdfs.get(other.docId)?.getPage(other.page);
+        const pg = await pdfsRef.current.get(other.docId)?.getPage(other.page);
         if (!pg) continue;
         const segs = await segmentsOnce(pg);
         if (source && !(await sameScale(other, source, pg, segs))) continue;
