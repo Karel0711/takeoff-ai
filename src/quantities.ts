@@ -1,6 +1,6 @@
 import { evaluate } from './formula';
 import { polylineLength, ringArea, ringLength } from './geometry';
-import type { Measurement, Project, Sheet, TakeoffType, Units } from './model';
+import { FINISH_ROLES, type FinishRole, type Measurement, type Project, type Sheet, type TakeoffType, type Units } from './model';
 import { areaUnit, lengthUnit, toArea, toLength } from './units';
 
 /** Formula variables in project units. */
@@ -38,6 +38,49 @@ export function measurementVars(m: Measurement, type: TakeoffType, sheet: Sheet,
   };
 }
 
+/**
+ * What a room counts toward a finish type: an area type takes the room's area (and
+ * perimeter), a linear type its perimeter as length, so A = perimeter × the type's height.
+ */
+export function finishVars(room: Measurement, type: TakeoffType, sheet: Sheet, units: Units): Vars | null {
+  if (type.kind === 'count') return { L: 0, H: type.height, A: 0, P: 0, N: 1 };
+  if (type.kind === 'area') return measurementVars(room, type, sheet, units);
+  const mpp = sheet.metersPerPoint;
+  if (mpp === null) return null;
+  const L = toLength((ringLength(room.points) + room.holes.reduce((sum, h) => sum + ringLength(h), 0)) * mpp, units);
+  return { L, H: type.height, A: L * type.height, P: 0, N: 1 };
+}
+
+/** One measurement's share of one type: drawn as that type, or a room finished with it. */
+export interface Contribution {
+  m: Measurement;
+  type: TakeoffType;
+  sheet: Sheet;
+  /** Null when the sheet has no scale. */
+  vars: Vars | null;
+  /** Set when the share comes from a room's finishes. */
+  role?: FinishRole;
+}
+
+/** Every measurement's share of every type, in measurement order. */
+export function contributions(project: Project): Contribution[] {
+  const sheets = new Map(project.sheets.map((s) => [s.id, s]));
+  const types = new Map(project.types.map((t) => [t.id, t]));
+  const out: Contribution[] = [];
+  for (const m of project.measurements) {
+    const sheet = sheets.get(m.sheetId);
+    if (!sheet) continue;
+    const type = types.get(m.typeId);
+    if (type) out.push({ m, type, sheet, vars: measurementVars(m, type, sheet, project.units) });
+    if (!m.finishes) continue;
+    for (const { role } of FINISH_ROLES) {
+      const t = m.finishes[role] ? types.get(m.finishes[role]!) : undefined;
+      if (t) out.push({ m, type: t, sheet, vars: finishVars(m, t, sheet, project.units), role });
+    }
+  }
+  return out;
+}
+
 /** The headline quantity for a type kind: area, length or count. */
 export function primaryOf(kind: TakeoffType['kind'], vars: Vars): number {
   return kind === 'area' ? vars.A : kind === 'linear' ? vars.L : vars.N;
@@ -66,15 +109,12 @@ export interface TypeTotals {
 }
 
 export function typeTotals(project: Project): TypeTotals[] {
-  const sheets = new Map(project.sheets.map((s) => [s.id, s]));
+  const byType = new Map<string, Contribution[]>();
+  for (const c of contributions(project)) byType.set(c.type.id, [...(byType.get(c.type.id) ?? []), c]);
   return project.types.map((type) => {
     const vars: Vars = { L: 0, H: type.height, A: 0, P: 0, N: 0 };
     let unscaled = 0;
-    for (const m of project.measurements) {
-      if (m.typeId !== type.id) continue;
-      const sheet = sheets.get(m.sheetId);
-      if (!sheet) continue;
-      const v = measurementVars(m, type, sheet, project.units);
+    for (const { vars: v } of byType.get(type.id) ?? []) {
       if (!v) {
         unscaled++;
         continue;

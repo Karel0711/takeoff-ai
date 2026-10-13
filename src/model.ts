@@ -102,7 +102,22 @@ export interface Measurement {
   source?: 'walls' | 'rooms';
   /** A name for this takeoff, e.g. the room it covers ("112 RECEIVING & GEN. STORAGE"). */
   label?: string;
+  /**
+   * Room finishes: the takeoff type each finish of this room is priced under. The room's
+   * outline counts toward each: floor and ceiling as area, base and walls as its perimeter.
+   */
+  finishes?: Partial<Record<FinishRole, string>>;
 }
+
+export type FinishRole = 'floor' | 'base' | 'walls' | 'ceiling';
+
+/** Room finishes in schedule order, with the kind of type each is measured as. */
+export const FINISH_ROLES: { role: FinishRole; label: string; kind: Kind }[] = [
+  { role: 'floor', label: 'Floor', kind: 'area' },
+  { role: 'base', label: 'Base', kind: 'linear' },
+  { role: 'walls', label: 'Walls', kind: 'linear' },
+  { role: 'ceiling', label: 'Ceiling', kind: 'area' },
+];
 
 export interface Project {
   version: 1;
@@ -206,6 +221,25 @@ export function defaultTypes(units: Units): TakeoffType[] {
       items: [item('Door, frame & hardware', 'ea', 'N')],
     },
   ];
+}
+
+/** A new takeoff type for a room finish code from a schedule, e.g. "CPT-1" as a floor. */
+export function finishType(role: FinishRole, code: string, units: Units, color: string): TakeoffType {
+  const m = units === 'metric';
+  const len = m ? 'm' : 'ft';
+  const area = m ? 'm²' : 'SF';
+  const h = m ? 3.0 : 10;
+  const base = { id: newId(), color, height: h, division: '09 Finishes' };
+  switch (role) {
+    case 'floor':
+      return { ...base, name: `${code} – Floor finish`, kind: 'area', package: 'Flooring sub', items: [item('Floor area', area, 'A'), item('Floor finish + 10% waste', area, 'A * 1.1')] };
+    case 'base':
+      return { ...base, name: `${code} – Base`, kind: 'linear', package: 'Flooring sub', items: [item('Base', len, 'L'), item('Base + 5% waste', len, 'L * 1.05')] };
+    case 'walls':
+      return { ...base, name: `${code} – Wall finish`, kind: 'linear', package: 'Painting sub', items: [item('Wall finish area (perimeter × height)', area, 'A')] };
+    case 'ceiling':
+      return { ...base, name: `${code} – Ceiling`, kind: 'area', package: 'Drywall & ceiling sub', items: [item('Ceiling area', area, 'A'), item('Perimeter trim', len, 'P')] };
+  }
 }
 
 export function newProject(units: Units = 'metric'): Project {

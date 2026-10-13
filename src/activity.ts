@@ -52,7 +52,15 @@ export function diffProjects(prev: Project, next: Project, source: string, at = 
       if (!old) event({ action: 'created', what: 'takeoff', name: codeOf(type?.name ?? 'Takeoff'), sheet: sheet?.name, detail });
       else {
         const moved = old.typeId !== m.typeId ? ` (was ${codeOf(typesBefore.get(old.typeId)?.name ?? '?')})` : '';
-        event({ action: 'updated', what: 'takeoff', name: codeOf(type?.name ?? 'Takeoff'), sheet: sheet?.name, detail: `${detail ?? ''}${moved}` });
+        const finishes =
+          JSON.stringify(old.finishes ?? {}) !== JSON.stringify(m.finishes ?? {})
+            ? ` · finishes ${
+                Object.values(m.finishes ?? {})
+                  .map((id) => codeOf(typesAfter.get(id)?.name ?? '?'))
+                  .join(', ') || 'cleared'
+              }`
+            : '';
+        event({ action: 'updated', what: 'takeoff', name: codeOf(type?.name ?? 'Takeoff'), sheet: sheet?.name, detail: `${detail ?? ''}${moved}${finishes}` });
       }
     }
     for (const m of prev.measurements) {

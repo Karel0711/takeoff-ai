@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { describeGroup, groupActivity, type ActivityEvent } from '../activity';
-import type { Measurement, Project, Sheet, TakeoffType } from '../model';
+import { FINISH_ROLES, type Measurement, type Project, type Sheet, type TakeoffType } from '../model';
 import { measurementVars, primaryOf, primaryUnit, type TypeTotals } from '../quantities';
 import { formatQty } from '../units';
 import { Icon } from './Icons';
@@ -20,6 +20,7 @@ interface Props {
   onDelete: (ids: string[]) => void;
   onRetype: (id: string, typeId: string) => void;
   onEditType: (typeId: string) => void;
+  onEditFinishes: () => void;
 }
 
 const TABS: { id: InspectorTab; label: string }[] = [
@@ -59,7 +60,7 @@ function qtyOf(m: Measurement, type: TakeoffType | undefined, project: Project):
   return v ? `${formatQty(primaryOf(type.kind, v))} ${primaryUnit(type.kind, project.units)}` : 'no scale';
 }
 
-function SelectionCard({ m, project, onDelete, onRetype, onSelect }: Props & { m: Measurement }) {
+function SelectionCard({ m, project, onDelete, onRetype, onSelect, onEditFinishes }: Props & { m: Measurement }) {
   const type = project.types.find((t) => t.id === m.typeId);
   const sheet = project.sheets.find((s) => s.id === m.sheetId);
   return (
@@ -90,6 +91,20 @@ function SelectionCard({ m, project, onDelete, onRetype, onSelect }: Props & { m
             ))}
         </select>
       </label>
+      {type?.kind === 'area' && (
+        <div className="field">
+          <span>Finishes</span>
+          <div className="finish-chips">
+            {FINISH_ROLES.flatMap(({ role, label }) => {
+              const t = m.finishes?.[role] ? project.types.find((x) => x.id === m.finishes![role]) : undefined;
+              return t ? [<span key={role} className="finish-chip" title={t.name}>{`${label}: ${t.name.split(' – ')[0]}`}</span>] : [];
+            })}
+            <button className="link-button" onClick={onEditFinishes}>
+              {m.finishes && Object.keys(m.finishes).length ? 'Edit…' : 'Set floor, base, walls, ceiling…'}
+            </button>
+          </div>
+        </div>
+      )}
       <button className="destructive wide" onClick={() => onDelete([m.id])}>
         <Icon name="trash" size={16} /> Delete takeoff
       </button>

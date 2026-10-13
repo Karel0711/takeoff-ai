@@ -1,0 +1,105 @@
+import { describe, expect, it } from 'vitest';
+import { readFinishSchedule, roomNumbersOf } from '../src/finishSchedule';
+import { finishType, newProject, type Measurement, type Sheet } from '../src/model';
+import type { PageText } from '../src/pageText';
+import { typeTotals } from '../src/quantities';
+
+const text = (str: string, cx: number, cy: number): PageText => ({ str, cx, cy, w: str.length * 4, h: 5 });
+
+describe('room finish schedule', () => {
+  // A schedule with a two-line header, an N/E/S/W wall group and a remarks column.
+  const header = [
+    text('ROOM', 60, 100),
+    text('NO.', 40, 112),
+    text('NAME', 110, 112),
+    text('FLOOR', 200, 112),
+    text('BASE', 250, 112),
+    text('WALLS', 330, 100),
+    text('N', 300, 112),
+    text('E', 320, 112),
+    text('S', 340, 112),
+    text('W', 360, 112),
+    text('CEILING', 420, 112),
+    text('REMARKS', 500, 112),
+  ];
+  const row = (y: number, no: string, name: string, floor: string, base: string, walls: string[], ceiling: string, remark = '') => [
+    text(no, 40, y),
+    text(name, 110, y),
+    text(floor, 200, y),
+    text(base, 250, y),
+    ...walls.map((w, i) => text(w, 300 + 20 * i, y)),
+    text(ceiling, 420, y),
+    ...(remark ? [text(remark, 500, y)] : []),
+  ];
+  const texts = [
+    text('ROOM FINISH SCHEDULE', 200, 80),
+    ...header,
+    ...row(130, '101', 'LOBBY', 'PT-1', 'RB-1', ['P1', 'P1', 'P2', 'P1'], 'ACT-1'),
+    ...row(142, '102', 'RENTAL SHOP', 'SC', '—', ['P1', 'P1', 'P1', 'P1'], 'EXP', 'SEALED CONCRETE'),
+    ...row(154, '103', 'STORAGE', 'SC', 'RB-1', ['P1', 'P1', 'P1', 'P1'], 'GWB'),
+    // A note far below is not part of the schedule.
+    text('204', 40, 600),
+  ];
+
+  it('reads one line per room with the code in each finish column', () => {
+    const s = readFinishSchedule(texts)!;
+    expect(s.columns).toEqual(['floor', 'base', 'walls', 'ceiling']);
+    expect(s.rows).toEqual([
+      { number: '101', name: 'LOBBY', finishes: { floor: 'PT-1', base: 'RB-1', walls: 'P1', ceiling: 'ACT-1' } },
+      { number: '102', name: 'RENTAL SHOP', finishes: { floor: 'SC', walls: 'P1', ceiling: 'EXP' } },
+      { number: '103', name: 'STORAGE', finishes: { floor: 'SC', base: 'RB-1', walls: 'P1', ceiling: 'GWB' } },
+    ]);
+  });
+
+  it('finds nothing on a sheet without a schedule', () => {
+    expect(readFinishSchedule([text('FLOOR PLAN', 100, 100), text('101', 100, 200)])).toBeNull();
+  });
+
+  it('reads room numbers from room takeoff names', () => {
+    expect(roomNumbersOf('112 RECEIVING & GEN. STORAGE')).toEqual(['112']);
+    expect(roomNumbersOf('100 / 101 LOBBY')).toEqual(['100', '101']);
+    expect(roomNumbersOf('Lobby')).toEqual([]);
+  });
+});
+
+describe('room finish quantities', () => {
+  it('counts a room toward its floor and ceiling as area and its base and walls as perimeter', () => {
+    const p = newProject('metric');
+    const sheet: Sheet = {
+      id: 's',
+      docId: 'd',
+      page: 1,
+      name: 'A1',
+      width: 1000,
+      height: 1000,
+      metersPerPoint: 0.01,
+      scaleLabel: null,
+      scaleSource: null,
+      scaleHints: [],
+    };
+    const room = p.types.find((t) => t.kind === 'area')!;
+    const floor = finishType('floor', 'CPT-1', 'metric', '#000');
+    const base = finishType('base', 'RB-1', 'metric', '#000');
+    const walls = { ...finishType('walls', 'P1', 'metric', '#000'), height: 2.7 };
+    const m: Measurement = {
+      id: 'm',
+      sheetId: 's',
+      typeId: room.id,
+      // 5 m × 4 m
+      points: [
+        [0, 0],
+        [500, 0],
+        [500, 400],
+        [0, 400],
+      ],
+      holes: [],
+      finishes: { floor: floor.id, base: base.id, walls: walls.id },
+    };
+    const totals = typeTotals({ ...p, sheets: [sheet], types: [...p.types, floor, base, walls], measurements: [m] });
+    const of = (id: string) => totals.find((t) => t.type.id === id)!;
+    expect(of(floor.id).primary).toBeCloseTo(20);
+    expect(of(base.id).primary).toBeCloseTo(18);
+    expect(of(walls.id).vars.A).toBeCloseTo(18 * 2.7);
+    expect(of(room.id).primary).toBeCloseTo(20);
+  });
+});

@@ -7,6 +7,7 @@ import { Icon, type IconName } from './components/Icons';
 import { Inspector, type InspectorTab } from './components/Inspector';
 import { Menu, Popover } from './components/Popover';
 import { RoomsDialog } from './components/RoomsDialog';
+import { RoomFinishesDialog } from './components/RoomFinishesDialog';
 import { ProjectsPanel } from './components/ProjectsPanel';
 import { ScalePicker } from './components/ScalePicker';
 import { ShortcutsDialog } from './components/ShortcutsDialog';
@@ -63,7 +64,7 @@ export function App() {
   const [busy, setBusy] = useState<string | null>(null);
   const [toast, setToast] = useState<Toast | null>(null);
   const [sheetFilter, setSheetFilter] = useState('');
-  const [aiDialog, setAiDialog] = useState<'assemblies' | 'settings' | 'walls' | 'rooms' | 'shortcuts' | null>(null);
+  const [aiDialog, setAiDialog] = useState<'assemblies' | 'settings' | 'walls' | 'rooms' | 'finishes' | 'shortcuts' | null>(null);
   const [popover, setPopover] = useState<'scale' | 'more' | 'automate' | 'projects' | null>(null);
   const [tab, setTab] = useState<InspectorTab>('quantities');
   const [persisted, setPersisted] = useState(false);
@@ -434,7 +435,17 @@ export function App() {
     const type = project!.types.find((t) => t.id === typeId);
     const count = project!.measurements.filter((m) => m.typeId === typeId).length;
     commit(
-      (p) => ({ ...p, types: p.types.filter((t) => t.id !== typeId), measurements: p.measurements.filter((m) => m.typeId !== typeId) }),
+      (p) => ({
+        ...p,
+        types: p.types.filter((t) => t.id !== typeId),
+        measurements: p.measurements
+          .filter((m) => m.typeId !== typeId)
+          .map((m) =>
+            m.finishes && Object.values(m.finishes).includes(typeId)
+              ? { ...m, finishes: Object.fromEntries(Object.entries(m.finishes).filter(([, id]) => id !== typeId)) }
+              : m,
+          ),
+      }),
       'Delete type',
     );
     if (editingTypeId === typeId) setEditingTypeId(null);
@@ -812,6 +823,7 @@ export function App() {
             onDelete={deleteMeasurements}
             onRetype={(id, typeId) => commit((p) => ({ ...p, measurements: p.measurements.map((m) => (m.id === id ? { ...m, typeId } : m)) }), 'Change type')}
             onEditType={setEditingTypeId}
+            onEditFinishes={() => setAiDialog('finishes')}
           />
         )}
       </aside>
@@ -885,6 +897,13 @@ export function App() {
                 title: 'Rooms',
                 text: 'On a plan: fills every tagged room and adds it as a named area.',
                 ready: !!page && !!sheet.metersPerPoint,
+              },
+              {
+                id: 'finishes' as const,
+                icon: 'list' as const,
+                title: 'Room finishes',
+                text: 'Floor, base, walls and ceiling for every room, typed in or read from the finish schedule.',
+                ready: true,
               },
             ].map((a) => (
               <button
@@ -971,6 +990,24 @@ export function App() {
                 measurements: [...p.measurements.filter((m) => !(replaceEarlier && m.sheetId === sheet.id && m.source === 'rooms')), ...measurements],
               }),
               'Room takeoff',
+            )
+          }
+          onClose={() => setAiDialog(null)}
+        />
+      )}
+      {aiDialog === 'finishes' && (
+        <RoomFinishesDialog
+          project={project}
+          palette={PALETTE}
+          getPage={async (s) => (await pdfs.get(s.docId)?.getPage(s.page)) ?? null}
+          onApply={({ types, finishes }) =>
+            commit(
+              (p) => ({
+                ...p,
+                types: [...p.types, ...types],
+                measurements: p.measurements.map((m) => (finishes.has(m.id) ? { ...m, finishes: finishes.get(m.id) } : m)),
+              }),
+              'Room finishes',
             )
           }
           onClose={() => setAiDialog(null)}

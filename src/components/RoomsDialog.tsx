@@ -38,7 +38,8 @@ export function RoomsDialog({ page, sheet, units, types, earlier, palette, maxOp
   const [picked, setPicked] = useState<Set<number>>(new Set());
   const [names, setNames] = useState<Map<number, string>>(new Map());
   const areaTypes = types.filter((t) => t.kind === 'area');
-  const [typeId, setTypeId] = useState(() => areaTypes.find((t) => /floor/i.test(t.name))?.id ?? areaTypes[0]?.id ?? NEW);
+  // Rooms go under their own type; their floor, ceiling and other finishes are set in Room finishes.
+  const [typeId, setTypeId] = useState(() => areaTypes.find((t) => /^rooms?\b/i.test(t.name))?.id ?? NEW);
   const [replaceEarlier, setReplaceEarlier] = useState(true);
   const mpp = sheet.metersPerPoint ?? 0;
 

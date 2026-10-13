@@ -1,7 +1,7 @@
 import type { ActivityEvent } from './activity';
 import type { Workbook, Worksheet } from 'exceljs';
-import type { Measurement, Project, TakeoffType } from './model';
-import { measurementVars, primaryOf, primaryUnit, typeTotals } from './quantities';
+import { FINISH_ROLES, type Project, type TakeoffType } from './model';
+import { contributions, primaryOf, primaryUnit, typeTotals } from './quantities';
 
 /*
  * The workbook follows the estimator's bid workbook conventions: a Bid Summary
@@ -82,26 +82,23 @@ interface Row {
   unscaled: number;
 }
 
-/** One row per takeoff type and drawing sheet, in sheet order. */
+/** One row per takeoff type and drawing sheet, in sheet order. Rooms count toward their finish types. */
 function measuredRows(project: Project): Map<string, Row[]> {
   const byType = new Map<string, Row[]>();
+  const all = contributions(project);
   for (const sheet of project.sheets) {
-    const onSheet = new Map<string, Measurement[]>();
-    for (const m of project.measurements) {
-      if (m.sheetId !== sheet.id) continue;
-      onSheet.set(m.typeId, [...(onSheet.get(m.typeId) ?? []), m]);
-    }
+    const onSheet = new Map<string, typeof all>();
+    for (const c of all) if (c.sheet.id === sheet.id) onSheet.set(c.type.id, [...(onSheet.get(c.type.id) ?? []), c]);
     for (const type of project.types) {
-      const ms = onSheet.get(type.id);
-      if (!ms) continue;
+      const cs = onSheet.get(type.id);
+      if (!cs) continue;
       let qty = 0;
       let unscaled = 0;
-      for (const m of ms) {
-        const v = measurementVars(m, type, sheet, project.units);
-        if (v) qty += primaryOf(type.kind, v);
+      for (const c of cs) {
+        if (c.vars) qty += primaryOf(type.kind, c.vars);
         else unscaled++;
       }
-      byType.set(type.id, [...(byType.get(type.id) ?? []), { type, sheetName: sheet.name, inst: ms.length, qty, unscaled }]);
+      byType.set(type.id, [...(byType.get(type.id) ?? []), { type, sheetName: sheet.name, inst: cs.length, qty, unscaled }]);
     }
   }
   return byType;
@@ -301,18 +298,16 @@ export async function buildWorkbook(project: Project, activity: ActivityEvent[] 
     { header: 'Perimeter', key: 'perim', width: 12, style: { numFmt: '#,##0.000' } },
     { header: 'Sheet scale', key: 'scale', width: 16 },
   ];
-  const sheets = new Map(project.sheets.map((s) => [s.id, s]));
-  const types = new Map(project.types.map((x) => [x.id, x]));
+  const roleLabel = new Map(FINISH_ROLES.map((r) => [r.role, r.label.toLowerCase()]));
+  const all = contributions(project);
   for (const s of project.sheets) {
-    for (const m of project.measurements) {
-      if (m.sheetId !== s.id) continue;
-      const type = types.get(m.typeId);
-      if (!type) continue;
-      const v = measurementVars(m, type, sheets.get(m.sheetId)!, project.units);
+    for (const c of all) {
+      if (c.sheet.id !== s.id) continue;
+      const { type, vars: v } = c;
       detail.addRow({
         sheet: s.name,
         type: type.name,
-        label: m.label ?? '',
+        label: [c.m.label, c.role ? `(${roleLabel.get(c.role)})` : ''].filter(Boolean).join(' '),
         qty: v ? primaryOf(type.kind, v) : 'not scaled',
         unit: primaryUnit(type.kind, project.units),
         perim: type.kind === 'area' && v ? v.P : null,
