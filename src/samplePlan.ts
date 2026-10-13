@@ -6,8 +6,9 @@ import type { Units } from './model';
  * block with its scale), so a new user can try every tool before opening their own set.
  * Five rooms with tags, doors with tags, tagged walls and dimension strings: at 1:100 in
  * millimetres, or in imperial at 1/8" = 1'-0" in feet and inches (the same plan, 60' × 36'-8").
- * A second sheet is its reflected ceiling plan: an ACT grid, a GWB stipple, downlights and
- * a ceiling legend.
+ * Then its floor finish plan (porcelain tile grid, carpet stipple, sealed concrete hatch,
+ * with a finish legend) and its reflected ceiling plan (an ACT grid, a GWB stipple,
+ * downlights and a ceiling legend).
  */
 export async function samplePlanPdf(
   units: Units = 'metric',
@@ -36,9 +37,9 @@ export async function samplePlanPdf(
   doc.setTitle('Takeoff sample plan');
   const font = await doc.embedFont(StandardFonts.Helvetica);
   const bold = await doc.embedFont(StandardFonts.HelveticaBold);
-  for (const ceiling of [false, true]) {
+  for (const kind of ['floor', 'ceiling', 'finish'] as const) {
     const page = doc.addPage([W, H]);
-    drawPlan(page, font, bold, units, ceiling, poche, style);
+    drawPlan(page, font, bold, units, kind, poche, style);
     if (options.rotate) page.setRotation(degrees(options.rotate));
   }
   return doc.save();
@@ -69,7 +70,8 @@ interface Style {
 }
 
 /** `poche`: walls as solid filled shapes with no outline, as some exports draw them. */
-function drawPlan(page: PDFPage, font: PDFFont, bold: PDFFont, units: Units, ceiling: boolean, poche: boolean, style: Style) {
+function drawPlan(page: PDFPage, font: PDFFont, bold: PDFFont, units: Units, kind: 'floor' | 'finish' | 'ceiling', poche: boolean, style: Style) {
+  const ceiling = kind === 'ceiling';
   const { pens, piece, byChar, bareRooms } = style;
   const metric = units === 'metric';
   const K = metric ? 72 / 0.0254 / 100 : 9 * FT_PER_UNIT;
@@ -209,7 +211,7 @@ function drawPlan(page: PDFPage, font: PDFFont, bold: PDFFont, units: Units, cei
     ['105', 10.9, 8.9],
     ['101', 9, 12.1],
   ];
-  for (const [num, x, y] of ceiling ? [] : doorTags) {
+  for (const [num, x, y] of kind === 'floor' ? doorTags : []) {
     page.drawEllipse({ x: px(x), y: py(y), xScale: 11, yScale: 7, borderColor: ink, borderWidth: pens.thin });
     text(num, x, y, 6);
   }
@@ -233,7 +235,7 @@ function drawPlan(page: PDFPage, font: PDFFont, bold: PDFFont, units: Units, cei
     page.drawLine({ start: { x: cx + side, y: cy }, end: { x: px(toX), y: cy }, thickness: pens.thin, color: ink });
     text(tag, x, y, 6);
   };
-  if (!ceiling) {
+  if (kind === 'floor') {
     wallTag('W1', 4.3, 1.1, 6 - p);
     wallTag('W1', 13.7, 9.9, 12 + p);
     wallTag('W1', 3.2, 4.4, 1.2);
@@ -242,7 +244,7 @@ function drawPlan(page: PDFPage, font: PDFFont, bold: PDFFont, units: Units, cei
     page.drawLine({ start: { x: px(1.2), y: py(4.4) }, end: { x: px(1.2), y: py(5.5 - p) }, thickness: pens.thin, color: ink });
   }
 
-  if (!ceiling) {
+  if (kind === 'floor') {
     // Room finish schedule, between the plan and the title block (in sheet points), ruled
     // by rows only so its room numbers are not boxed like room tags.
     const cols: [string, number][] = [
@@ -271,6 +273,58 @@ function drawPlan(page: PDFPage, font: PDFFont, bold: PDFFont, units: Units, cei
       r.forEach((cell, i) => page.drawText(cell, { x: cols[i][1], y: sy, size: 5, font, color: ink }));
       rule(sy - 4);
     }
+  }
+
+  if (kind === 'finish') {
+    const HATCH = 0.18;
+    const seg = (x1: number, y1: number, x2: number, y2: number) =>
+      page.drawLine({ start: { x: x1, y: y1 }, end: { x: x2, y: y2 }, thickness: HATCH, color: ink });
+    const dotAt = (x: number, y: number) => page.drawLine({ start: { x, y }, end: { x, y }, thickness: 0.7, color: ink, lineCap: LineCapStyle.Round });
+    // Each finish's hatch over a box in sheet points (x0, y0 at the bottom left, PDF y up).
+    const tile = (x0: number, y0: number, x1: number, y1: number) => {
+      for (let x = x0 + 0.3 * K; x < x1; x += 0.3 * K) seg(x, y0, x, y1);
+      for (let y = y0 + 0.3 * K; y < y1; y += 0.3 * K) seg(x0, y, x1, y);
+    };
+    const carpet = (x0: number, y0: number, x1: number, y1: number) => {
+      let n = 0;
+      for (let y = y0 + 0.15 * K; y < y1 - 0.05 * K; y += 0.25 * K)
+        for (let x = x0 + 0.15 * K; x < x1 - 0.05 * K; x += 0.25 * K) {
+          n++;
+          dotAt(x + 0.07 * K * Math.sin(n * 4.1), y + 0.07 * K * Math.cos(n * 7.7));
+        }
+    };
+    // Sealed concrete: lines at 45°, clipped to the box.
+    const concrete = (x0: number, y0: number, x1: number, y1: number) => {
+      const step = 0.5 * K;
+      for (let c = x0 - (y1 - y0) + step; c < x1; c += step) {
+        const ax = Math.max(x0, c);
+        const ay = y0 + (ax - c);
+        const bx = Math.min(x1, c + (y1 - y0));
+        const by = y0 + (bx - c);
+        if (bx > ax) seg(ax, ay, bx, by);
+      }
+    };
+    // Room interiors (plan units): x0, y0, x1, y1.
+    const room = (fill: typeof tile, x0: number, y0: number, x1: number, y1: number) => fill(px(x0), py(y1), px(x1), py(y0));
+    room(tile, 6 + p, t, 12 - p, 11 - t);
+    room(carpet, t, t, 6 - p, 5.5 - p);
+    room(carpet, t, 5.5 + p, 6 - p, 11 - t);
+    room(carpet, 12 + p, t, 18 - t, 5.5 - p);
+    room(concrete, 12 + p, 5.5 + p, 18 - t, 11 - t);
+
+    // Finish legend with plan-scale swatches.
+    const lx = 732;
+    let ly = H - 210;
+    page.drawText('FLOOR FINISH LEGEND:', { x: lx, y: ly, size: 8, font: bold, color: ink });
+    const swatch = (fill: typeof tile, label: string) => {
+      ly -= 46;
+      page.drawRectangle({ x: lx, y: ly - 18, width: 56, height: 36, borderColor: ink, borderWidth: pens.thin });
+      fill(lx, ly - 18, lx + 56, ly + 18);
+      page.drawText(label, { x: lx + 66, y: ly - 2.5, size: 6.5, font, color: ink });
+    };
+    swatch(tile, 'POR-1 PORCELAIN TILE 300X300');
+    swatch(carpet, 'CPT-1 CARPET TILE');
+    swatch(concrete, 'SC-1 SEALED CONCRETE');
   }
 
   if (ceiling) {
@@ -371,7 +425,7 @@ function drawPlan(page: PDFPage, font: PDFFont, bold: PDFFont, units: Units, cei
   vdim(0, 11, 20.4, label(11));
 
   // Plan title.
-  page.drawText(ceiling ? 'REFLECTED CEILING PLAN' : 'FLOOR PLAN', { x: px(0), y: py(15.4), size: 11, font: bold, color: ink });
+  page.drawText(ceiling ? 'REFLECTED CEILING PLAN' : kind === 'finish' ? 'FLOOR FINISH PLAN' : 'FLOOR PLAN', { x: px(0), y: py(15.4), size: 11, font: bold, color: ink });
   page.drawText(scale, { x: px(0), y: py(15.4) - 13, size: 8, font, color: ink });
 
   // Title block along the right edge.
@@ -382,7 +436,7 @@ function drawPlan(page: PDFPage, font: PDFFont, bold: PDFFont, units: Units, cei
   page.drawText('TAKEOFF SAMPLE PROJECT', { x: tx, y: H - 70, size: 12, font: bold, color: ink });
   page.drawText('A sample drawing for trying the app.', { x: tx, y: H - 88, size: 8, font, color: ink });
   page.drawText('Not a real building.', { x: tx, y: H - 100, size: 8, font, color: ink });
-  page.drawText(ceiling ? 'SAMPLE CEILING PLAN' : 'SAMPLE FLOOR PLAN', { x: tx, y: 150, size: 11, font: bold, color: ink });
+  page.drawText(ceiling ? 'SAMPLE CEILING PLAN' : kind === 'finish' ? 'SAMPLE FINISH PLAN' : 'SAMPLE FLOOR PLAN', { x: tx, y: 150, size: 11, font: bold, color: ink });
   page.drawText(`SCALE: ${scale}`, { x: tx, y: 132, size: 9, font, color: ink });
-  page.drawText(ceiling ? 'A2.01' : 'A1.01', { x: tx, y: 60, size: 30, font: bold, color: ink });
+  page.drawText(ceiling ? 'A2.01' : kind === 'finish' ? 'A1.02' : 'A1.01', { x: tx, y: 60, size: 30, font: bold, color: ink });
 }

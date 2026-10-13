@@ -69,7 +69,8 @@ export function buildWallModel(
     chosen = detectWallPens(stats, [0.5]);
   }
   const wallFill = chosen.includes('fill') ? wallShapedFills(segs, pt(0.06, 1.5), pt(0.7, 20)) : null;
-  const walls = segs.filter((s) => chosen.includes(widthKey(s)) && (!s.filled || wallFill?.has(s)));
+  // Dots (a carpet stipple in the wall pen) are no part of a wall.
+  const walls = segs.filter((s) => chosen.includes(widthKey(s)) && (!s.filled || wallFill?.has(s)) && Math.hypot(s.x2 - s.x1, s.y2 - s.y1) >= 0.3);
   // Glazing and frames are drawn with lighter pens than walls, but heavier than hatching.
   const wallWidth = Math.min(...chosen.map(Number).filter((n) => !Number.isNaN(n)));
   const glazingLines = segs.filter((s) => !s.filled && !chosen.includes(widthKey(s)) && s.width >= wallWidth * 0.6);

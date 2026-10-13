@@ -265,8 +265,9 @@ right. Tools sit in the title bar.
 16. **Sample plan:** the welcome screen's *Try a sample plan* draws a small 1:100
     floor plan (in imperial projects, the same plan at 1/8" = 1'-0" with
     feet-and-inch dimensions) and its reflected ceiling plan (an ACT grid, a GWB
-    stipple, 22 downlights and a ceiling legend), with a room finish schedule
-    on the floor plan (`src/samplePlan.ts`: five tagged rooms, door tags, W1/EW1 wall
+    stipple, 22 downlights and a ceiling legend), its floor finish plan (tile
+    grid, carpet stipple, sealed concrete hatch and a finish legend), with a
+    room finish schedule on the floor plan (`src/samplePlan.ts`: five tagged rooms, door tags, W1/EW1 wall
     tags, dimension strings, title block) so anyone can try every tool without a
     drawing set. `test/samplePlan.test.ts` runs the sheet name, scale check,
     rooms, door tags, wall takeoff and finish schedule on both versions, and the legend, symbol

@@ -137,6 +137,29 @@ describe('sample plan', () => {
     expect(Math.round(walls.get('W1')?.length ?? 0)).toBe(34);
   }, 60000);
 
+  it('takes off every floor finish from the finish plan legend', async () => {
+    const doc = await getDocument({ data: await samplePlanPdf() }).promise;
+    const page = (await doc.getPage(3)) as unknown as PDFPageProxy;
+    expect((await inspectPage(page)).name).toBe('A1.02');
+    const mpp = parseScale('1:100')!;
+    const vp = page.getViewport({ scale: 1 });
+    const ops = await page.getOperatorList();
+    const segs = extractSegments(ops.fnArray, ops.argsArray, vp.transform as never);
+    const texts = await pageTexts(page);
+    const box: [number, number, number, number] = [725, 195, 1000, 430];
+    const legend = readLegend(texts, segs, box);
+    expect(legend.map((r) => [r.label, r.kind])).toEqual([
+      ['POR-1 PORCELAIN TILE 300X300', 'area'],
+      ['CPT-1 CARPET TILE', 'area'],
+      ['SC-1 SEALED CONCRETE', 'area'],
+    ]);
+    findLegendAreas(legend, segs, box, vp.width, vp.height, mpp);
+    const m2 = (r: (typeof legend)[number]) => (r.areas ?? []).map((a) => +(a.area * mpp * mpp).toFixed(1)).sort();
+    expect(m2(legend[0])).toEqual([62.9]);
+    expect(m2(legend[1])).toEqual([30.7, 30.7, 30.7]);
+    expect(m2(legend[2])).toEqual([30.7]);
+  }, 60000);
+
   // Two export styles seen in the wild: sheets saved turned (/Rotate) and drawings printed
   // without lineweights (every line one pen, so room and door tags sit in the wall pen).
   for (const [style, options, tolerance] of [
