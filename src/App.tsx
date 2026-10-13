@@ -1639,12 +1639,17 @@ export function App() {
                       <span className={`row-sub scale-${state}`}>
                         {state === 'check' && <span className="check-dot" title="Read from the sheet; check it against a dimension" />}
                         {s.metersPerPoint ? s.scaleLabel : 'No scale'}
+                        {state === 'check' && <span title="Read from the sheet; check it against a dimension"> · check</span>}
                         {s.done ? <span className="done-tag" title="Marked done"> · done</span> : null}
                         {hitsOn(s.id) ? <span className="found-tag"> · {hitsOn(s.id)!.length} found</span> : null}
                         {s.repeat ? <span className="repeat-tag" title={`Takeoffs on this sheet count ${s.repeat} times`}> · ×{s.repeat}</span> : null}
                       </span>
                     </span>
-                    {count > 0 && <span className="badge">{count}</span>}
+                    {count > 0 && (
+                      <span className="badge" title={`${count} takeoff${count === 1 ? '' : 's'} on this sheet`}>
+                        {count}
+                      </span>
+                    )}
                   </button>
                 </li>
               );
