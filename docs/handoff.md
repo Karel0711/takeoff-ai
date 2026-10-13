@@ -44,6 +44,12 @@ the `downloads` capability).
    against the estimator's "Schedules A0.2 A0.3" tab: 25 entries on A0.2 and 23 on
    A0.3. A perfect answer scores 100% and deliberately damaged ones lose exactly
    the expected points (checked on the real workbook).
+   - **First real run, A0.3 (hosted, the user's Claude account):** 23/23 types,
+     80/80 layers exact, 15/15 framing spacings, 19/19 overall thicknesses, 23/23
+     categories. The estimator also checked it against the drawing. Two fixes came
+     out of it: the scorer accepts a layer split at "W/" (W7B/W7C framing with
+     insulation), and "2 LAYERS" of board now doubles the board quantity (W1B).
+   - A0.2 not yet run.
 2. ~~Match the Excel export to the estimator's bid workbook layout~~ (done;
    formulas verified by recalculating an export in LibreOffice).
 3. Finish schedules into room types; then automatic wall and room takeoff

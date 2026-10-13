@@ -123,4 +123,18 @@ describe('scoreExtraction', () => {
     expect(r.foundTypes).toBe(2);
     expect(r.layersExact).toBe(2);
   });
+
+  it('accepts a layer the AI split at "W/" into two', () => {
+    const k = parseScheduleRows([
+      ['INTERIOR WALL TYPES - A0.3'],
+      ['Type', 'Design / assembly name', 'Construction', 'Notes'],
+      ['W7B', '2X4 FRAME WALL', '• 13mm PLYWOOD\n• 38X89 WOOD FRAMING @ 406mm O.C. W/ 89mm MINERAL WOOL INSULATION (R14)', ''],
+    ]);
+    const r = scoreExtraction(
+      k,
+      [asFound('W7B', 'interior_wall', '2X4 FRAME WALL', [['13mm PLYWOOD', null], ['38X89 WOOD FRAMING @ 406mm O.C. W/', 406], ['89mm MINERAL WOOL INSULATION (R14)', null]])],
+      'A0.3',
+    );
+    expect(r).toMatchObject({ layersExact: 2, layersExpected: 2, extraLayers: 0, spacingsCorrect: 1 });
+  });
 });

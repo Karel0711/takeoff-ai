@@ -103,3 +103,23 @@ describe('textLines', () => {
     expect(lines).toEqual(['y100: [x20] TYPE  [x300] CONSTRUCTION', 'y140: [x20] W1']);
   });
 });
+
+describe('multi-layer board', () => {
+  it('counts "2 LAYERS" of board twice', () => {
+    const w1b: ExtractedAssembly = {
+      code: 'W1B',
+      category: 'interior_wall',
+      title: '1HR F.R.R.',
+      layers: [
+        { material: '2 LAYERS 16mm TYPE X GYPSUM BOARD', role: 'board', thickness_mm: 32, spacing_mm: null },
+        { material: '92mm METAL STUDS FRAMING @ 610mm O.C.', role: 'framing', thickness_mm: 92, spacing_mm: 610 },
+      ],
+      total_thickness_mm: 125,
+      notes: [],
+    };
+    const board = buildTakeoffType(w1b, 'metric', 0, 3).items.find((i) => i.name.startsWith('2 LAYERS'))!;
+    expect(board.name).toContain('2 layers');
+    expect((evaluate(board.formula, { A: 10 }) as { value: number }).value).toBeCloseTo(22);
+  });
+});
+

@@ -83,24 +83,46 @@ export interface ScoreReport {
   assemblies: AssemblyResult[];
 }
 
-/** Best one-to-one pairing of expected and found layers, greedily by similarity. */
+/** A layer cut off mid-phrase ("… @ 406mm O.C. W/") continues in the next one. */
+const CONTINUES = /\b(?:W\/|WITH|C\/W)\s*$/i;
+
+interface FoundGroup {
+  /** Indices of the found layers in this group: one, or a layer and its continuation. */
+  idx: number[];
+  material: string;
+  spacing: number | null;
+}
+
+/**
+ * Best one-to-one pairing of expected and found layers, greedily by similarity.
+ * A found layer that ends mid-phrase may pair together with the next one, so a
+ * reading that splits "studs W/ insulation" into two layers still matches.
+ */
 function alignLayers(expected: string[], found: ExtractedLayer[]) {
-  const pairs: { e: number; f: number; sim: number }[] = [];
+  const groups: FoundGroup[] = found.map((l, i) => ({ idx: [i], material: l.material, spacing: l.spacing_mm }));
+  found.forEach((l, i) => {
+    const next = found[i + 1];
+    if (next && CONTINUES.test(l.material)) {
+      groups.push({ idx: [i, i + 1], material: `${l.material} ${next.material}`, spacing: l.spacing_mm ?? next.spacing_mm });
+    }
+  });
+  const pairs: { e: number; g: FoundGroup; sim: number }[] = [];
   expected.forEach((e, ei) =>
-    found.forEach((f, fi) => {
-      const sim = similarity(e, f.material);
-      if (sim >= MATCH_THRESHOLD) pairs.push({ e: ei, f: fi, sim });
+    groups.forEach((g) => {
+      const sim = similarity(e, g.material);
+      if (sim >= MATCH_THRESHOLD) pairs.push({ e: ei, g, sim });
     }),
   );
-  pairs.sort((x, y) => y.sim - x.sim);
+  // Highest similarity first; on ties prefer the group whose numbers match exactly.
+  pairs.sort((x, y) => y.sim - x.sim || Number(sameNumbers(numbersIn(expected[y.e]), numbersIn(y.g.material))) - Number(sameNumbers(numbersIn(expected[x.e]), numbersIn(x.g.material))));
   const usedE = new Set<number>();
   const usedF = new Set<number>();
-  const match = new Map<number, { f: number; sim: number }>();
+  const match = new Map<number, { group: FoundGroup; sim: number }>();
   for (const p of pairs) {
-    if (usedE.has(p.e) || usedF.has(p.f)) continue;
+    if (usedE.has(p.e) || p.g.idx.some((i) => usedF.has(i))) continue;
     usedE.add(p.e);
-    usedF.add(p.f);
-    match.set(p.e, { f: p.f, sim: p.sim });
+    p.g.idx.forEach((i) => usedF.add(i));
+    match.set(p.e, { group: p.g, sim: p.sim });
   }
   return { match, unusedFound: found.map((_, i) => i).filter((i) => !usedF.has(i)) };
 }
@@ -150,14 +172,13 @@ export function scoreExtraction(
     const { match, unusedFound } = alignLayers(exp.layers, found.layers);
     const layers: LayerResult[] = exp.layers.map((e, i) => {
       const m = match.get(i);
-      const f = m ? found.layers[m.f] : null;
       const spacing = spacingIn(e);
       return {
         expected: e,
-        found: f?.material ?? null,
+        found: m?.group.material ?? null,
         similarity: m?.sim ?? 0,
-        numbersMatch: f ? sameNumbers(numbersIn(e), numbersIn(f.material)) : false,
-        ...(spacing ? { spacing: { expected: spacing, found: f?.spacing_mm ?? null } } : {}),
+        numbersMatch: m ? sameNumbers(numbersIn(e), numbersIn(m.group.material)) : false,
+        ...(spacing ? { spacing: { expected: spacing, found: m?.group.spacing ?? null } } : {}),
       };
     });
     return {

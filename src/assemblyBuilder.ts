@@ -59,8 +59,14 @@ function layerItems(layer: ExtractedLayer, kind: 'linear' | 'area', units: Units
     }
     case 'board':
     case 'sheathing':
-    case 'membrane':
-      return [item(`incl. ${Math.round((WASTE - 1) * 100)}% waste`, area, `A * ${WASTE}`)];
+    case 'membrane': {
+      // "2 LAYERS 16mm TYPE X GYPSUM BOARD" is two sheets' worth on that face.
+      const plies = Number(/^\s*(\d+)\s*(?:LAYERS?|PLY)\b/i.exec(name)?.[1] ?? 1);
+      const waste = `incl. ${Math.round((WASTE - 1) * 100)}% waste`;
+      return plies > 1
+        ? [item(`${plies} layers, ${waste}`, area, `${plies} * A * ${WASTE}`)]
+        : [item(waste, area, `A * ${WASTE}`)];
+    }
     case 'structure':
     case 'fill':
       return layer.thickness_mm
