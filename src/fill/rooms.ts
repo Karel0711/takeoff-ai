@@ -12,6 +12,8 @@ export interface RoomLabel {
   name: string;
   /** Centre of the number box, where the room is filled from. */
   at: Pt;
+  /** The number box (x0, y0, x1, y1), when the number is boxed. */
+  box?: [number, number, number, number];
 }
 
 export interface FoundRoom {
@@ -59,7 +61,7 @@ export function findRoomLabels(texts: PageText[], segs: Segment[]): RoomLabel[] 
     }
     if (!box) continue;
     const cx = (box.x0 + box.x1) / 2;
-    out.push({ number: t.str, name: nameAbove(texts, t, cx, box.y0, box.x1 - box.x0), at: [cx, (box.y0 + box.y1) / 2] });
+    out.push({ number: t.str, name: nameAbove(texts, t, cx, box.y0, box.x1 - box.x0), at: [cx, (box.y0 + box.y1) / 2], box: [box.x0, box.y0, box.x1, box.y1] });
   }
   if (out.length) return out;
 
@@ -137,10 +139,33 @@ function nameAbove(texts: PageText[], t: PageText, cx: number, top: number, widt
 }
 
 /** Fills one tag's room, within a window around the tag. */
+/** Whether an outline lies within a box (give or take a point): the tag box itself. */
+const withinBox = (pts: Pt[], [x0, y0, x1, y1]: [number, number, number, number]) => pts.every(([x, y]) => x >= x0 - 1 && x <= x1 + 1 && y >= y0 - 1 && y <= y1 + 1);
+
 function fillOne(model: WallModel, label: RoomLabel, sheetW: number, sheetH: number): FoundRoom {
   // A space that leaks past the window is an open area or a gap in the walls, left for
   // drawing by hand (or named by another tag inside it, below).
-  const res = fillRoom(model, [label.at], sheetW, sheetH, 2);
+  let res = fillRoom(model, [label.at], sheetW, sheetH, 2);
+  // Drawn without lineweights, the number's own box is in the wall pen and fills first:
+  // start again just outside it, below, above the name, then to either side.
+  if (res.ok && label.box && withinBox(res.points, label.box)) {
+    const [x0, y0, x1, y1] = label.box;
+    const [cx, cy] = label.at;
+    const w = x1 - x0;
+    const h = y1 - y0;
+    for (const seed of [
+      [cx, y1 + h * 0.8],
+      [cx, y0 - h * 2.6],
+      [x0 - w * 0.4, cy],
+      [x1 + w * 0.4, cy],
+    ] as Pt[]) {
+      const next = fillRoom(model, [seed], sheetW, sheetH, 2);
+      if (next.ok && !withinBox(next.points, label.box)) {
+        res = next;
+        break;
+      }
+    }
+  }
   return res.ok
     ? { labels: [label], points: res.points, area: Math.abs(ringArea(res.points)) }
     : { labels: [label], points: null, reason: res.reason, area: 0 };

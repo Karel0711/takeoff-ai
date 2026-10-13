@@ -9,14 +9,27 @@ import type { Units } from './model';
  * A second sheet is its reflected ceiling plan: an ACT grid, a GWB stipple, downlights and
  * a ceiling legend.
  */
-export async function samplePlanPdf(units: Units = 'metric', options: { walls?: 'lines' | 'poche' } = {}): Promise<Uint8Array> {
+export async function samplePlanPdf(
+  units: Units = 'metric',
+  options: {
+    walls?: 'lines' | 'poche';
+    /** Draw every line in one pen, as a PDF printed without lineweights. */
+    onePen?: boolean;
+    /** The page's /Rotate, as plotters often save sheets. */
+    rotate?: 0 | 90 | 180 | 270;
+  } = {},
+): Promise<Uint8Array> {
   const poche = options.walls === 'poche';
+  pens = options.onePen ? { wall: 0.24, thin: 0.24 } : { wall: 0.7, thin: 0.25 };
   const doc = await PDFDocument.create();
   doc.setTitle('Takeoff sample plan');
   const font = await doc.embedFont(StandardFonts.Helvetica);
   const bold = await doc.embedFont(StandardFonts.HelveticaBold);
-  drawPlan(doc.addPage([W, H]), font, bold, units, false, poche);
-  drawPlan(doc.addPage([W, H]), font, bold, units, true, poche);
+  for (const ceiling of [false, true]) {
+    const page = doc.addPage([W, H]);
+    drawPlan(page, font, bold, units, ceiling, poche);
+    if (options.rotate) page.setRotation(degrees(options.rotate));
+  }
   return doc.save();
 }
 
@@ -35,8 +48,8 @@ const feetInches = (ft: number) => {
 const OX = 110;
 const OY = 150;
 const ink = rgb(0, 0, 0);
-const WALL = 0.7;
-const THIN = 0.25;
+/** Wall and thin pen widths; one pen for both when drawn without lineweights. */
+let pens = { wall: 0.7, thin: 0.25 };
 
 /** `poche`: walls as solid filled shapes with no outline, as some exports draw them. */
 function drawPlan(page: PDFPage, font: PDFFont, bold: PDFFont, units: Units, ceiling: boolean, poche = false) {
@@ -47,7 +60,7 @@ function drawPlan(page: PDFPage, font: PDFFont, bold: PDFFont, units: Units, cei
   // Plan metres to PDF points (PDF y runs up from the bottom).
   const px = (x: number) => OX + x * K;
   const py = (y: number) => H - (OY + y * K);
-  const line = (x1: number, y1: number, x2: number, y2: number, thickness = WALL) =>
+  const line = (x1: number, y1: number, x2: number, y2: number, thickness = pens.wall) =>
     page.drawLine({ start: { x: px(x1), y: py(y1) }, end: { x: px(x2), y: py(y2) }, thickness, color: ink });
   /** A straight wall face from `a` to `b` along a fixed x or y, skipping the gaps. */
   const face = (vertical: boolean, at: number, a: number, b: number, gaps: [number, number][] = []) => {
@@ -123,7 +136,7 @@ function drawPlan(page: PDFPage, font: PDFFont, bold: PDFFont, units: Units, cei
 
   // Doors: leaf and swing into the lobby, in a thin pen.
   const swing = (hx: number, hy: number, dir: 1 | -1) => {
-    line(hx, hy, hx + 0.9 * dir, hy, THIN);
+    line(hx, hy, hx + 0.9 * dir, hy, pens.thin);
     const r = 0.9 * K;
     const cx = px(hx);
     const cy = py(hy);
@@ -132,7 +145,7 @@ function drawPlan(page: PDFPage, font: PDFFont, bold: PDFFont, units: Units, cei
       x: cx,
       y: cy,
       borderColor: ink,
-      borderWidth: THIN,
+      borderWidth: pens.thin,
     });
   };
   if (!ceiling) {
@@ -141,8 +154,8 @@ function drawPlan(page: PDFPage, font: PDFFont, bold: PDFFont, units: Units, cei
       swing(12 - p, d0, -1);
     }
     // Entry: a pair of leaves swinging out.
-    line(entry[0], 11 + t, entry[0], 11 + t + 0.9, THIN);
-    line(entry[1], 11 + t, entry[1], 11 + t + 0.9, THIN);
+    line(entry[0], 11 + t, entry[0], 11 + t + 0.9, pens.thin);
+    line(entry[1], 11 + t, entry[1], 11 + t + 0.9, pens.thin);
   }
 
   // Room tags: the name over its number in a box.
@@ -155,7 +168,7 @@ function drawPlan(page: PDFPage, font: PDFFont, bold: PDFFont, units: Units, cei
   ];
   for (const [name, num, x, y] of rooms) {
     text(name, x, y - 0.45, 7);
-    page.drawRectangle({ x: px(x) - 12, y: py(y + 0.05) - 6, width: 24, height: 12, borderColor: ink, borderWidth: THIN });
+    page.drawRectangle({ x: px(x) - 12, y: py(y + 0.05) - 6, width: 24, height: 12, borderColor: ink, borderWidth: pens.thin });
     text(num, x, y + 0.05, 7);
   }
 
@@ -168,7 +181,7 @@ function drawPlan(page: PDFPage, font: PDFFont, bold: PDFFont, units: Units, cei
     ['101', 9, 12.1],
   ];
   for (const [num, x, y] of ceiling ? [] : doorTags) {
-    page.drawEllipse({ x: px(x), y: py(y), xScale: 11, yScale: 7, borderColor: ink, borderWidth: THIN });
+    page.drawEllipse({ x: px(x), y: py(y), xScale: 11, yScale: 7, borderColor: ink, borderWidth: pens.thin });
     text(num, x, y, 6);
   }
 
@@ -185,10 +198,10 @@ function drawPlan(page: PDFPage, font: PDFFont, bold: PDFFont, units: Units, cei
     ];
     pts.forEach((a, i) => {
       const b = pts[(i + 1) % 4];
-      page.drawLine({ start: { x: a[0], y: a[1] }, end: { x: b[0], y: b[1] }, thickness: THIN, color: ink });
+      page.drawLine({ start: { x: a[0], y: a[1] }, end: { x: b[0], y: b[1] }, thickness: pens.thin, color: ink });
     });
     const side = toX > x ? r : -r;
-    page.drawLine({ start: { x: cx + side, y: cy }, end: { x: px(toX), y: cy }, thickness: THIN, color: ink });
+    page.drawLine({ start: { x: cx + side, y: cy }, end: { x: px(toX), y: cy }, thickness: pens.thin, color: ink });
     text(tag, x, y, 6);
   };
   if (!ceiling) {
@@ -197,7 +210,7 @@ function drawPlan(page: PDFPage, font: PDFFont, bold: PDFFont, units: Units, cei
     wallTag('W1', 3.2, 4.4, 1.2);
     wallTag('EW1', -1.7, 3.2, -t);
     // The leader for the third tag ends on the 5.5 m partition: turn it down to it.
-    page.drawLine({ start: { x: px(1.2), y: py(4.4) }, end: { x: px(1.2), y: py(5.5 - p) }, thickness: THIN, color: ink });
+    page.drawLine({ start: { x: px(1.2), y: py(4.4) }, end: { x: px(1.2), y: py(5.5 - p) }, thickness: pens.thin, color: ink });
   }
 
   if (!ceiling) {
@@ -220,7 +233,7 @@ function drawPlan(page: PDFPage, font: PDFFont, bold: PDFFont, units: Units, cei
     ];
     let sy = H - 330;
     page.drawText('ROOM FINISH SCHEDULE', { x: 708, y: sy + 16, size: 7, font: bold, color: ink });
-    const rule = (y: number) => page.drawLine({ start: { x: 704, y }, end: { x: 900, y }, thickness: THIN, color: ink });
+    const rule = (y: number) => page.drawLine({ start: { x: 704, y }, end: { x: 900, y }, thickness: pens.thin, color: ink });
     rule(sy + 11);
     for (const [h, x] of cols) page.drawText(h, { x, y: sy, size: 5, font: bold, color: ink });
     rule(sy - 4);
@@ -257,9 +270,9 @@ function drawPlan(page: PDFPage, font: PDFFont, bold: PDFFont, units: Units, cei
     stipple(12 + p, 5.5 + p, 18 - t, 11 - t);
     // Downlights: a circle with a cross, one block repeated.
     const light = (x: number, y: number) => {
-      page.drawCircle({ x, y, size: 4.5, borderColor: ink, borderWidth: THIN });
-      page.drawLine({ start: { x: x - 3, y }, end: { x: x + 3, y }, thickness: THIN, color: ink });
-      page.drawLine({ start: { x, y: y - 3 }, end: { x, y: y + 3 }, thickness: THIN, color: ink });
+      page.drawCircle({ x, y, size: 4.5, borderColor: ink, borderWidth: pens.thin });
+      page.drawLine({ start: { x: x - 3, y }, end: { x: x + 3, y }, thickness: pens.thin, color: ink });
+      page.drawLine({ start: { x, y: y - 3 }, end: { x, y: y + 3 }, thickness: pens.thin, color: ink });
     };
     const lights: [number, number][] = [
       [7.5, 1.5], [10.5, 1.5], [7.5, 6.5], [10.5, 6.5], [7.5, 9], [10.5, 9], [7.5, 3.4], [10.5, 3.4],
@@ -276,7 +289,7 @@ function drawPlan(page: PDFPage, font: PDFFont, bold: PDFFont, units: Units, cei
     page.drawText('CEILING LEGEND:', { x: lx, y: ly, size: 8, font: bold, color: ink });
     const swatch = (fill: (x0: number, y0: number, x1: number, y1: number) => void) => {
       const [x0, y0, x1, y1] = [lx, ly - 7, lx + 34, ly + 7];
-      page.drawRectangle({ x: x0, y: y0, width: x1 - x0, height: y1 - y0, borderColor: ink, borderWidth: THIN });
+      page.drawRectangle({ x: x0, y: y0, width: x1 - x0, height: y1 - y0, borderColor: ink, borderWidth: pens.thin });
       fill(x0, y0, x1, y1);
     };
     const row = (label: string) => page.drawText(label, { x: lx + 50, y: ly - 2.5, size: 6.5, font, color: ink });
@@ -298,10 +311,10 @@ function drawPlan(page: PDFPage, font: PDFFont, bold: PDFFont, units: Units, cei
 
   // Dimension strings in millimetres: one line per dimension, ticks at the ends.
   const dim = (x1: number, x2: number, y: number, label: string) => {
-    line(x1, y, x2, y, THIN);
+    line(x1, y, x2, y, pens.thin);
     for (const x of [x1, x2]) {
-      line(x - 0.12, y + 0.12, x + 0.12, y - 0.12, THIN);
-      line(x, y - 0.25, x, y + 0.25, THIN);
+      line(x - 0.12, y + 0.12, x + 0.12, y - 0.12, pens.thin);
+      line(x, y - 0.25, x, y + 0.25, pens.thin);
     }
     text(label, (x1 + x2) / 2, y - 0.22, 6);
   };
@@ -314,8 +327,8 @@ function drawPlan(page: PDFPage, font: PDFFont, bold: PDFFont, units: Units, cei
   dim(0, 18, 13.9, label(18));
   // Vertical dimensions on the right.
   const vdim = (y1: number, y2: number, x: number, label: string) => {
-    line(x, y1, x, y2, THIN);
-    for (const y of [y1, y2]) line(x - 0.25, y, x + 0.25, y, THIN);
+    line(x, y1, x, y2, pens.thin);
+    for (const y of [y1, y2]) line(x - 0.25, y, x + 0.25, y, pens.thin);
     text(label, x - 0.22, (y1 + y2) / 2, 6, font, 90);
   };
   vdim(0, 5.5, 19.4, label(5.5));

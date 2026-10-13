@@ -59,7 +59,9 @@ function checkScaleAs(texts: PageText[], segs: Segment[], units: Units): ScaleCh
     if (!meters) continue;
     read++;
     // Text running across the page or up it: a vertical dimension's text is taller than wide.
-    const vertical = t.h > t.w * 1.2;
+    // Text running up the page (a vertical dimension, or any text on a turned sheet): its
+    // baseline's angle when known, else its shape.
+    const vertical = t.angle !== undefined ? Math.abs(Math.sin(t.angle)) > 0.7 : t.h > t.w * 1.2;
     const gap = Math.max(t.h, Math.min(t.w, t.h)) * 1.6 + 2;
     const cx = Math.floor(t.cx / cell);
     const cy = Math.floor(t.cy / cell);
@@ -101,6 +103,7 @@ function checkScaleAs(texts: PageText[], segs: Segment[], units: Units): ScaleCh
   if (!top || top.agree < 3) return null;
   // Only a standard scale counts: a cluster that lands between scales is other numbers
   // (levels, sizes) lining up by chance.
-  const preset = [...SCALE_PRESETS.metric, ...SCALE_PRESETS.imperial].find((l) => Math.abs(parseScale(l)! / top!.metersPerPoint - 1) < 0.02);
+  // Millimetre dimensions belong to a metric scale, feet and inches to an imperial one.
+  const preset = SCALE_PRESETS[units].find((l) => Math.abs(parseScale(l)! / top!.metersPerPoint - 1) < 0.02);
   return preset ? { ...top, label: preset, metersPerPoint: parseScale(preset)! } : null;
 }

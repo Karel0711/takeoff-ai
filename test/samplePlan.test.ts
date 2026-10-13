@@ -133,4 +133,34 @@ describe('sample plan', () => {
     expect(Math.round(walls.get('EW1')?.length ?? 0)).toBe(58);
     expect(Math.round(walls.get('W1')?.length ?? 0)).toBe(34);
   }, 60000);
+
+  // Two export styles seen in the wild: sheets saved turned (/Rotate) and drawings printed
+  // without lineweights (every line one pen, so room and door tags sit in the wall pen).
+  for (const [style, options, tolerance] of [
+    ['a sheet saved turned a quarter', { rotate: 90 }, 0],
+    ['a drawing printed without lineweights', { onePen: true }, 0.05],
+  ] as const) {
+    it(`reads ${style}`, async () => {
+      const doc = await getDocument({ data: await samplePlanPdf('metric', options) }).promise;
+      const page = (await doc.getPage(1)) as unknown as PDFPageProxy;
+      const mpp = parseScale('1:100')!;
+      const vp = page.getViewport({ scale: 1 });
+      const ops = await page.getOperatorList();
+      const segs = extractSegments(ops.fnArray, ops.argsArray, vp.transform as never);
+      const texts = await pageTexts(page);
+      expect(checkScale(texts, segs, 'metric')!.agree).toBe(11);
+      const rooms = fillRooms(buildWallModel(segs, mpp), findRoomLabels(texts, segs), vp.width, vp.height);
+      const want: Record<string, number> = { '101': 62.89, '102': 30.74, '103': 30.74, '104': 30.74, '105': 30.74 };
+      for (const r of rooms) {
+        const area = ringArea(r.points ?? []) * mpp * mpp;
+        // Door swings drawn in the wall pen come off the room, a few percent.
+        expect(Math.abs(area / want[r.labels[0].number] - 1)).toBeLessThanOrEqual(tolerance + 0.002);
+      }
+      expect(findDoorTags(texts, segs)).toHaveLength(5);
+      const sheet = { id: 's', docId: 'd', page: 1, name: 'A1.01', width: vp.width, height: vp.height, metersPerPoint: mpp, scaleLabel: '1:100', scaleSource: 'preset', scaleHints: [] } as Sheet;
+      const walls = lengthsByType((await sheetWallTakeoff(page, sheet, 3, true)).runs, mpp);
+      expect(Math.round(walls.get('EW1')!.length)).toBe(58);
+      expect(Math.round(walls.get('W1')!.length)).toBe(34);
+    }, 60000);
+  }
 });
