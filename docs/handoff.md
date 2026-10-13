@@ -26,7 +26,14 @@ Where the project stands, for picking it up in a new session.
   them (windows); flood fill at up to 3 px/pt, hole filling, boundary trace,
   then edges snapped to the drawn lines. First click reads the sheet's operator
   list (~3–6 s), then 0.1–2 s per room.
-- **Wall takeoff (done, first version):** `src/walls/`. Centreline lengths by
+- **Wall takeoff:** `src/walls/`. Latest score across A2.0–A2.3 against the
+  workbook: 12.7% total difference (A2.0 9%, A2.1 10%, A2.2 15%, A2.3 22%);
+  re-score with the per-sheet keys after any change to the carry rules (each
+  rule change was kept only if the four-sheet total improved). Rules now: walls
+  join across breaks up to 2.5× thickness; thick walls meet round corner
+  columns; exterior/foundation types follow thickness changes up to 20% and can
+  stack (EW6A over EW6B BELOW); furring does not run straight past a junction.
+  Earlier notes: Centreline lengths by
   wall type from vector linework and type tags. Against the estimator's ACC
   takeoff (workbook rows per sheet): A2.1 total difference 11%; EW3A 42.76 vs
   42.76 m, FR1 96.9 vs 98.3, W1 66.9 vs 68.7, CB3 18.7 vs 19.0, W3 1.98 vs 2.05,
