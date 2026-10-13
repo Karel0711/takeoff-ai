@@ -8,6 +8,7 @@ import { Inspector, type InspectorTab } from './components/Inspector';
 import { Menu, Popover } from './components/Popover';
 import { RoomsDialog } from './components/RoomsDialog';
 import { RoomFinishesDialog } from './components/RoomFinishesDialog';
+import { QuickStartDialog } from './components/QuickStartDialog';
 import { ProjectsPanel } from './components/ProjectsPanel';
 import { ScalePicker } from './components/ScalePicker';
 import { ShortcutsDialog } from './components/ShortcutsDialog';
@@ -91,7 +92,7 @@ export function App() {
   const [busy, setBusy] = useState<string | null>(null);
   const [toast, setToast] = useState<Toast | null>(null);
   const [sheetFilter, setSheetFilter] = useState('');
-  const [aiDialog, setAiDialog] = useState<'assemblies' | 'settings' | 'walls' | 'rooms' | 'finishes' | 'shortcuts' | null>(null);
+  const [aiDialog, setAiDialog] = useState<'assemblies' | 'settings' | 'walls' | 'rooms' | 'finishes' | 'shortcuts' | 'help' | null>(null);
   const [popover, setPopover] = useState<'scale' | 'more' | 'automate' | 'projects' | null>(null);
   const [tab, setTab] = useState<InspectorTab>('quantities');
   const [persisted, setPersisted] = useState(false);
@@ -1120,7 +1121,12 @@ export function App() {
                   ))}
                 </div>
               </div>
-              <p className="welcome-foot">Projects and drawings are saved on this computer and work offline.</p>
+              <p className="welcome-foot">
+                Projects and drawings are saved on this computer and work offline.{' '}
+                <button className="link-button" onClick={() => setAiDialog('help')}>
+                  Quick start
+                </button>
+              </p>
             </div>
           </div>
         )}
@@ -1346,6 +1352,7 @@ export function App() {
           groups={[
             [
               { label: 'History', hint: 'Every change', onSelect: () => setTab('history') },
+              { label: 'Quick start', onSelect: () => setAiDialog('help') },
               { label: 'Keyboard shortcuts', onSelect: () => setAiDialog('shortcuts') },
               ...(page && sheet ? [{ label: 'Save sheet as image…', hint: 'With takeoffs', onSelect: () => void saveSheetImage() }] : []),
               ...(project.sheets.some((x) => /^Page \d+$/.test(x.name))
@@ -1465,6 +1472,7 @@ export function App() {
       )}
       {aiDialog === 'settings' && <AiSettingsDialog onClose={() => setAiDialog(null)} />}
       {aiDialog === 'shortcuts' && <ShortcutsDialog onClose={() => setAiDialog(null)} />}
+      {aiDialog === 'help' && <QuickStartDialog onClose={() => setAiDialog(null)} />}
       <DialogHost />
     </div>
   );

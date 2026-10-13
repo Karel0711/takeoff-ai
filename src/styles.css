@@ -2011,3 +2011,17 @@ button.link-button:hover {
 .scale-verify .check-warn {
   color: var(--warn, #b25000);
 }
+/* Quick start */
+.quick-start {
+  margin: 4px 0 0;
+  padding-left: 22px;
+}
+.quick-start li {
+  margin-bottom: 12px;
+}
+.quick-start li p {
+  margin: 3px 0 0;
+  color: var(--text-2);
+  font-size: 13px;
+  line-height: 1.5;
+}
