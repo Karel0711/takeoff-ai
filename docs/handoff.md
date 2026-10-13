@@ -89,6 +89,27 @@ Where the project stands, for picking it up in a new session.
   anchor, and at every sheet line matching the anchor (4 quarter turns, both
   ends) checks that ≥85% of the sample's lines are there too (endpoint
   tolerance 1% of the box, min 0.35 pt). A6.1 CAN light: 32 found, 0.3 s.
+- **More from the night shift:**
+  - **Trace** (`src/fill/trace.ts`): follows same-pen strokes end to end (dash
+    gaps ≤ 4 pt) and goes on at forks only straight ahead.
+  - **Door tags** (`findDoorTags` in `src/fill/rooms.ts`): a 3–4 digit number in
+    a closed non-rectangular symbol; letter-prefixed tags get their own type.
+  - **Bare room numbers**: when a sheet has no boxed numbers, a number with a
+    name block directly above counts.
+  - **Scale check** (`src/scaleCheck.ts`): pairs dimension figures with the line
+    they sit on, votes, and snaps to a standard scale (±2%); a confirmed
+    detected scale becomes `scaleSource: 'verified'`.
+  - **On all sheets** (symbols and hatches): other sheets are read uncached
+    (`segmentsOnce`), skipped when their scale (set, or read from their
+    dimensions) differs, and for hatches when they carry little of the
+    pattern.
+  - **Point editing** in `Viewer.tsx` (drag handles, edge midpoints insert,
+    Option-click removes); the drag keeps its points in a ref, since React's
+    StrictMode runs state updaters twice.
+  - **Starting types** (`starter-types` key), **backups** (a zip of .takeoff
+    files), **sheet image** (`src/sheetImage.ts`), **Quick start**,
+    **duplicate type**, Quantities per sheet.
+  - Segment and wall-model caches keep the four most recent sheets.
 - **Interface (redesigned):** light, Mac-style (system font, segmented tools,
   source-list sidebar, inspector with Quantities / Takeoffs / History). State
   changes go through `commit()` in `App.tsx`, which keeps undo/redo stacks and
