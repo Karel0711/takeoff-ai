@@ -31,6 +31,7 @@ import type { Segment } from './fill/vectors';
 import { matchSymbol, sampleSymbol, type SymbolSample } from './fill/symbols';
 import { linesLike, traceLine } from './fill/trace';
 import { readSprinklerSheet, runsOf, sizeValue, type FittingKind, type HeadShape } from './fill/sprinkler';
+import { findGridHatch } from './fill/hatchRegions';
 import { checkScale, type ScaleCheck } from './scaleCheck';
 import { sheetImage } from './sheetImage';
 import { compareSheets } from './compareSheets';
@@ -1419,6 +1420,109 @@ export function App() {
     );
     setToast({
       text: `Sprinklers on ${reads.length} sheet${reads.length === 1 ? '' : 's'}: ${heads} heads, ${formatQty(toLength(metres, p.units))} ${lengthUnit(p.units)} of pipe by size, fittings and drops${unscaled.length ? ` · ${unscaled.length} without a scale skipped` : ''}`,
+      undo: true,
+    });
+  }
+
+  /**
+   * Ceilings, with nothing marked: on every reflected ceiling plan, the areas the ceiling grid is
+   * drawn over. A demolition plan's are existing ceiling to take down, an existing plan's (no new
+   * ceiling shown) existing ceiling to take down and put back for the work above it, and any
+   * other plan's new ceiling. A re-run replaces what the last run made.
+   */
+  async function automateCeilings() {
+    const p = projectRef.current!;
+    const metric = p.units === 'metric';
+    const title = (x: Sheet) => `${x.name} ${x.title ?? ''}`;
+    let targets = p.sheets.filter((x) => !x.superseded && /REFLECTED CEILING|\bRCP\b|CEILING PLAN/i.test(title(x)));
+    if (!targets.length && sheet) targets = [sheet];
+    const unscaled = targets.filter((x) => !x.metersPerPoint);
+    targets = targets.filter((x) => x.metersPerPoint);
+    if (!targets.length) {
+      setToast({ text: unscaled.length ? 'Set the ceiling plans’ scale first.' : 'No reflected ceiling plans found.', undo: false });
+      return;
+    }
+    type Kind = 'new' | 'demo' | 'reinstate';
+    const kindOf = (x: Sheet): Kind => (/DEMO/i.test(title(x)) ? 'demo' : /EXISTING/i.test(title(x)) ? 'reinstate' : 'new');
+    const found: { sheet: Sheet; kind: Kind; regions: Pt[][] }[] = [];
+    try {
+      for (const [i, x] of targets.entries()) {
+        setBusy(`Ceilings: reading ${x.name} (${i + 1} of ${targets.length})…`);
+        await new Promise((r) => setTimeout(r, 0));
+        const pg = await pdfsRef.current.get(x.docId)?.getPage(x.page);
+        if (!pg) continue;
+        const [segs, texts] = await Promise.all([segmentsOnce(pg), sheetTexts(x)]);
+        const block = titleBlockBox(texts, x.width, x.height);
+        const grid = findGridHatch(segs, x.metersPerPoint, block ? [block] : []);
+        if (grid?.regions.length) found.push({ sheet: x, kind: kindOf(x), regions: grid.regions.map((r) => r.points) });
+      }
+    } catch (e) {
+      setToast({ text: `Something went wrong: ${e instanceof Error ? e.message : String(e)}`, undo: false });
+      return;
+    } finally {
+      setBusy(null);
+    }
+    if (!found.length) {
+      setToast({ text: 'No ceiling grid found on the ceiling plans.', undo: false });
+      return;
+    }
+    const area = metric ? 'm²' : 'SF';
+    const len = metric ? 'm' : 'ft';
+    const tile = metric ? 0.72 : 8;
+    const TYPES: Record<Kind, { name: string; division: string; pkg: string; items: { name: string; unit: string; formula: string }[] }> = {
+      new: {
+        name: metric ? 'Ceiling – new suspended T-bar, 600×1200' : 'Ceiling – new suspended T-bar, 2×4',
+        division: '09 Finishes',
+        pkg: 'Drywall & ceilings',
+        items: [
+          { name: 'Ceiling area', unit: area, formula: 'A' },
+          { name: metric ? 'Tiles 600×1200 + 5%' : 'Tiles 2×4 + 5%', unit: 'ea', formula: `ceil(A / ${tile} * 1.05)` },
+          { name: metric ? 'Main tees @ 1200, 3.66 m long' : "Main tees @ 4', 12' long", unit: 'ea', formula: metric ? 'ceil(A / 1.2 / 3.66)' : 'ceil(A / 4 / 12)' },
+          { name: metric ? '1200 cross tees @ 600' : "4' cross tees @ 2'", unit: 'ea', formula: `ceil(A / ${tile})` },
+          { name: 'Wall angle', unit: len, formula: 'P' },
+          { name: metric ? 'Hanger wires @ 1200×1200' : "Hanger wires @ 4'×4'", unit: 'ea', formula: metric ? 'ceil(A / 1.44)' : 'ceil(A / 16)' },
+        ],
+      },
+      demo: {
+        name: 'Ceiling – demolish existing',
+        division: '02 Existing Conditions',
+        pkg: 'Demolition & abatement',
+        items: [{ name: 'Existing ceiling to demolish', unit: area, formula: 'A' }],
+      },
+      reinstate: {
+        name: 'Ceiling – remove & reinstate existing tiles',
+        division: '09 Finishes',
+        pkg: 'Drywall & ceilings',
+        items: [{ name: 'Existing ceiling to remove and reinstate', unit: area, formula: 'A' }],
+      },
+    };
+    const types: TakeoffType[] = [...p.types];
+    const made: TakeoffType[] = [];
+    const typeFor = (k: Kind) => {
+      const def = TYPES[k];
+      const got = types.find((t) => t.name === def.name && t.kind === 'area');
+      if (got) return got.id;
+      const t: TakeoffType = { id: newId(), name: def.name, color: PALETTE[types.length % PALETTE.length], kind: 'area', height: 0, division: def.division, package: def.pkg, items: def.items.map((it) => ({ id: newId(), ...it })) };
+      types.push(t);
+      made.push(t);
+      return t.id;
+    };
+    const added: Project['measurements'] = [];
+    let total = 0;
+    for (const f of found)
+      for (const points of f.regions) {
+        added.push({ id: newId(), sheetId: f.sheet.id, typeId: typeFor(f.kind), points, holes: [], source: 'ceilings' });
+        total += ringArea(points) * f.sheet.metersPerPoint! ** 2;
+      }
+    const sheets = new Set(found.map((f) => f.sheet.id));
+    commit(
+      (q) => ({ ...q, types: [...q.types, ...made], measurements: [...q.measurements.filter((m) => !(m.source === 'ceilings' && sheets.has(m.sheetId))), ...added] }),
+      'Ceilings',
+    );
+    const byKind = (['new', 'demo', 'reinstate'] as Kind[]).map((k) => [k, found.filter((f) => f.kind === k).length] as const).filter(([, n]) => n);
+    const words: Record<Kind, string> = { new: 'new', demo: 'demolition', reinstate: 'remove & reinstate' };
+    setToast({
+      text: `Ceilings on ${found.length} plan${found.length === 1 ? '' : 's'} (${byKind.map(([k, n]) => `${n} ${words[k]}`).join(', ')}): ${formatQty(metric ? total : total * 10.7639)} ${area}${unscaled.length ? ` · ${unscaled.length} without a scale skipped` : ''}`,
       undo: true,
     });
   }
@@ -2842,6 +2946,13 @@ export function App() {
                 ready: !!page,
               },
               {
+                id: 'ceilings' as const,
+                icon: 'area' as const,
+                title: 'Ceilings',
+                text: 'Every reflected ceiling plan in the set: new ceiling, ceiling to demolish, and existing ceiling to remove and reinstate, from the ceiling grid drawn.',
+                ready: true,
+              },
+              {
                 id: 'sprinklers' as const,
                 icon: 'count' as const,
                 title: 'Fire sprinklers',
@@ -2865,6 +2976,7 @@ export function App() {
                   setPopover(null);
                   if (a.id === 'doors') void countDoorTags();
                   else if (a.id === 'sprinklers') void automateSprinklers();
+                  else if (a.id === 'ceilings') void automateCeilings();
                   else if (a.id === 'legend') {
                     setLegendPick(true);
                     setTool('symbol');
