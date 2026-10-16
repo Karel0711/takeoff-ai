@@ -29,11 +29,13 @@ import { buildWallModel } from './fill/roomFill';
 import { findDoorTags, findRoomLabels } from './fill/rooms';
 import type { Segment } from './fill/vectors';
 import { matchSymbol, sampleSymbol, type SymbolSample } from './fill/symbols';
-import { traceLine } from './fill/trace';
+import { linesLike, traceLine } from './fill/trace';
+import { readSprinklerSheet, runsOf, sizeValue, type FittingKind, type HeadShape } from './fill/sprinkler';
 import { checkScale, type ScaleCheck } from './scaleCheck';
 import { sheetImage } from './sheetImage';
 import { compareSheets } from './compareSheets';
 import { pageTexts, type PageText } from './pageText';
+import { readTitleBlock, titleBlockBox } from './titleBlock';
 import { isHosted, saveFile } from './host';
 import { defaultTypes, newId, newProject, type Kind, type Measurement, type Project, type Pt, type Sheet, type TakeoffType, type Units } from './model';
 import { inspectPage, openPdf, type PDFDocumentProxy, type PDFPageProxy } from './pdf';
@@ -41,13 +43,13 @@ import { typeTotals } from './quantities';
 import { clearStarterTypes, deleteProject, listProjects, type ProjectSummary, loadActivity, loadCurrentProject, deletePdf, loadPdf, loadProjectById, loadStarterTypes, persistStorage, saveActivity, savePdf, saveProject, saveStarterTypes, setStorageHooks, getSyncMark, setSyncMark } from './storage';
 import { readProjectFiles, writeBackup, writeProjectFile } from './projectFile';
 import { canUseServiceWorker, isInstalled, onLaunchFiles, promptInstall, registerServiceWorker } from './pwa';
-import { ringArea } from './geometry';
+import { polylineLength, ringArea } from './geometry';
 import { scoringOn, setScoringOn } from './scoring';
 import { desktopApi, folderLabel } from './desktop';
 import { FolderSync, type PullResult } from './folderSync';
 import { linesIn, onSheet, readNumber, readTitle, relativeBox, type Box } from './sheetNumbers';
 import { SheetNumbersDialog, type SheetNumberRow } from './components/SheetNumbersDialog';
-import { formatQty, parseScale } from './units';
+import { formatQty, lengthUnit, parseScale, toLength } from './units';
 
 const PALETTE = ['#0a84ff', '#ff9f0a', '#30d158', '#bf5af2', '#ff375f', '#64d2ff', '#ffd60a', '#ac8e68', '#5e5ce6', '#ff6961'];
 const UNDO_LIMIT = 200;
@@ -622,6 +624,8 @@ export function App() {
         setBusy(`Reading ${file.name}: sheet ${n} of ${pdf.numPages}`);
         const pg = await pdf.getPage(n);
         const info = await inspectPage(pg);
+        // Named from the title block: its sheet number, with the drawing title beside it.
+        const named = info.textRuns >= 5 ? readTitleBlock(await pageTexts(pg), info.width, info.height) : { number: null, title: null };
         if (info.textRuns < 5) noText++;
         // A single standard scale on the sheet is applied automatically and flagged for checking;
         // a sheet noting its scale in both systems (1:100 and 1/8" = 1'-0") gets the project's.
@@ -637,7 +641,8 @@ export function App() {
           id: newId(),
           docId,
           page: n,
-          name: info.name ?? `Page ${n}`,
+          name: named.number ?? info.name ?? `Page ${n}`,
+          ...(named.title ? { title: named.title } : {}),
           width: info.width,
           height: info.height,
           metersPerPoint: detected ? parseScale(detected) : null,
@@ -1176,6 +1181,190 @@ export function App() {
     const m = { id: newId(), sheetId: sheet.id, typeId: activeType.id, points: line, holes: [] };
     commit((p) => ({ ...p, measurements: [...p.measurements, m] }), 'Trace line');
     setSelectedId(m.id);
+    setToast({ text: 'Traced the line', undo: true, action: { label: 'Every line like this', run: () => void measureAllLike(at, reach, m.id) } });
+  }
+
+  /** How far a point is from the segment a–b. */
+  function distToSegment([px, py]: Pt, a: Pt, b: Pt): number {
+    const dx = b[0] - a[0];
+    const dy = b[1] - a[1];
+    const t = Math.max(0, Math.min(1, ((px - a[0]) * dx + (py - a[1]) * dy) / (dx * dx + dy * dy || 1)));
+    return Math.hypot(px - (a[0] + t * dx), py - (a[1] + t * dy));
+  }
+
+  /**
+   * Measures every line on the sheet drawn in the same pen and ink as the one under the click
+   * (a whole sprinkler pipe network), as the active length type, leaving out the symbols drawn in
+   * that pen and the title block. `replace` is a traced line it takes the place of.
+   */
+  async function measureAllLike(at: Pt, reach: number, replace?: string) {
+    if (!page || !sheet) return;
+    const type = projectRef.current!.types.find((t) => t.id === activeTypeId);
+    if (type?.kind !== 'linear') return;
+    setBusy('Measuring every line like this…');
+    try {
+      await new Promise((r) => setTimeout(r, 30));
+      const [segs, texts] = await Promise.all([segmentsOf(page), sheetTexts(sheet)]);
+      const block = titleBlockBox(texts, sheet.width, sheet.height);
+      const runs = linesLike(segs, at, reach, sheet, block ? [block] : []);
+      if (!runs?.length) {
+        setToast({ text: 'No line there. Click right on a drawn line.', undo: false });
+        return;
+      }
+      // Lines already measured as this type on the sheet are left alone.
+      const mine = projectRef.current!.measurements.filter((m) => m.sheetId === sheet.id && m.typeId === type.id && m.id !== replace && m.points.length >= 2);
+      const onMine = (p: Pt) => mine.some((m) => m.points.some((q, i) => i > 0 && distToSegment(p, m.points[i - 1], q) < 0.5));
+      const mid = (r: Pt[]): Pt => [(r[0][0] + r[1][0]) / 2, (r[0][1] + r[1][1]) / 2];
+      const fresh = runs.filter((r) => !onMine(mid(r)));
+      const added = fresh.map((points) => ({ id: newId(), sheetId: sheet.id, typeId: type.id, points, holes: [] }));
+      commit((p) => ({ ...p, measurements: [...p.measurements.filter((m) => m.id !== replace), ...added] }), 'Measure every line like this');
+      setSelectedId(null);
+      const total = added.reduce((n, m) => n + polylineLength(m.points), 0);
+      const metres = sheet.metersPerPoint ? ` · ${formatQty(toLength(total * sheet.metersPerPoint, projectRef.current!.units))} ${lengthUnit(projectRef.current!.units)}` : '';
+      setToast({ text: `Measured ${added.length} run${added.length === 1 ? '' : 's'} of ${type.name.split(' – ')[0]}${metres}`, undo: true });
+    } catch (e) {
+      setToast({ text: `Something went wrong: ${e instanceof Error ? e.message : String(e)}`, undo: false });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  /**
+   * Fire sprinklers, with nothing marked: on every sprinkler plan, the heads are found and
+   * counted by kind, the pipe is found, measured and sized from its labels, and its tees,
+   * crosses, elbows and capped ends are counted. Each head carries its drop or sprig, each pipe
+   * size its lengths, joints and hangers, so the quantities are the bill of materials.
+   * A re-run replaces what the last run made.
+   */
+  async function automateSprinklers() {
+    const p = projectRef.current!;
+    const metric = p.units === 'metric';
+    const plan = (x: Sheet) => {
+      const t = `${x.name} ${x.title ?? ''}`;
+      return /SPRINKLER|FIRE SUPPRESSION|FIRE PROTECTION/i.test(t) && !/DETAIL|RISER|NOTES|SCHEDULE|DIAGRAM|LEGEND/i.test(t);
+    };
+    let targets = p.sheets.filter((x) => !x.superseded && plan(x));
+    if (!targets.length && sheet) targets = [sheet];
+    const unscaled = targets.filter((x) => !x.metersPerPoint);
+    targets = targets.filter((x) => x.metersPerPoint);
+    if (!targets.length) {
+      setToast({ text: unscaled.length ? 'Set the sprinkler sheets’ scale first.' : 'No sprinkler plans found.', undo: false });
+      return;
+    }
+    type Read = { sheet: Sheet; read: NonNullable<ReturnType<typeof readSprinklerSheet>> };
+    const reads: Read[] = [];
+    try {
+      for (const [i, x] of targets.entries()) {
+        setBusy(`Sprinklers: reading ${x.name} (${i + 1} of ${targets.length})…`);
+        await new Promise((r) => setTimeout(r, 0));
+        const pg = await pdfsRef.current.get(x.docId)?.getPage(x.page);
+        if (!pg) continue;
+        const [segs, texts] = await Promise.all([segmentsOnce(pg), sheetTexts(x)]);
+        const block = titleBlockBox(texts, x.width, x.height);
+        const read = readSprinklerSheet(segs, texts, x, block ? [block] : []);
+        if (read && read.network.pieces.length) reads.push({ sheet: x, read });
+      }
+    } catch (e) {
+      setToast({ text: `Something went wrong: ${e instanceof Error ? e.message : String(e)}`, undo: false });
+      return;
+    } finally {
+      setBusy(null);
+    }
+    if (!reads.length) {
+      setToast({ text: 'No sprinkler pipe found on the sprinkler plans.', undo: false });
+      return;
+    }
+
+    // Types, found by name so a re-run fills the same ones.
+    const len = metric ? 'm' : 'ft';
+    const sizeName = (size: string | null) => (size ? (size.endsWith('"') ? size : `${size} mm`) : 'unsized');
+    const types: TakeoffType[] = [...p.types];
+    const made: TakeoffType[] = [];
+    let groupId = (p.groups ?? []).find((g) => g.name === 'Fire sprinklers')?.id;
+    const newGroup = groupId ? null : { id: newId(), name: 'Fire sprinklers' };
+    groupId ??= newGroup!.id;
+    const typeFor = (name: string, kind: TakeoffType['kind'], items: { name: string; unit: string; formula: string }[]) => {
+      const found = types.find((t) => t.name === name && t.kind === kind);
+      if (found) return found.id;
+      const t: TakeoffType = {
+        id: newId(),
+        name,
+        color: PALETTE[types.length % PALETTE.length],
+        kind,
+        height: 0,
+        division: '21 Fire Suppression',
+        package: 'Fire protection',
+        groupId,
+        items: items.map((it) => ({ id: newId(), ...it })),
+      };
+      types.push(t);
+      made.push(t);
+      return t.id;
+    };
+    const drop = metric ? { size: '25 mm', each: 0.6, sprig: 0.15 } : { size: '1"', each: 2, sprig: 0.5 };
+    const HEADS: Record<HeadShape, { name: string; drop: boolean }> = {
+      triangle: { name: 'Sprinkler head – sidewall (▲)', drop: true },
+      'circle with dot': { name: 'Sprinkler head – pendent (◉)', drop: true },
+      'open circle': { name: 'Sprinkler head – upright (○)', drop: false },
+      'circle with slash': { name: 'Sprinkler head – ⊘ (see legend)', drop: true },
+      other: { name: 'Sprinkler head – other', drop: true },
+    };
+    const headType = (shape: HeadShape) => {
+      const h = HEADS[shape];
+      return typeFor(h.name, 'count', [
+        { name: h.name.replace('Sprinkler head – ', 'Head, '), unit: 'ea', formula: 'N' },
+        h.drop
+          ? { name: `${drop.size} drop, ${drop.each} ${len} each`, unit: len, formula: `N * ${drop.each}` }
+          : { name: `${drop.size} sprig, ${drop.sprig} ${len} each`, unit: len, formula: `N * ${drop.sprig}` },
+        { name: 'Outlet fitting (reducer / tee)', unit: 'ea', formula: 'N' },
+        ...(h.drop ? [{ name: 'Escutcheon', unit: 'ea', formula: 'N' }] : []),
+      ]);
+    };
+    const pipeType = (size: string | null) => {
+      const small = size ? sizeValue(size) <= 32 : true;
+      const stick = metric ? 6.4 : 21;
+      const hanger = metric ? (small ? 3.7 : 4.6) : small ? 12 : 15;
+      return typeFor(`Sprinkler pipe ${sizeName(size)}`, 'linear', [
+        { name: `Pipe ${sizeName(size)}`, unit: len, formula: 'L' },
+        { name: `Pipe lengths (${stick} ${len})`, unit: 'ea', formula: `ceil(L / ${stick})` },
+        { name: 'Joints / couplings', unit: 'ea', formula: `ceil(L / ${stick})` },
+        { name: `Hangers (every ${hanger} ${len})`, unit: 'ea', formula: `ceil(L / ${hanger})` },
+      ]);
+    };
+    const FITTING: Record<FittingKind, string> = { tee: 'Tee', cross: 'Cross', elbow: 'Elbow', cap: 'Cap / plugged end' };
+    const fittingType = (kind: FittingKind, size: string | null) => {
+      const name = `${FITTING[kind]} ${sizeName(size)}`;
+      return typeFor(name, 'count', [{ name, unit: 'ea', formula: 'N' }]);
+    };
+
+    const added: Project['measurements'] = [];
+    const summary: string[] = [];
+    let heads = 0;
+    let metres = 0;
+    for (const { sheet: x, read } of reads) {
+      for (const g of read.heads) for (const at of g.at) added.push({ id: newId(), sheetId: x.id, typeId: headType(g.shape), points: [at], holes: [], source: 'sprinklers' });
+      for (const r of runsOf(read.network.pieces)) added.push({ id: newId(), sheetId: x.id, typeId: pipeType(r.size), points: r.points, holes: [], source: 'sprinklers' });
+      for (const f of read.network.fittings) added.push({ id: newId(), sheetId: x.id, typeId: fittingType(f.kind, f.size), points: [f.at], holes: [], source: 'sprinklers' });
+      const h = read.heads.reduce((n, g) => n + g.at.length, 0);
+      const m = read.network.pieces.reduce((n, q) => n + polylineLength([q.a, q.b]), 0) * x.metersPerPoint!;
+      heads += h;
+      metres += m;
+      summary.push(`${x.name} ${h} heads`);
+    }
+    const sheets = new Set(reads.map((r) => r.sheet.id));
+    commit(
+      (q) => ({
+        ...q,
+        groups: newGroup ? [...(q.groups ?? []), newGroup] : q.groups,
+        types: [...q.types, ...made],
+        measurements: [...q.measurements.filter((m) => !(m.source === 'sprinklers' && sheets.has(m.sheetId))), ...added],
+      }),
+      'Fire sprinklers',
+    );
+    setToast({
+      text: `Sprinklers on ${reads.length} sheet${reads.length === 1 ? '' : 's'}: ${heads} heads, ${formatQty(toLength(metres, p.units))} ${lengthUnit(p.units)} of pipe by size, fittings and drops${unscaled.length ? ` · ${unscaled.length} without a scale skipped` : ''}`,
+      undo: true,
+    });
   }
 
   /** Counts every copy of the symbol in the box, as the active count type. */
@@ -1217,6 +1406,33 @@ export function App() {
 
   /** Reads the legend boxed on the sheet into rows for the legend dialog. */
   /** Starts marking where the sheet number (or title) sits in the title block. */
+  /** Names every sheet from its title block: its sheet number, with the drawing title beside it. */
+  async function autoNameSheets() {
+    const sheets = projectRef.current!.sheets;
+    const named = new Map<string, { name: string; title?: string }>();
+    try {
+      for (const [i, s] of sheets.entries()) {
+        setBusy(`Reading title blocks: ${i + 1} of ${sheets.length}`);
+        const read = readTitleBlock(await sheetTexts(s), s.width, s.height);
+        if (read.number && (read.number !== s.name || (read.title ?? s.title) !== s.title)) named.set(s.id, { name: read.number, ...(read.title ? { title: read.title } : {}) });
+      }
+    } finally {
+      setBusy(null);
+    }
+    const unread = sheets.filter((s) => !named.has(s.id) && /^Page \d+$/.test(s.name)).length;
+    const byHand = page ? { label: 'Mark it by hand', run: () => startNumberPick('number') } : undefined;
+    if (!named.size) {
+      setToast({ text: unread ? `No title block could be read on ${unread} sheet${unread === 1 ? '' : 's'}.` : 'Every sheet already carries its title block name.', undo: false, action: byHand });
+      return;
+    }
+    commit((p) => ({ ...p, sheets: p.sheets.map((s) => (named.has(s.id) ? { ...s, ...named.get(s.id)! } : s)) }), 'Name sheets');
+    setToast({
+      text: `Named ${named.size} sheet${named.size === 1 ? '' : 's'} from their title blocks${unread ? ` · ${unread} without one` : ''}`,
+      undo: true,
+      action: byHand,
+    });
+  }
+
   function startNumberPick(kind: 'number' | 'title') {
     if (!page) return;
     if (kind === 'number') numberBoxes.current = {};
@@ -1907,7 +2123,7 @@ export function App() {
           <div className="source-head">
             <h2>Sheets</h2>
             {page && project.sheets.length > 0 && (
-              <button className="link-button number-sheets" onClick={() => startNumberPick('number')} title="Mark where the sheet number is in the title block, and every sheet is named from that spot">
+              <button className="link-button number-sheets" onClick={() => void autoNameSheets()} title="Name every sheet from its title block: sheet number, then drawing title">
                 Number sheets
               </button>
             )}
@@ -2464,6 +2680,13 @@ export function App() {
                 ready: !!page,
               },
               {
+                id: 'sprinklers' as const,
+                icon: 'count' as const,
+                title: 'Fire sprinklers',
+                text: 'Every sprinkler plan in the set: heads counted by kind, pipe measured by size, fittings and drops — the bill of materials.',
+                ready: true,
+              },
+              {
                 id: 'finishes' as const,
                 icon: 'list' as const,
                 title: 'Room finishes',
@@ -2479,6 +2702,7 @@ export function App() {
                 onClick={() => {
                   setPopover(null);
                   if (a.id === 'doors') void countDoorTags();
+                  else if (a.id === 'sprinklers') void automateSprinklers();
                   else if (a.id === 'legend') {
                     setLegendPick(true);
                     setTool('symbol');
@@ -2569,7 +2793,8 @@ export function App() {
               { label: 'Quick start', onSelect: () => setAiDialog('help') },
               { label: 'Keyboard shortcuts', onSelect: () => setAiDialog('shortcuts') },
               ...(page && sheet ? [{ label: 'Save sheet as image…', hint: 'With takeoffs', onSelect: () => void saveSheetImage() }] : []),
-              ...(page && project.sheets.length ? [{ label: 'Number sheets from the title block…', hint: 'Mark it once', onSelect: () => startNumberPick('number') }] : []),
+              ...(project.sheets.length ? [{ label: 'Name sheets from title blocks', hint: 'Number and title', onSelect: () => void autoNameSheets() }] : []),
+              ...(page && project.sheets.length ? [{ label: 'Number sheets by hand…', hint: 'Mark the spot once', onSelect: () => startNumberPick('number') }] : []),
               ...(sheet
                 ? [
                     {
