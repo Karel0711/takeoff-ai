@@ -29,7 +29,9 @@ self.addEventListener('message', (event) => {
 
 self.addEventListener('fetch', (event) => {
   const request = event.request;
-  if (request.method !== 'GET' || new URL(request.url).origin !== self.location.origin) return;
+  const url = new URL(request.url);
+  // Only the app itself is cached; the AI service (api/) always goes to the network.
+  if (request.method !== 'GET' || url.origin !== self.location.origin || url.pathname.includes('/api/')) return;
   if (request.mode === 'navigate') {
     // The app shell from this build's cache, so the page and its assets always match.
     event.respondWith(caches.match('./index.html').then((hit) => hit || fetch(request)));

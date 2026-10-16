@@ -3,3 +3,5 @@ dist/
 *.pdf
 .DS_Store
 release/
+.dev.vars
+.wrangler/

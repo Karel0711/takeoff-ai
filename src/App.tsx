@@ -1973,7 +1973,7 @@ export function App() {
     const unnamed = project!.sheets.filter((x) => /^Page \d+$/.test(x.name));
     if (!unnamed.length) return;
     if (!(await canAskClaude())) {
-      setToast({ text: 'Reading sheet names needs Claude: add your API key in AI settings.', undo: false });
+      setToast({ text: 'Reading sheet names needs AI: set it up in AI settings.', undo: false });
       return;
     }
     const names = new Map<string, string>();
@@ -3173,7 +3173,7 @@ export function App() {
                 ? [{ label: 'Copy takeoffs to another sheet…', hint: 'Typical floors', onSelect: () => setTimeout(() => setPopover('copy'), 0) }]
                 : []),
               ...(project.sheets.some((x) => /^Page \d+$/.test(x.name))
-                ? [{ label: 'Name sheets with Claude…', hint: 'Sheets with no text', onSelect: () => void nameSheetsWithAi() }]
+                ? [{ label: 'Name sheets with AI…', hint: 'Sheets with no text', onSelect: () => void nameSheetsWithAi() }]
                 : []),
               ...(canUseServiceWorker() && !isInstalled() ? [{ label: 'Install as an app…', onSelect: () => void installApp() }] : []),
               ...(isHosted ? [] : [{ label: 'AI settings…', onSelect: () => setAiDialog('settings') }]),
