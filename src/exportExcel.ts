@@ -1,7 +1,7 @@
 import { buildingOf, buildingsOf, onBuilding, quantitySections } from './buildings';
 import type { ActivityEvent } from './activity';
 import type { Workbook, Worksheet } from 'exceljs';
-import { FINISH_ROLES, type Project, type TakeoffType } from './model';
+import { FINISH_ROLES, type Measurement, type Project, type TakeoffType } from './model';
 import { contributions, measurementVars, primaryOf, primaryUnit, sheetRepeat, typeTotals } from './quantities';
 
 /*
@@ -206,7 +206,7 @@ function writeDivision(ws: Worksheet, division: string, types: TakeoffType[], ro
 }
 
 /** Builds the workbook; separate from the Blob step so it can be tested in Node. */
-export async function buildWorkbook(project: Project, activity: ActivityEvent[] = []): Promise<Workbook> {
+export async function buildWorkbook(project: Project, activity: ActivityEvent[] = [], roomOf?: (m: Measurement) => string | null): Promise<Workbook> {
   const { default: ExcelJS } = await import('exceljs');
   const wb = new ExcelJS.Workbook();
   wb.created = new Date();
@@ -332,6 +332,7 @@ export async function buildWorkbook(project: Project, activity: ActivityEvent[] 
     { header: 'Sheet', key: 'sheet', width: 10 },
     { header: 'Takeoff type', key: 'type', width: 50 },
     { header: 'Name', key: 'label', width: 34 },
+    { header: 'Location', key: 'where', width: 26 },
     { header: 'Quantity', key: 'qty', width: 14, style: { numFmt: '#,##0.000' } },
     { header: 'Unit', key: 'unit', width: 8 },
     { header: 'Sheet counts', key: 'times', width: 12 },
@@ -349,6 +350,7 @@ export async function buildWorkbook(project: Project, activity: ActivityEvent[] 
         sheet: s.name,
         type: type.name,
         label: [c.m.label, c.role ? `(${roleLabel.get(c.role)})` : ''].filter(Boolean).join(' '),
+        where: roomOf?.(c.m) ?? '',
         // As drawn, the same as the app shows for the takeoff; a typical floor's count is beside it.
         qty: v ? primaryOf(type.kind, v) / sheetRepeat(s) : 'not scaled',
         unit: primaryUnit(type.kind, project.units),
@@ -422,8 +424,8 @@ export async function buildWorkbook(project: Project, activity: ActivityEvent[] 
   return wb;
 }
 
-export async function exportWorkbook(project: Project, activity: ActivityEvent[] = []): Promise<Blob> {
-  const wb = await buildWorkbook(project, activity);
+export async function exportWorkbook(project: Project, activity: ActivityEvent[] = [], roomOf?: (m: Measurement) => string | null): Promise<Blob> {
+  const wb = await buildWorkbook(project, activity, roomOf);
   const buffer = await wb.xlsx.writeBuffer();
   return new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
 }

@@ -4,6 +4,15 @@ import type { TypeTotals } from '../quantities';
 import { formatQty } from '../units';
 import { Icon } from './Icons';
 
+/** A sheet a type is taken off on, with its share. */
+export interface Where {
+  sheetId: string;
+  name: string;
+  n: number;
+  qty: number;
+  unit: string;
+}
+
 interface Props {
   totals: TypeTotals[];
   sheetTotals: TypeTotals[];
@@ -13,6 +22,8 @@ interface Props {
   grouping: QtyGrouping;
   onGrouping: (g: QtyGrouping) => void;
   onEdit: (typeId: string) => void;
+  whereOf: (typeId: string) => Where[];
+  onShowType: (typeId: string, sheetId: string) => void;
 }
 
 const GROUPINGS: [QtyGrouping, string][] = [
@@ -23,7 +34,7 @@ const GROUPINGS: [QtyGrouping, string][] = [
 ];
 
 /** Project totals per takeoff type, with each assembly item's quantity. */
-export function QuantityPanel({ totals, sheetTotals, sheetName, sections, grouping, onGrouping, onEdit }: Props) {
+export function QuantityPanel({ totals, sheetTotals, sheetName, sections, grouping, onGrouping, onEdit, whereOf, onShowType }: Props) {
   const [scope, setScope] = useState<'all' | 'sheet'>('all');
   const anything = totals.some((t) => t.vars.N > 0 || t.unscaled > 0);
   const used = (scope === 'sheet' ? sheetTotals : totals).filter((t) => t.vars.N > 0 || t.unscaled > 0);
@@ -56,6 +67,7 @@ export function QuantityPanel({ totals, sheetTotals, sheetName, sections, groupi
               </tbody>
             </table>
           )}
+          <WhereList typeId={t.type.id} whereOf={whereOf} onShow={onShowType} />
         </section>
   );
   if (!anything)
@@ -110,6 +122,37 @@ function Section({ section, depth, card }: { section: QtySection; depth: number;
         <span className="doc-count">{count}</span>
       </button>
       {open && (section.sections ? section.sections.map((s) => <Section key={s.title} section={s} depth={depth + 1} card={card} />) : totals.map(card))}
+    </div>
+  );
+}
+
+/** Which sheets a type is taken off on: click one to go there and see them. */
+function WhereList({ typeId, whereOf, onShow }: { typeId: string; whereOf: (typeId: string) => Where[]; onShow: (typeId: string, sheetId: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const rows = open ? whereOf(typeId) : [];
+  return (
+    <div className="qty-where">
+      <button className="link-button" onClick={() => setOpen(!open)} aria-expanded={open}>
+        <span className={`doc-chevron ${open ? 'open' : ''}`}>
+          <Icon name="chevron" size={11} />
+        </span>
+        Where
+      </button>
+      {open && (
+        <ul>
+          {rows.map((r) => (
+            <li key={r.sheetId}>
+              <button onClick={() => onShow(typeId, r.sheetId)} title="Show these on the sheet">
+                <span className="where-sheet">{r.name}</span>
+                <span className="muted">{r.n} takeoff{r.n > 1 ? 's' : ''}</span>
+                <span className="num">
+                  {formatQty(r.qty)} <span className="qty-unit">{r.unit}</span>
+                </span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

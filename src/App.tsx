@@ -37,11 +37,12 @@ import { sheetImage } from './sheetImage';
 import { compareSheets } from './compareSheets';
 import { pageTexts, type PageText } from './pageText';
 import { readTitleBlock, titleBlockBox } from './titleBlock';
+import { middleOf, roomLocator } from './locate';
 import { buildingOfDoc, buildingsOf, guessBuilding, onBuilding, quantitySections, type QtyGrouping } from './buildings';
 import { isHosted, saveFile } from './host';
 import { defaultTypes, newId, newProject, type Kind, type Measurement, type Project, type Pt, type Sheet, type TakeoffType, type Units } from './model';
 import { inspectPage, openPdf, type PDFDocumentProxy, type PDFPageProxy } from './pdf';
-import { typeTotals, type TypeTotals } from './quantities';
+import { measurementVars, primaryOf, primaryUnit, sheetRepeat, typeTotals, type TypeTotals } from './quantities';
 import { clearStarterTypes, deleteProject, listProjects, type ProjectSummary, loadActivity, loadCurrentProject, deletePdf, loadPdf, loadProjectById, loadStarterTypes, persistStorage, saveActivity, savePdf, saveProject, saveStarterTypes, setStorageHooks, getSyncMark, setSyncMark } from './storage';
 import { readProjectFiles, writeBackup, writeProjectFile } from './projectFile';
 import { canUseServiceWorker, isInstalled, onLaunchFiles, promptInstall, registerServiceWorker } from './pwa';
@@ -405,6 +406,91 @@ export function App() {
     () => (project && sheetId ? typeTotals({ ...project, measurements: project.measurements.filter((m) => m.sheetId === sheetId) }) : []),
     [project, sheetId],
   );
+
+  // Where each takeoff is: the room it sits in, read from the sheet's room tags. Worked out in
+  // the background, sheet by sheet, and kept until the takeoff moves.
+  const [rooms, setRooms] = useState<Map<string, string | null>>(new Map());
+  const roomsRef = useRef(rooms);
+  roomsRef.current = rooms;
+  const locators = useRef(new Map<string, Promise<(at: Pt) => string | null>>());
+  const placeKey = (m: Measurement) => `${m.id}:${m.points.length}:${m.points[0]?.[0]},${m.points[0]?.[1]}`;
+  useEffect(() => {
+    if (!project) return;
+    let stop = false;
+    const t = window.setTimeout(async () => {
+      const todo = new Map<string, Measurement[]>();
+      for (const m of project.measurements) {
+        if (roomsRef.current.has(placeKey(m))) continue;
+        const list = todo.get(m.sheetId);
+        if (list) list.push(m);
+        else todo.set(m.sheetId, [m]);
+      }
+      for (const [sid, ms] of todo) {
+        if (stop) return;
+        const s = project.sheets.find((x) => x.id === sid);
+        if (!s || !pdfsRef.current.get(s.docId)) continue;
+        const key = `${s.docId}:${s.page}:${s.metersPerPoint ?? ''}`;
+        let loc = locators.current.get(key);
+        if (!loc) {
+          loc = (async () => {
+            const pg = await pdfsRef.current.get(s.docId)!.getPage(s.page);
+            const [segs, texts] = await Promise.all([segmentsOnce(pg), sheetTexts(s)]);
+            return roomLocator(texts, segs, s.metersPerPoint);
+          })();
+          locators.current.set(key, loc);
+          loc.catch(() => locators.current.delete(key));
+        }
+        const find = await loc.catch(() => null);
+        if (!find || stop) continue;
+        const types = new Map(project.types.map((x) => [x.id, x]));
+        const found = new Map(roomsRef.current);
+        for (const m of ms) found.set(placeKey(m), m.points.length ? find(middleOf(m.points, types.get(m.typeId)?.kind === 'area')) : null);
+        if (!stop) setRooms(found);
+        await new Promise((r) => setTimeout(r, 0));
+      }
+    }, 800);
+    return () => {
+      stop = true;
+      window.clearTimeout(t);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project?.measurements, project?.sheets, pdfs]);
+  const roomOf = useCallback((m: Measurement) => rooms.get(placeKey(m)) ?? null, [rooms]);
+
+  /** Where a type's takeoffs are: each sheet with its share, for the Quantities card. */
+  const whereOf = useCallback(
+    (typeId: string) => {
+      if (!project) return [];
+      const type = project.types.find((t) => t.id === typeId);
+      if (!type) return [];
+      const out = new Map<string, { sheetId: string; name: string; n: number; qty: number }>();
+      for (const m of project.measurements) {
+        if (m.typeId !== typeId) continue;
+        const s = project.sheets.find((x) => x.id === m.sheetId);
+        if (!s) continue;
+        const v = measurementVars(m, type, s, project.units);
+        const e = out.get(s.id) ?? out.set(s.id, { sheetId: s.id, name: s.name, n: 0, qty: 0 }).get(s.id)!;
+        e.n++;
+        if (v) e.qty += primaryOf(type.kind, v) * sheetRepeat(s);
+      }
+      const unit = primaryUnit(type.kind, project.units);
+      const order = new Map(project.sheets.map((s, i) => [s.id, i]));
+      return [...out.values()].sort((a, b) => (order.get(a.sheetId) ?? 0) - (order.get(b.sheetId) ?? 0)).map((e) => ({ ...e, unit }));
+    },
+    [project],
+  );
+
+  /** Goes to a sheet and frames every takeoff of a type on it. */
+  const showTypeOn = (typeId: string, sid: string) => {
+    if (!project) return;
+    const pts = project.measurements.filter((m) => m.typeId === typeId && m.sheetId === sid).flatMap((m) => m.points);
+    if (sid !== sheetId) setSheetId(sid);
+    setSelectedId(null);
+    if (!pts.length) return;
+    const xs = pts.map((p) => p[0]);
+    const ys = pts.map((p) => p[1]);
+    setFocus((f) => ({ box: [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)], n: (f?.n ?? 0) + 1 }));
+  };
 
   const record = useCallback((events: ActivityEvent[], replaceBatch?: string) => {
     if (!events.length && !replaceBatch) return;
@@ -973,7 +1059,7 @@ export function App() {
   async function exportExcel() {
     setBusy('Building the Excel file…');
     try {
-      const blob = await exportWorkbook(project!, activityRef.current);
+      const blob = await exportWorkbook(project!, activityRef.current, roomOf);
       const filename = `${project!.name.replace(/[^\w\- ]+/g, '').trim() || 'takeoff'} - takeoff.xlsx`;
       if ((await saveFile(filename, blob)) === 'failed') {
         await notify('The Excel file could not be saved here. Try again in a moment.');
@@ -2822,6 +2908,9 @@ export function App() {
             totals={totals}
             sheetTotals={sheetTotals}
             sections={qtySections}
+            roomOf={roomOf}
+            whereOf={whereOf}
+            onShowType={showTypeOn}
             grouping={qtyGrouping}
             onGrouping={chooseGrouping}
             activity={activity}
