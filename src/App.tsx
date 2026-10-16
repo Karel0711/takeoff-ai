@@ -36,11 +36,11 @@ import { sheetImage } from './sheetImage';
 import { compareSheets } from './compareSheets';
 import { pageTexts, type PageText } from './pageText';
 import { readTitleBlock, titleBlockBox } from './titleBlock';
-import { buildingOfDoc, guessBuilding, quantitySections, type QtyGrouping } from './buildings';
+import { buildingOfDoc, buildingsOf, guessBuilding, onBuilding, quantitySections, type QtyGrouping } from './buildings';
 import { isHosted, saveFile } from './host';
 import { defaultTypes, newId, newProject, type Kind, type Measurement, type Project, type Pt, type Sheet, type TakeoffType, type Units } from './model';
 import { inspectPage, openPdf, type PDFDocumentProxy, type PDFPageProxy } from './pdf';
-import { typeTotals } from './quantities';
+import { typeTotals, type TypeTotals } from './quantities';
 import { clearStarterTypes, deleteProject, listProjects, type ProjectSummary, loadActivity, loadCurrentProject, deletePdf, loadPdf, loadProjectById, loadStarterTypes, persistStorage, saveActivity, savePdf, saveProject, saveStarterTypes, setStorageHooks, getSyncMark, setSyncMark } from './storage';
 import { readProjectFiles, writeBackup, writeProjectFile } from './projectFile';
 import { canUseServiceWorker, isInstalled, onLaunchFiles, promptInstall, registerServiceWorker } from './pwa';
@@ -362,14 +362,16 @@ export function App() {
   }, [sheetFilter, sheetList, pdfs]);
 
   const totals = useMemo(() => (project ? typeTotals(project) : []), [project]);
-  const [typeView, setTypeView] = useState<'folders' | 'division'>(() => {
+  type TypeView = 'folders' | 'division' | 'building';
+  const [typeView, setTypeView] = useState<TypeView>(() => {
     try {
-      return localStorage.getItem('typeView') === 'division' ? 'division' : 'folders';
+      const v = localStorage.getItem('typeView');
+      return v === 'division' || v === 'building' ? v : 'folders';
     } catch {
       return 'folders';
     }
   });
-  const chooseTypeView = (v: 'folders' | 'division') => {
+  const chooseTypeView = (v: TypeView) => {
     setTypeView(v);
     try {
       localStorage.setItem('typeView', v);
@@ -392,6 +394,11 @@ export function App() {
       // Remembering the choice is a convenience only.
     }
   };
+  // Each building's own quantities, for the type list shown by building.
+  const buildingTotals = useMemo(
+    () => (project && typeView === 'building' ? buildingsOf(project).map((building) => ({ building, totals: typeTotals(onBuilding(project, building)) })) : []),
+    [project, typeView],
+  );
   const qtySections = useMemo(() => (project && qtyGrouping !== 'type' ? quantitySections(project, qtyGrouping) : []), [project, qtyGrouping]);
   const sheetTotals = useMemo(
     () => (project && sheetId ? typeTotals({ ...project, measurements: project.measurements.filter((m) => m.sheetId === sheetId) }) : []),
@@ -2268,12 +2275,17 @@ export function App() {
               <Icon name="folderPlus" size={16} />
             </button>
             <button
-              className={`link-button type-view ${typeView === 'division' ? 'on' : ''}`}
-              onClick={() => chooseTypeView(typeView === 'division' ? 'folders' : 'division')}
-              title={typeView === 'division' ? 'Show types in your groups' : 'Show types by estimate division'}
-              aria-pressed={typeView === 'division'}
+              className={`link-button type-view ${typeView !== 'folders' ? 'on' : ''}`}
+              onClick={() => chooseTypeView(typeView === 'folders' ? 'division' : typeView === 'division' ? 'building' : 'folders')}
+              title={
+                typeView === 'folders'
+                  ? 'Showing your groups · click to show by estimate division'
+                  : typeView === 'division'
+                    ? 'Showing by division · click to show by building, then division'
+                    : 'Showing by building, then division · click to show your groups'
+              }
             >
-              {typeView === 'division' ? 'By division' : 'By group'}
+              {typeView === 'folders' ? 'By group' : typeView === 'division' ? 'By division' : 'By building'}
             </button>
           </div>
           <ul className="source-list">
@@ -2316,12 +2328,12 @@ export function App() {
                   setDropOn(null);
                 },
               });
-              const renderType = (t: TakeoffType) => {
-                const tt = totalFor(t.id);
+              const renderType = (t: TakeoffType, own?: TypeTotals, keyPrefix = '') => {
+                const tt = own ?? totalFor(t.id);
                 return (
                   <li
-                    key={t.id}
-                    className={`type-item ${t.hidden ? 'is-hidden' : ''} ${groupOf(t) && known.has(groupOf(t)!) ? 'in-group' : ''}`}
+                    key={keyPrefix + t.id}
+                    className={`type-item ${t.hidden ? 'is-hidden' : ''} ${(keyPrefix && keyPrefix !== 'unused|') || (!keyPrefix && groupOf(t) && known.has(groupOf(t)!)) ? 'in-group' : ''} ${keyPrefix.includes('|') && keyPrefix !== 'unused|' ? 'in-division' : ''}`}
                     draggable
                     onDragStart={(e) => {
                       dragType.current = t.id;
@@ -2363,6 +2375,68 @@ export function App() {
                   </li>
                 );
               };
+              if (typeView === 'building') {
+                // Each building, its divisions, and the types taken off on it with that building's quantities.
+                const fold = (id: string) => setCollapsedGroups((c) => (c.has(id) ? new Set([...c].filter((x) => x !== id)) : new Set(c).add(id)));
+                const order = (a: string, b: string) => (!a ? 1 : !b ? -1 : a.localeCompare(b, undefined, { numeric: true }));
+                const usedAnywhere = new Set<string>();
+                const sections = buildingTotals.map(({ building, totals: bt }) => {
+                  const used = bt.filter((x) => x.vars.N > 0 || x.unscaled > 0);
+                  for (const x of used) usedAnywhere.add(x.type.id);
+                  const bid = `b:${building}`;
+                  const open = !collapsedGroups.has(bid);
+                  const divisions = [...new Set(used.map((x) => divisionName(x.type)))].sort(order);
+                  return (
+                    <Fragment key={bid}>
+                      <li className="type-group building-group">
+                        {used.length ? eye(used.map((x) => x.type.id), used.every((x) => x.type.hidden), building) : <span className="eye-space" />}
+                        <button className="doc-head group-head" onClick={() => fold(bid)} aria-expanded={open} title={`${building} · click to fold`}>
+                          <span className={`doc-chevron ${open ? 'open' : ''}`}>
+                            <Icon name="chevron" size={12} />
+                          </span>
+                          <Icon name="folder" size={14} />
+                          <span className="doc-name">{building}</span>
+                          <span className="doc-count">{used.length}</span>
+                        </button>
+                      </li>
+                      {open &&
+                        divisions.map((d) => {
+                          const did = `${bid}|${d}`;
+                          const dOpen = !collapsedGroups.has(did);
+                          const members = used.filter((x) => divisionName(x.type) === d);
+                          return (
+                            <Fragment key={did}>
+                              <li className="type-group division-group">
+                                <span className="eye-space" />
+                                <button className="doc-head group-head" onClick={() => fold(did)} aria-expanded={dOpen} title={`${d || 'No division'} in ${building} · click to fold`}>
+                                  <span className={`doc-chevron ${dOpen ? 'open' : ''}`}>
+                                    <Icon name="chevron" size={12} />
+                                  </span>
+                                  <span className="doc-name">{d || 'No division'}</span>
+                                  <span className="doc-count">{members.length}</span>
+                                </button>
+                              </li>
+                              {dOpen && members.map((x) => renderType(x.type, x, `${did}|`))}
+                            </Fragment>
+                          );
+                        })}
+                    </Fragment>
+                  );
+                });
+                const unused = project.types.filter((t) => !usedAnywhere.has(t.id));
+                return (
+                  <>
+                    {sections}
+                    {unused.length > 0 && (
+                      <li className="type-group loose">
+                        <span className="eye-space" />
+                        <span className="group-head muted">Not taken off yet</span>
+                      </li>
+                    )}
+                    {unused.map((t) => renderType(t, undefined, 'unused|'))}
+                  </>
+                );
+              }
               const loose = project.types.filter((t) => !groupOf(t) || !known.has(groupOf(t)!));
               return (
                 <>
@@ -2402,7 +2476,7 @@ export function App() {
                             </button>
                           </span>
                         </li>
-                        {open && members.map(renderType)}
+                        {open && members.map((t) => renderType(t))}
                         {open && !members.length && <li className="group-empty">Drag types here, or use a type’s folder button</li>}
                       </Fragment>
                     );
@@ -2413,7 +2487,7 @@ export function App() {
                       <span className="group-head muted">No group</span>
                     </li>
                   )}
-                  {loose.map(renderType)}
+                  {loose.map((t) => renderType(t))}
                 </>
               );
             })()}

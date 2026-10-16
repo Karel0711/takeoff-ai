@@ -2295,7 +2295,7 @@ button.link-button:hover {
 /* Quick start */
 .quick-start {
   margin: 4px 0 0;
-  padding-left: 22px;
+  padding-left: 14px;
 }
 .quick-start li {
   margin-bottom: 12px;
@@ -2447,4 +2447,13 @@ button.link-button:hover {
   margin-left: 4px;
   font-size: 11px;
   white-space: nowrap;
+}
+
+/* The type list by building: divisions sit under their building, types under their division. */
+.type-group.division-group .group-head {
+  padding-left: 18px;
+  font-weight: 500;
+}
+.type-item.in-division .source-row {
+  padding-left: 14px;
 }
