@@ -1168,6 +1168,15 @@ export function App() {
     setToast({ text: `Removed the group ${g?.name ?? ''}; its types are kept, ungrouped`, undo: true });
   }
 
+  /** Renames a division on every type in it; naming it as another division merges the two. */
+  async function renameDivision(from: string) {
+    const name = await askText('Rename division', { initial: from, hint: `Every type in ${from || 'no division'} moves to this division; naming an existing one merges them.` });
+    if (name === null) return;
+    const to = name.trim() || undefined;
+    if ((to ?? '') === from) return;
+    commit((p) => ({ ...p, types: p.types.map((t) => ((t.division?.trim() || '') === from ? { ...t, division: to } : t)) }), 'Rename division');
+  }
+
   function moveToGroup(typeId: string, groupId: string | undefined) {
     const t = project!.types.find((x) => x.id === typeId);
     // In the by-division view, dropping a type on a division files it in that division.
@@ -1331,7 +1340,8 @@ export function App() {
         color: PALETTE[types.length % PALETTE.length],
         kind,
         height: 0,
-        division: '21 Fire Suppression',
+        // The estimator's workbook prices fire suppression in its mechanical tab.
+        division: '20-25 Mechanical',
         package: 'Fire protection',
         groupId,
         items: items.map((it) => ({ id: newId(), ...it })),
@@ -2367,7 +2377,7 @@ export function App() {
                           <button
                             className="doc-head group-head"
                             onClick={() => setCollapsedGroups((c) => (c.has(g.id) ? new Set([...c].filter((x) => x !== g.id)) : new Set(c).add(g.id)))}
-                            onDoubleClick={() => !byDivision && void renameGroup(g.id)}
+                            onDoubleClick={() => void (byDivision ? renameDivision(g.id.slice(4)) : renameGroup(g.id))}
                             aria-expanded={open}
                             title={`${g.name} · click to fold, double-click to rename, drag types here to file them`}
                           >
@@ -2378,11 +2388,16 @@ export function App() {
                             <span className="doc-name">{g.name}</span>
                             <span className="doc-count">{members.length}</span>
                           </button>
-                          <span className="row-actions-hover" hidden={byDivision}>
-                            <button className="icon-button small" title="Rename group" aria-label={`Rename ${g.name}`} onClick={() => void renameGroup(g.id)}>
+                          <span className="row-actions-hover">
+                            <button
+                              className="icon-button small"
+                              title={byDivision ? 'Rename the division for all its types (an existing division merges them)' : 'Rename group'}
+                              aria-label={`Rename ${g.name}`}
+                              onClick={() => void (byDivision ? renameDivision(g.id.slice(4)) : renameGroup(g.id))}
+                            >
                               <Icon name="edit" size={13} />
                             </button>
-                            <button className="icon-button small danger" title="Remove the group (its types are kept)" aria-label={`Remove group ${g.name}`} onClick={() => deleteGroup(g.id)}>
+                            <button className="icon-button small danger" hidden={byDivision} title="Remove the group (its types are kept)" aria-label={`Remove group ${g.name}`} onClick={() => deleteGroup(g.id)}>
                               <Icon name="trash" size={13} />
                             </button>
                           </span>
