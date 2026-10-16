@@ -36,6 +36,7 @@ import { sheetImage } from './sheetImage';
 import { compareSheets } from './compareSheets';
 import { pageTexts, type PageText } from './pageText';
 import { readTitleBlock, titleBlockBox } from './titleBlock';
+import { buildingOfDoc, guessBuilding, quantitySections, type QtyGrouping } from './buildings';
 import { isHosted, saveFile } from './host';
 import { defaultTypes, newId, newProject, type Kind, type Measurement, type Project, type Pt, type Sheet, type TakeoffType, type Units } from './model';
 import { inspectPage, openPdf, type PDFDocumentProxy, type PDFPageProxy } from './pdf';
@@ -361,6 +362,37 @@ export function App() {
   }, [sheetFilter, sheetList, pdfs]);
 
   const totals = useMemo(() => (project ? typeTotals(project) : []), [project]);
+  const [typeView, setTypeView] = useState<'folders' | 'division'>(() => {
+    try {
+      return localStorage.getItem('typeView') === 'division' ? 'division' : 'folders';
+    } catch {
+      return 'folders';
+    }
+  });
+  const chooseTypeView = (v: 'folders' | 'division') => {
+    setTypeView(v);
+    try {
+      localStorage.setItem('typeView', v);
+    } catch {
+      // Remembering the choice is a convenience only.
+    }
+  };
+  const [qtyGrouping, setQtyGrouping] = useState<QtyGrouping>(() => {
+    try {
+      return (localStorage.getItem('qtyGrouping') as QtyGrouping) || 'type';
+    } catch {
+      return 'type';
+    }
+  });
+  const chooseGrouping = (g: QtyGrouping) => {
+    setQtyGrouping(g);
+    try {
+      localStorage.setItem('qtyGrouping', g);
+    } catch {
+      // Remembering the choice is a convenience only.
+    }
+  };
+  const qtySections = useMemo(() => (project && qtyGrouping !== 'type' ? quantitySections(project, qtyGrouping) : []), [project, qtyGrouping]);
   const sheetTotals = useMemo(
     () => (project && sheetId ? typeTotals({ ...project, measurements: project.measurements.filter((m) => m.sheetId === sheetId) }) : []),
     [project, sheetId],
@@ -1138,6 +1170,13 @@ export function App() {
 
   function moveToGroup(typeId: string, groupId: string | undefined) {
     const t = project!.types.find((x) => x.id === typeId);
+    // In the by-division view, dropping a type on a division files it in that division.
+    if (groupId?.startsWith('div:')) {
+      const division = groupId.slice(4) || undefined;
+      if (!t || (t.division ?? undefined) === division) return;
+      commit((p) => ({ ...p, types: p.types.map((x) => (x.id === typeId ? { ...x, division } : x)) }), 'Move to division');
+      return;
+    }
     if (!t || (t.groupId ?? undefined) === groupId) return;
     commit((p) => ({ ...p, types: p.types.map((x) => (x.id === typeId ? { ...x, groupId } : x)) }), 'Move to group');
   }
@@ -1406,6 +1445,16 @@ export function App() {
 
   /** Reads the legend boxed on the sheet into rows for the legend dialog. */
   /** Starts marking where the sheet number (or title) sits in the title block. */
+  /** Sets which building a drawing set is for: its quantities are grouped under that name. */
+  async function setDocBuilding(docId: string) {
+    const d = projectRef.current!.docs.find((x) => x.id === docId);
+    if (!d) return;
+    const name = await askText('Building', { initial: buildingOfDoc(d), hint: `Quantities can be grouped by building. Read from the file name: ${guessBuilding(d.name)}` });
+    if (name === null) return;
+    const building = name.trim() && name.trim() !== guessBuilding(d.name) ? name.trim() : undefined;
+    commit((p) => ({ ...p, docs: p.docs.map((x) => (x.id === docId ? { ...x, building } : x)) }), 'Set building');
+  }
+
   /** Names every sheet from its title block: its sheet number, with the drawing title beside it. */
   async function autoNameSheets() {
     const sheets = projectRef.current!.sheets;
@@ -2164,7 +2213,13 @@ export function App() {
                             <Icon name="chevron" size={12} />
                           </span>
                           <span className="doc-name">{d.name.replace(/\.pdf$/i, '')}</span>
+                          <span className="doc-building" title="Building these sheets are for">
+                            {buildingOfDoc(d)}
+                          </span>
                           <span className="doc-count">{done ? `${done}/${all.length}` : all.length}</span>
+                        </button>
+                        <button className="icon-button small doc-building-edit" title="Set the building these sheets are for" aria-label={`Set building for ${d.name}`} onClick={() => void setDocBuilding(d.id)}>
+                          <Icon name="edit" size={13} />
                         </button>
                         <button className="icon-button small danger doc-remove" title={`Remove ${d.name} and its takeoffs`} aria-label={`Remove ${d.name}`} onClick={() => void removeDrawings(d.id)}>
                           <Icon name="trash" size={13} />
@@ -2202,10 +2257,25 @@ export function App() {
             <button className="icon-button small" onClick={() => void newGroup()} title="New group (a folder for takeoff types)" aria-label="New group">
               <Icon name="folderPlus" size={16} />
             </button>
+            <button
+              className={`link-button type-view ${typeView === 'division' ? 'on' : ''}`}
+              onClick={() => chooseTypeView(typeView === 'division' ? 'folders' : 'division')}
+              title={typeView === 'division' ? 'Show types in your groups' : 'Show types by estimate division'}
+              aria-pressed={typeView === 'division'}
+            >
+              {typeView === 'division' ? 'By division' : 'By group'}
+            </button>
           </div>
           <ul className="source-list">
             {(() => {
-              const groups = project.groups ?? [];
+              const byDivision = typeView === 'division';
+              const divisionName = (t: TakeoffType) => t.division?.trim() || '';
+              const groups = byDivision
+                ? [...new Set(project.types.map(divisionName))]
+                    .sort((a, b) => (!a ? 1 : !b ? -1 : a.localeCompare(b, undefined, { numeric: true })))
+                    .map((d) => ({ id: `div:${d}`, name: d || 'No division' }))
+                : (project.groups ?? []);
+              const groupOf = (t: TakeoffType) => (byDivision ? `div:${divisionName(t)}` : t.groupId);
               const known = new Set(groups.map((g) => g.id));
               const eye = (ids: string[], hidden: boolean, label: string) => (
                 <button
@@ -2241,7 +2311,7 @@ export function App() {
                 return (
                   <li
                     key={t.id}
-                    className={`type-item ${t.hidden ? 'is-hidden' : ''} ${t.groupId && known.has(t.groupId) ? 'in-group' : ''}`}
+                    className={`type-item ${t.hidden ? 'is-hidden' : ''} ${groupOf(t) && known.has(groupOf(t)!) ? 'in-group' : ''}`}
                     draggable
                     onDragStart={(e) => {
                       dragType.current = t.id;
@@ -2283,11 +2353,11 @@ export function App() {
                   </li>
                 );
               };
-              const loose = project.types.filter((t) => !t.groupId || !known.has(t.groupId));
+              const loose = project.types.filter((t) => !groupOf(t) || !known.has(groupOf(t)!));
               return (
                 <>
                   {groups.map((g) => {
-                    const members = project.types.filter((t) => t.groupId === g.id);
+                    const members = project.types.filter((t) => groupOf(t) === g.id);
                     const open = !collapsedGroups.has(g.id);
                     const allHidden = members.length > 0 && members.every((t) => t.hidden);
                     return (
@@ -2297,7 +2367,7 @@ export function App() {
                           <button
                             className="doc-head group-head"
                             onClick={() => setCollapsedGroups((c) => (c.has(g.id) ? new Set([...c].filter((x) => x !== g.id)) : new Set(c).add(g.id)))}
-                            onDoubleClick={() => void renameGroup(g.id)}
+                            onDoubleClick={() => !byDivision && void renameGroup(g.id)}
                             aria-expanded={open}
                             title={`${g.name} · click to fold, double-click to rename, drag types here to file them`}
                           >
@@ -2308,7 +2378,7 @@ export function App() {
                             <span className="doc-name">{g.name}</span>
                             <span className="doc-count">{members.length}</span>
                           </button>
-                          <span className="row-actions-hover">
+                          <span className="row-actions-hover" hidden={byDivision}>
                             <button className="icon-button small" title="Rename group" aria-label={`Rename ${g.name}`} onClick={() => void renameGroup(g.id)}>
                               <Icon name="edit" size={13} />
                             </button>
@@ -2558,6 +2628,9 @@ export function App() {
             sheet={sheet}
             totals={totals}
             sheetTotals={sheetTotals}
+            sections={qtySections}
+            grouping={qtyGrouping}
+            onGrouping={chooseGrouping}
             activity={activity}
             selectedId={selectedId}
             onSelect={setSelectedId}

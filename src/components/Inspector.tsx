@@ -5,6 +5,7 @@ import { measurementVars, primaryOf, primaryUnit, type TypeTotals } from '../qua
 import { formatQty } from '../units';
 import { Icon } from './Icons';
 import { QuantityPanel } from './QuantityPanel';
+import type { QtyGrouping, QtySection } from '../buildings';
 
 export type InspectorTab = 'quantities' | 'takeoffs' | 'history';
 
@@ -16,6 +17,9 @@ interface Props {
   totals: TypeTotals[];
   /** The same, for the current sheet only. */
   sheetTotals: TypeTotals[];
+  sections: QtySection[];
+  grouping: QtyGrouping;
+  onGrouping: (g: QtyGrouping) => void;
   activity: ActivityEvent[];
   selectedId: string | null;
   onSelect: (id: string | null) => void;
@@ -52,7 +56,7 @@ export function Inspector(props: Props) {
         </div>
       </div>
       <div className="inspector-body">
-        {tab === 'quantities' && <QuantityPanel totals={props.totals} sheetTotals={props.sheetTotals} sheetName={props.sheet ? `${props.sheet.name}${props.sheet.repeat ? ` ×${props.sheet.repeat}` : ''}` : undefined} onEdit={props.onEditType} />}
+        {tab === 'quantities' && <QuantityPanel totals={props.totals} sheetTotals={props.sheetTotals} sections={props.sections} grouping={props.grouping} onGrouping={props.onGrouping} sheetName={props.sheet ? `${props.sheet.name}${props.sheet.repeat ? ` ×${props.sheet.repeat}` : ''}` : undefined} onEdit={props.onEditType} />}
         {tab === 'takeoffs' && <TakeoffList {...props} />}
         {tab === 'history' && <HistoryList events={props.activity} />}
       </div>

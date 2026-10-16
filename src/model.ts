@@ -18,6 +18,8 @@ export interface SavedLegendRead {
 export interface Doc {
   id: string;
   name: string;
+  /** The building its sheets are for (unset: read from the file name). */
+  building?: string;
 }
 
 /** Where a sheet's scale came from; 'verified' is a detected scale its dimension strings confirmed. */
@@ -29,6 +31,8 @@ export interface Sheet {
   /** 1-based page number within the document. */
   page: number;
   name: string;
+  /** The building this sheet is for, when it differs from its drawing set's. */
+  building?: string;
   /** The drawing's title from its title block ("Ground Floor Plan"), when read. */
   title?: string;
   width: number;

@@ -1,3 +1,4 @@
+import { buildingOf, buildingsOf, onBuilding, quantitySections } from './buildings';
 import type { ActivityEvent } from './activity';
 import type { Workbook, Worksheet } from 'exceljs';
 import { FINISH_ROLES, type Project, type TakeoffType } from './model';
@@ -296,9 +297,38 @@ export async function buildWorkbook(project: Project, activity: ActivityEvent[] 
   materials.getRow(1).fill = solid(COLOR.header);
   materials.views = [{ state: 'frozen', ySplit: 1 }];
 
+  // Per building, each division's types and their materials.
+  const buildings = buildingsOf(project);
+  if (buildings.length > 1) {
+    const byBuilding = wb.addWorksheet(sheetName('By Building', used));
+    byBuilding.columns = [
+      { header: 'Building', key: 'building', width: 16 },
+      { header: 'Division', key: 'division', width: 28 },
+      { header: 'Takeoff type', key: 'type', width: 50 },
+      { header: 'Item', key: 'item', width: 44 },
+      { header: 'Quantity', key: 'qty', width: 14, style: { numFmt: '#,##0.00' } },
+      { header: 'Unit', key: 'unit', width: 8 },
+    ];
+    for (const b of buildings) {
+      const sections = quantitySections(onBuilding(project, b), 'division');
+      for (const sec of sections)
+        for (const tt of sec.totals ?? []) {
+          if (tt.vars.N === 0) continue;
+          const head = byBuilding.addRow({ building: b, division: sec.title, type: tt.type.name, item: '', qty: tt.primary, unit: tt.unit });
+          head.font = { bold: true };
+          for (const it of tt.items) byBuilding.addRow({ building: b, division: sec.title, type: tt.type.name, item: it.name, qty: it.value ?? `ERROR: ${it.error}`, unit: it.unit });
+        }
+    }
+    byBuilding.getRow(1).font = { bold: true };
+    byBuilding.getRow(1).fill = solid(COLOR.header);
+    byBuilding.views = [{ state: 'frozen', ySplit: 1 }];
+    byBuilding.autoFilter = { from: 'A1', to: 'F1' };
+  }
+
   // Every measurement, for checking.
   const detail = wb.addWorksheet(sheetName('Measurements', used));
   detail.columns = [
+    { header: 'Building', key: 'building', width: 14 },
     { header: 'Sheet', key: 'sheet', width: 10 },
     { header: 'Takeoff type', key: 'type', width: 50 },
     { header: 'Name', key: 'label', width: 34 },
@@ -315,6 +345,7 @@ export async function buildWorkbook(project: Project, activity: ActivityEvent[] 
       if (c.sheet.id !== s.id) continue;
       const { type, vars: v } = c;
       detail.addRow({
+        building: buildingOf(project, s),
         sheet: s.name,
         type: type.name,
         label: [c.m.label, c.role ? `(${roleLabel.get(c.role)})` : ''].filter(Boolean).join(' '),

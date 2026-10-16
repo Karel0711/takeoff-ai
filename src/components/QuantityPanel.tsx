@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
+import type { QtyGrouping, QtySection } from '../buildings';
 import type { TypeTotals } from '../quantities';
 import { formatQty } from '../units';
 import { Icon } from './Icons';
@@ -7,35 +8,26 @@ interface Props {
   totals: TypeTotals[];
   sheetTotals: TypeTotals[];
   sheetName?: string;
+  /** The project's quantities in the sections chosen with `grouping`. */
+  sections: QtySection[];
+  grouping: QtyGrouping;
+  onGrouping: (g: QtyGrouping) => void;
   onEdit: (typeId: string) => void;
 }
 
+const GROUPINGS: [QtyGrouping, string][] = [
+  ['type', 'By type'],
+  ['building', 'By building'],
+  ['division', 'By division'],
+  ['building-division', 'Building › division'],
+];
+
 /** Project totals per takeoff type, with each assembly item's quantity. */
-export function QuantityPanel({ totals, sheetTotals, sheetName, onEdit }: Props) {
+export function QuantityPanel({ totals, sheetTotals, sheetName, sections, grouping, onGrouping, onEdit }: Props) {
   const [scope, setScope] = useState<'all' | 'sheet'>('all');
   const anything = totals.some((t) => t.vars.N > 0 || t.unscaled > 0);
   const used = (scope === 'sheet' ? sheetTotals : totals).filter((t) => t.vars.N > 0 || t.unscaled > 0);
-  if (!anything)
-    return (
-      <div className="empty-note">
-        <Icon name="sigma" size={22} />
-        <p>Quantities for the whole project appear here as you take off, with every material in each assembly.</p>
-      </div>
-    );
-  return (
-    <div className="quantities">
-      <div className="list-toolbar">
-        <div className="segmented small" role="tablist" aria-label="Quantities for">
-          <button role="tab" aria-selected={scope === 'all'} className={scope === 'all' ? 'on' : ''} onClick={() => setScope('all')}>
-            All sheets
-          </button>
-          <button role="tab" aria-selected={scope === 'sheet'} className={scope === 'sheet' ? 'on' : ''} onClick={() => setScope('sheet')} disabled={!sheetName}>
-            {sheetName ? `Sheet ${sheetName}` : 'This sheet'}
-          </button>
-        </div>
-      </div>
-      {used.length === 0 && <p className="muted empty-line">Nothing taken off on this sheet yet.</p>}
-      {used.map((t) => (
+  const card = (t: TypeTotals) => (
         <section className="qty-card" key={t.type.id}>
           <button className="qty-head" onClick={() => onEdit(t.type.id)} title="Edit type and assembly">
             <span className="dot" style={{ background: t.type.color }} />
@@ -65,7 +57,59 @@ export function QuantityPanel({ totals, sheetTotals, sheetName, onEdit }: Props)
             </table>
           )}
         </section>
-      ))}
+  );
+  if (!anything)
+    return (
+      <div className="empty-note">
+        <Icon name="sigma" size={22} />
+        <p>Quantities for the whole project appear here as you take off, with every material in each assembly.</p>
+      </div>
+    );
+  return (
+    <div className="quantities">
+      <div className="list-toolbar">
+        <div className="segmented small" role="tablist" aria-label="Quantities for">
+          <button role="tab" aria-selected={scope === 'all'} className={scope === 'all' ? 'on' : ''} onClick={() => setScope('all')}>
+            All sheets
+          </button>
+          <button role="tab" aria-selected={scope === 'sheet'} className={scope === 'sheet' ? 'on' : ''} onClick={() => setScope('sheet')} disabled={!sheetName}>
+            {sheetName ? `Sheet ${sheetName}` : 'This sheet'}
+          </button>
+        </div>
+      </div>
+      {scope === 'all' && (
+        <label className="qty-grouping">
+          <span className="muted">Group</span>
+          <select value={grouping} onChange={(e) => onGrouping(e.target.value as QtyGrouping)} aria-label="Group quantities">
+            {GROUPINGS.map(([g, label]) => (
+              <option key={g} value={g}>
+                {label}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+      {used.length === 0 && <p className="muted empty-line">Nothing taken off on this sheet yet.</p>}
+      {scope === 'sheet' || grouping === 'type' ? used.map(card) : sections.map((sec) => <Section key={sec.title} section={sec} depth={0} card={card} />)}
+    </div>
+  );
+}
+
+/** A building or division heading with its types (or its own sections) under it. */
+function Section({ section, depth, card }: { section: QtySection; depth: number; card: (t: TypeTotals) => ReactNode }) {
+  const [open, setOpen] = useState(true);
+  const totals = (section.totals ?? []).filter((t) => t.vars.N > 0 || t.unscaled > 0);
+  const count = section.sections ? section.sections.reduce((n, s) => n + (s.totals?.filter((t) => t.vars.N > 0).length ?? 0), 0) : totals.length;
+  return (
+    <div className={`qty-section depth-${depth}`}>
+      <button className="qty-section-head" onClick={() => setOpen(!open)} aria-expanded={open}>
+        <span className={`doc-chevron ${open ? 'open' : ''}`}>
+          <Icon name="chevron" size={12} />
+        </span>
+        <span className="qty-section-title">{section.title}</span>
+        <span className="doc-count">{count}</span>
+      </button>
+      {open && (section.sections ? section.sections.map((s) => <Section key={s.title} section={s} depth={depth + 1} card={card} />) : totals.map(card))}
     </div>
   );
 }

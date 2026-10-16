@@ -810,11 +810,68 @@ input[type='checkbox'] {
   font-weight: 400;
   color: var(--text-3);
 }
-.doc-group .doc-remove {
+.doc-group .doc-remove,
+.doc-group .doc-building-edit {
   opacity: 0;
 }
-.doc-group:hover .doc-remove {
+.doc-group:hover .doc-remove,
+.doc-group:hover .doc-building-edit {
   opacity: 1;
+}
+/* The building a drawing set is for, beside its name. */
+.doc-building {
+  flex: none;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--fill);
+  font-weight: 500;
+  color: var(--text-2);
+}
+
+/* Quantities grouped by building and division. */
+.qty-grouping {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
+  font-size: 12px;
+}
+.qty-grouping select {
+  font-size: 12px;
+}
+.qty-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.qty-section.depth-1 {
+  margin-left: 10px;
+}
+.qty-section-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 2px;
+  border: none;
+  background: none;
+  box-shadow: none;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  text-align: left;
+}
+.qty-section.depth-1 > .qty-section-head {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2);
+}
+.qty-section-title {
+  flex: 1;
 }
 
 /* Sheet numbers read from the title block. */
@@ -2383,4 +2440,11 @@ button.link-button:hover {
 .done-tag {
   color: #248a3d;
   font-weight: 600;
+}
+
+/* The type list shown by group or by estimate division. */
+.source-head .type-view {
+  margin-left: 4px;
+  font-size: 11px;
+  white-space: nowrap;
 }
