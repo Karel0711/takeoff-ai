@@ -163,6 +163,8 @@ export async function automateWalls(
   sheet: Sheet,
   maxOpening: number,
   others: PDFDocumentProxy[] = [],
+  /** Codes already taken off on the overall plans: an enlarged plan of the same walls adds only the others. */
+  skip?: Set<string>,
 ): Promise<Automation & { read?: WallRead }> {
   if (!sheet.metersPerPoint) return { message: 'Set the sheet scale first.' };
   const legend = wallLegendFor(p, sheet);
@@ -171,7 +173,7 @@ export async function automateWalls(
   const stopAt = stopsAtDoorsOf(legend, p.types);
   const read = await readWalls(page, doc, sheet, { maxOpening, throughDoors: true, stopAt: [...stopAt], known, others });
   if (!read.lines.length) return { message: 'No tagged walls found.', read };
-  const choice = new Map(read.lines.map((l) => [l.code, wallChoiceFor(l.code, sheet, p.types, known, read.setTypes)]));
+  const choice = new Map(read.lines.map((l) => [l.code, skip?.has(l.code) ? SKIP : wallChoiceFor(l.code, sheet, p.types, known, read.setTypes)]));
   const made = wallTakeoffOf(read.lines, { choice: (c) => choice.get(c) ?? SKIP, sheet, types: p.types, units: p.units, fromLegend, exterior: known.exterior, setTypes: read.setTypes, stopAt });
   const codes = read.lines.filter((l) => choice.get(l.code) !== SKIP).map((l) => l.code);
   return { message: `${codes.length} wall types: ${codes.join(', ')}`, read, apply: applyWalls(sheet.id, { ...made, replaceEarlier: true }) };

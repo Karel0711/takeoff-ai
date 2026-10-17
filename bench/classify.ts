@@ -3,7 +3,7 @@ import type { Sheet } from '../src/model';
 export type SheetClass = 'floor plan' | 'RCP' | 'finish plan' | 'schedule' | 'legend' | 'assembly' | 'other';
 
 /** Which plan of the building a floor plan is: a level's, the foundation's or the roof's (walls are taken off all three, rooms only off levels). */
-export type PlanLevel = 'level' | 'foundation' | 'roof';
+export type PlanLevel = 'level' | 'foundation' | 'roof' | 'enlarged';
 
 const NOT_A_FLOOR_PLAN =
   /SITE|KEY PLAN|ENLARGED?|STAIR|WASHROOM|ELEVATOR|PART(IAL)? PLAN|DETAIL|SECTION|ELEVATION|LIFE SAFETY|FIRE SEPARATION|DISTANCE|PHASING|SEQUENC|STAGING|HOARDING|CODE|BID FORM|MILLWORK|FURNITURE|EQUIPMENT|FIXTURE|SIGNAGE|LANDSCAPE|GRADING|SERVICING|DRAINAGE|PAVING|SURVEY/;
@@ -29,6 +29,8 @@ export function classifySheet(sheet: Pick<Sheet, 'name' | 'title'>): { kind: She
   if (/FINISH(ES)?\b.*\bPLANS?\b|FLOORING PLAN/.test(t)) return { kind: 'finish plan', why: 'title says finish plan' };
   if (TRADE.test(t)) return { kind: 'other', why: 'trade drawing' };
   if (demo) return { kind: 'other', why: 'demolition / existing plan' };
+  // An enlarged plan shows walls of the floor plan at a larger scale, often tagging the types the overall plan leaves to it.
+  if (/ENLARGED\b[^&]*\bPLANS?\b/.test(t) && !/SITE|KEY PLAN|LIFE SAFETY|FURNITURE|SIGNAGE|ACCESSOR|MILLWORK|CASEWORK|EQUIPMENT|LANDSCAPE/.test(t)) return { kind: 'floor plan', why: 'enlarged plan (walls only, types the overall plans leave out)', level: 'enlarged' };
   if (/\bPLANS?\b/.test(t) && NOT_A_FLOOR_PLAN.test(t)) return { kind: 'other', why: 'site, enlarged, life-safety or other special plan' };
   if (/ROOF/.test(t) && /\bPLANS?\b/.test(t)) return { kind: 'floor plan', why: 'roof plan (walls only)', level: 'roof' };
   if (/FOUNDATION|FOOTING/.test(t) && /\bPLANS?\b/.test(t)) return { kind: 'floor plan', why: 'foundation plan (walls only)', level: 'foundation' };

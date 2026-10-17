@@ -168,7 +168,10 @@ export async function runJob(dir: string, log: (s: string) => void = () => {}, o
     }
     tools.push({ tool, ms, message: error ? 'failed' : message, ...(error ? { error } : {}), items: 0 });
   };
-  const plans = sheets.filter((s) => !s.superseded && reports.get(s.id)!.class === 'floor plan');
+  // Enlarged plans last: they give only the wall types the overall plans did not.
+  const plans = sheets
+    .filter((s) => !s.superseded && reports.get(s.id)!.class === 'floor plan')
+    .sort((a, b) => +(reports.get(a.id)!.level === 'enlarged') - +(reports.get(b.id)!.level === 'enlarged'));
   // Rooms are on the plans of the building's levels, not its foundation or roof.
   const levels = plans.filter((s) => reports.get(s.id)!.level === 'level');
 
@@ -185,7 +188,12 @@ export async function runJob(dir: string, log: (s: string) => void = () => {}, o
         try {
           const page = await set.page(s);
           if (!page) throw new Error('page not open');
-          const r = kind === 'walls' ? await automateWalls(project, page, set.doc(s), s, MAX_OPENING, docs.map((d) => d.pdf)) : await automateRooms(project, page, s, MAX_OPENING);
+          const enlarged = reports.get(s.id)!.level === 'enlarged';
+          const taken = new Set(project.types.filter((t) => toolOfType.get(t.id) === 'walls' && project.measurements.some((m) => m.typeId === t.id)).map((t) => t.name.split(' – ')[0].trim()));
+          const r =
+            kind === 'walls'
+              ? await automateWalls(project, page, set.doc(s), s, MAX_OPENING, docs.map((d) => d.pdf), enlarged ? taken : undefined)
+              : await automateRooms(project, page, s, MAX_OPENING);
           apply(kind, r);
           note(s, `${kind}: ${r.message}`);
           if (kind === 'walls' && 'read' in r && r.read?.result.unmatched.length) note(s, `walls: ${r.read.result.unmatched.length} tags pointing at no wall (${[...new Set(r.read.result.unmatched.map((u) => u.code))].join(', ')})`);
