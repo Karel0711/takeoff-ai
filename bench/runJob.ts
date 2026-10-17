@@ -101,7 +101,18 @@ export async function runJob(dir: string, log: (s: string) => void = () => {}, o
 
   const tools: ToolReport[] = [];
   const t0 = Date.now();
-  const { sheets } = await makeSheets(docs, units, log);
+  // SHEET_CACHE=1: the sheets as made last time (names, titles, scales), for iterating on one tool.
+  // Delete <job>/sheets.cache.json after changing how sheets are read.
+  const cachePath = statSync(dir).isFile() ? null : join(dir, 'sheets.cache.json');
+  const cacheKey = docs.map((d) => d.file).join('|') + `|${units}`;
+  let sheets: Sheet[];
+  const cached = process.env.SHEET_CACHE && cachePath && existsSync(cachePath) ? (JSON.parse(readFileSync(cachePath, 'utf8')) as { key: string; sheets: (Sheet & { doc: number })[] }) : null;
+  if (cached && cached.key === cacheKey) sheets = cached.sheets.map(({ doc, ...s }) => ({ ...s, docId: docs[doc].id }));
+  else {
+    sheets = (await makeSheets(docs, units, log)).sheets;
+    if (process.env.SHEET_CACHE && cachePath)
+      writeFileSync(cachePath, JSON.stringify({ key: cacheKey, sheets: sheets.map((s) => ({ ...s, doc: docs.findIndex((d) => d.id === s.docId) })) }));
+  }
   // Sheets an addendum re-issued are superseded, as the app marks them when takeoffs move onto the re-issue.
   const newer = reissued(sheets, docs);
   for (const s of sheets) if (newer.has(s.id)) s.superseded = true;

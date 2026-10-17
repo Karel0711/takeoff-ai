@@ -30,7 +30,7 @@ const total = (p: Project, name: RegExp) => typeTotals(p).find((t) => name.test(
 // Every Automate item run headless on the sample plan, as the benchmark runs them: the same
 // numbers the app shows for it.
 describe('automations on the sample plan', () => {
-  it('make the sheets and take off walls, rooms, doors, finishes and symbols', async () => {
+  it('make the sheets and take off walls, rooms, doors, finishes, symbols and ceilings', async () => {
     const pdf = (await getDocument({ data: await samplePlanPdf() }).promise) as unknown as PDFDocumentProxy;
     const { sheets, noText } = await sheetsOf(pdf, 'doc', 'metric');
     expect(noText).toBe(0);
@@ -66,8 +66,11 @@ describe('automations on the sample plan', () => {
     p = symbols.apply!(p);
 
     expect((await automateSprinklers(p, access, null)).message).toBe('No sprinkler plans found.');
-    expect((await automateCeilings(p, access, null)).apply).toBeUndefined();
-  });
+    // The RCP's rooms by its legend: ACT-1 where the grid is drawn, GWB-1 where the stipple is.
+    const ceilings = await automateCeilings(p, access, null);
+    expect(ceilings.message).toMatch(/^Ceilings on 1 plan: 5 areas in 2 types, 186 m²/);
+    expect(ceilings.apply!(p).types.map((t) => t.name)).toEqual(expect.arrayContaining(['ACT-1 – ACOUSTIC TILE, 2X4 GRID', 'GWB-1 – PAINTED GYPSUM BOARD']));
+  }, 30000);
 
   it('report a failing sheet and go on when asked, else stop', async () => {
     const pdf = (await getDocument({ data: await samplePlanPdf() }).promise) as unknown as PDFDocumentProxy;

@@ -75,7 +75,9 @@ export function classifySheet(sheet: Pick<Sheet, 'name' | 'title'>): SheetKind {
     return { kind: 'finish plan', why: 'title says finish plan' };
   if (!plan && /SCHEDULE/.test(t)) return { kind: 'schedule', why: 'title says schedule' };
   if (any(TRADE)) return { kind: 'other', why: 'trade drawing' };
-  if (demo) return { kind: 'other', why: 'demolition / existing plan' };
+  // An existing / demolition floor plan drawn with its RCP ("Level 1 - existing and demo - floor plan & RCP"):
+  // no walls or rooms to take off, but its ceilings are (to demolish, or to take down and put back).
+  if (demo) return { kind: 'other', why: 'demolition / existing plan', ...(rcp ? { ceilings: true } : {}) };
   // A bare "plan" beside other drawings ("Plan and section details") is one of them: the whole title says which.
   const p = /^PLANS?$/.test(named.join(' ')) && parts.length > 1 ? t : named.join(' ');
   if (plan && NOT_A_FLOOR_PLAN.test(p)) return { kind: 'other', why: 'site, enlarged, life-safety or other special plan' };

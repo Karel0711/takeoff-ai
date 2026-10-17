@@ -179,7 +179,7 @@ describe('ceilings by type on a reflected ceiling plan', () => {
 
   it('names the types from the table', () => {
     const names = read.areas.map((a) => ceilingTypeFor(a, read, 'new', false).name).sort();
-    expect(names).toEqual(['Ceiling – lay-in grid (untagged)', 'c1 – New Suspended Lay-in-Panel (LAP) Ceilings', 'cx3 – Existing Gypsum Board on Existing Structure']);
+    expect(names).toEqual(['Ceiling – ACT, acoustic tile in a lay-in grid (untagged)', 'c1 – New Suspended Lay-in-Panel (LAP) Ceilings', 'cx3 – Existing Gypsum Board on Existing Structure']);
     const c1 = ceilingTypeFor(of('c1')[0], read, 'new', false);
     expect(c1.items.map((i) => i.name)).toContain('Tiles 2×4 + 5%');
     const cx3 = ceilingTypeFor(of('cx3')[0], read, 'demo', false);
@@ -187,8 +187,8 @@ describe('ceilings by type on a reflected ceiling plan', () => {
     expect(cx3.division).toBe('02 Existing Conditions');
   });
 
-  it('reads a plan with no type tags as before: the areas its grid covers', () => {
-    const plain = segs.filter((s) => !s.width || s.width !== 0.4);
+  it('reads a plan with no type tags, no legend and only a grid drawn as before: the areas its grid covers', () => {
+    const plain = segs.filter((s) => s.width !== 0.4 && s.width !== 0.1);
     const r = readCeilingSheet(plain, [], sheet);
     expect(r.tagged).toBe(false);
     expect(r.areas.length).toBe(findGridHatch(plain, 0.03)?.regions.length ?? 0);

@@ -77,7 +77,23 @@ function groupItems(items: { code: string | null; label: string; qty: number; un
 }
 
 /** How a key line and a tool line were paired. */
-export type MatchHow = 'code' | 'code (x moved)' | 'code (existing x ignored)' | 'description' | 'category total';
+export type MatchHow = 'code' | 'code (x moved)' | 'code (existing x ignored)' | 'description' | 'ceiling material' | 'category total';
+
+/**
+ * The ceiling material a line names, in any of the words estimators and architects use for
+ * it (GWB, gyp, gypsum board, drywall; ACT, acoustic tile, lay-in, T-bar, SAT; ...), what
+ * follows "c/w" or "complete with" (its framing) left out. Null when it names none or several.
+ */
+export function ceilingMaterial(label: string): string | null {
+  const head = label.split(/\b(?:c\/w|complete with|w\/)\b/i)[0];
+  const found = [
+    /\b(gyp(sum)?|gwb|gb|drywall|wallboard|plasterboard)\b/i.test(head) && 'gypsum',
+    /\b(act-?\d*|acoustic(al)?|acoustuc|lay-?in|t-?bar|sat\d*|ceiling tiles?)\b/i.test(head) && 'acoustic tile',
+    /\b(wood|cedar|plywood|slat|plank)\b/i.test(head) && 'wood',
+    /\bmetal\b/i.test(head) && 'metal',
+  ].filter(Boolean) as string[];
+  return found.length === 1 ? found[0] : null;
+}
 
 export interface ItemScore {
   category: Category;
@@ -168,6 +184,22 @@ function pair(keys: Group[], got: Group[], category: Category, named = true): { 
       }
     }
     for (const c of cands.sort((a, b) => b.s - a.s)) if (!out.has(c.k) && !used.has(c.g)) take(c.k, c.g, 'description');
+  }
+  // Ceilings the key names by material alone ("GWB Ceiling", "ACT 610x1220"): the tool's
+  // untyped lines of that material together (the areas it typed by what is drawn in them),
+  // when the key has one such line for the material.
+  if (named && category === 'ceiling') {
+    for (const k of keys) {
+      if (out.has(k) || k.code) continue;
+      const m = ceilingMaterial(k.label);
+      if (!m || keys.some((o) => o !== k && !out.has(o) && !o.code && ceilingMaterial(o.label) === m)) continue;
+      const gs = got.filter((g) => !used.has(g) && !g.code && ceilingMaterial(g.label) === m);
+      if (!gs.length) continue;
+      const dims = new Set(gs.map((g) => g.dim));
+      const total: Group = { key: `material:${m}`, code: null, label: gs.map((g) => g.label).join(' + '), dim: dims.size === 1 ? gs[0].dim : null, qty: gs.reduce((n, g) => n + g.qty, 0), sheets: [] };
+      out.set(k, { g: total, how: 'ceiling material' });
+      for (const g of gs) used.add(g);
+    }
   }
   // Doors and windows the key gives as uncoded counts ("Doors 110 EA", "HM doors 33 EA" + "WSC doors
   // 28 EA"): those lines together against every tool line of the category not paired by code.
