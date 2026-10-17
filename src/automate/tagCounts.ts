@@ -267,9 +267,13 @@ export function countWindowTags(sheets: TagSheet[], setTypes: SetTypes = setType
   const kept: Hit[] = [];
   for (const [k, list] of groups) {
     const codes = [...new Set(list.map((h) => as(h.t.code)))];
-    const say = codes.filter((c) => windowCodes.has(c)).length - codes.filter((c) => !windowCodes.has(c) && (wallCodes.has(c) || itemCodes.has(c))).length;
+    const win = codes.filter((c) => windowCodes.has(c)).length;
+    const other = codes.filter((c) => !windowCodes.has(c) && (wallCodes.has(c) || itemCodes.has(c))).length;
     // Nothing said either way: W tags in boxes and diamonds are taken as the wall types.
-    if (say < 0 || (say === 0 && /^W\|(box|diamond)$/.test(k))) continue;
+    if (!win && !other && /^W\|(box|diamond)$/.test(k)) continue;
+    // The set's wall types (or items) drawn this way: walls. A few of many codes sharing a wall
+    // type's code (windows W1 to W22 on a set with walls W1, W2, W3) do not make them walls.
+    if (other > win && other * 2 >= codes.length) continue;
     kept.push(...list);
   }
   const counts = new Map<string, TagCount>();

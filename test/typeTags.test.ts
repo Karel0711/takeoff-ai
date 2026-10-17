@@ -119,6 +119,18 @@ describe('counting by type tag', () => {
     ]);
   });
 
+  it('counts windows numbered W1 to W8 though the set also lists wall types W1 and W2', () => {
+    const walls = sheet('a0', 'A0.1', 'WALL TYPES', [...row('W1', 'GYPSUM BOARD ON STEEL STUDS', 100), ...row('W2', 'GYPSUM BOARD ON STEEL STUDS', 120), ...row('W3', 'CONCRETE BLOCK', 140)]);
+    const codes = ['W1', 'W2', 'W3', 'W4', 'W5', 'W6', 'W7', 'W8'];
+    const elevTexts = codes.map((c, i) => text(c, 300 + 150 * i, 300));
+    const elev = sheet('a3', 'A3.1', 'BUILDING ELEVATIONS', elevTexts, findEnclosedTags(elevTexts, codes.flatMap((_, i) => polygon(300 + 150 * i, 300, 6))));
+    expect(countWindowTags([walls, elev]).map((c) => c.code)).toEqual(codes);
+    // Only the listed wall types drawn this way: walls.
+    const few = elevTexts.slice(0, 3);
+    const elev2 = sheet('a3', 'A3.1', 'BUILDING ELEVATIONS', few, findEnclosedTags(few, [0, 1, 2].flatMap((i) => polygon(300 + 150 * i, 300, 6))));
+    expect(countWindowTags([walls, elev2])).toEqual([]);
+  });
+
   it('counts a window type no plan tags on the building elevations', () => {
     const planTexts = [text('W1', 300, 300)];
     const plan = sheet('a2', 'A2.1', 'GROUND FLOOR PLAN', planTexts, findEnclosedTags(planTexts, polygon(300, 300, 6)));
