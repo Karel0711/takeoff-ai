@@ -5,7 +5,7 @@ import type { TakeoffType } from '../src/model';
 
 const room = (number: string, name: string, area: number): FoundRoom =>
   ({ labels: [{ number, name, at: [0, 0] }], points: [[0, 0], [1, 0], [1, 1]], area }) as unknown as FoundRoom;
-const type = (name: string, kind: TakeoffType['kind'] = 'length') => ({ id: name, name, kind }) as TakeoffType;
+const type = (name: string, kind: TakeoffType['kind'] = 'linear') => ({ id: name, name, kind }) as TakeoffType;
 
 describe('rooms that are likely not rooms', () => {
   const codes = notRoomCodes([type('W4'), type('EX1 – Exterior wall'), type('Rooms', 'area'), type('Doors', 'count')], { wall: ['W-12'], other: ['C1'] });

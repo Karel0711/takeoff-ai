@@ -43,11 +43,93 @@ export function lighterPens(stats: PenStats[], chosen: string[]): string[] {
 }
 
 /**
+ * Lines by direction (bins of π/64 centred on the right angles) and, within a direction, by
+ * where their start crosses its normal: the lines running about a line's way a given distance
+ * to one side of it, without looking at every line of the sheet.
+ */
+class ParallelIndex {
+  private static BINS = 64;
+  private bins = new Map<number, { rho: Float64Array; idx: Int32Array }>();
+  private t: Float64Array;
+  private bin: Int32Array;
+  private reach: number;
+  constructor(
+    private lines: Segment[],
+    lens: number[],
+  ) {
+    const n = ParallelIndex.BINS;
+    const w = Math.PI / n;
+    this.t = new Float64Array(lines.length);
+    this.bin = new Int32Array(lines.length);
+    const raw = new Map<number, number[]>();
+    let [x0, y0, x1, y1] = [Infinity, Infinity, -Infinity, -Infinity];
+    lines.forEach((s, i) => {
+      x0 = Math.min(x0, s.x1);
+      y0 = Math.min(y0, s.y1);
+      x1 = Math.max(x1, s.x1);
+      y1 = Math.max(y1, s.y1);
+      if (!(lens[i] > 0)) return;
+      let t = Math.atan2((s.y2 - s.y1) / lens[i], (s.x2 - s.x1) / lens[i]);
+      if (t < 0) t += Math.PI;
+      if (t >= Math.PI) t -= Math.PI;
+      const b = Math.round(t / w) % n;
+      this.t[i] = t;
+      this.bin[i] = b;
+      // Found from its own bin and the two beside it (2° either way can cross into one).
+      for (const q of new Set([b, (b + 1) % n, (b + n - 1) % n])) {
+        const list = raw.get(q);
+        if (list) list.push(i);
+        else raw.set(q, [i]);
+      }
+    });
+    // The farthest two starts can be apart.
+    this.reach = Number.isFinite(x0) ? Math.hypot(x1 - x0, y1 - y0) : 0;
+    for (const [q, ids] of raw) {
+      const [nx, ny] = [-Math.sin(q * w), Math.cos(q * w)];
+      const rho = ids.map((i) => lines[i].x1 * nx + lines[i].y1 * ny);
+      const order = ids.map((_, m) => m).sort((a, b) => rho[a] - rho[b]);
+      this.bins.set(q, { rho: Float64Array.from(order, (m) => rho[m]), idx: Int32Array.from(order, (m) => ids[m]) });
+    }
+  }
+  /** Indices (ascending) of lines that may run within 2° of line `of` with their start `lo` to `hi` to its left (along its normal): every such line, and others. */
+  near(of: number, lo: number, hi: number): number[] {
+    const a = this.lines[of];
+    const w = Math.PI / ParallelIndex.BINS;
+    const q = this.bin[of];
+    const entry = this.bins.get(q);
+    if (!entry) return [];
+    // The bin's normal is turned from the line's by up to half a bin: offsets across the sheet differ by up to its reach times that.
+    const dt = Math.abs(this.t[of] - q * w);
+    const slack = this.reach * Math.min(dt, Math.PI - dt) * 1.001 + 1e-6 * (1 + this.reach);
+    const [nx, ny] = [-Math.sin(q * w), Math.cos(q * w)];
+    const rho = a.x1 * nx + a.y1 * ny;
+    // The line's normal may point either way along the bin's.
+    const out: number[] = [];
+    for (const [from, to] of [
+      [rho + lo - slack, rho + hi + slack],
+      [rho - hi - slack, rho - lo + slack],
+    ]) {
+      let l = 0;
+      let h = entry.rho.length;
+      while (l < h) {
+        const m = (l + h) >> 1;
+        if (entry.rho[m] < from) l = m + 1;
+        else h = m;
+      }
+      for (let m = l; m < entry.rho.length && entry.rho[m] <= to; m++) out.push(entry.idx[m]);
+    }
+    return [...new Set(out)].sort((x, y) => x - y);
+  }
+}
+
+/**
  * Pairs the bridges on the two faces of one opening into the strip between them,
  * so Shift+click can join the spaces either side of it.
  */
 export function openingStrips(bridges: Segment[], maxThickness: number): Pt[][] {
   const out: Pt[][] = [];
+  const lens = bridges.map((b) => Math.hypot(b.x2 - b.x1, b.y2 - b.y1));
+  const facing = new ParallelIndex(bridges, lens);
   for (let i = 0; i < bridges.length; i++) {
     const a = bridges[i];
     const La = Math.hypot(a.x2 - a.x1, a.y2 - a.y1);
@@ -55,10 +137,10 @@ export function openingStrips(bridges: Segment[], maxThickness: number): Pt[][] 
     const ux = (a.x2 - a.x1) / La;
     const uy = (a.y2 - a.y1) / La;
     let best: { d: number; t1: number; t2: number; b: Segment } | null = null;
-    for (let j = 0; j < bridges.length; j++) {
+    for (const j of facing.near(i, 0.2, maxThickness)) {
       const b = bridges[j];
       if (j === i) continue;
-      const Lb = Math.hypot(b.x2 - b.x1, b.y2 - b.y1);
+      const Lb = lens[j];
       if (Lb < 0.5 || Math.abs(ux * (b.y2 - b.y1) - uy * (b.x2 - b.x1)) / Lb > 0.035) continue;
       const d = (b.x1 - a.x1) * -uy + (b.y1 - a.y1) * ux;
       if (d <= 0.2 || d > maxThickness) continue; // one side only, so each strip is made once

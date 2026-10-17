@@ -355,6 +355,7 @@ export async function runJob(
               );
           }
           if (r.apply) done.push(s.name);
+          page.cleanup();
         } catch (e) {
           errors.push({ sheet: s.name, tool: kind, error: errText(e) });
           note(
