@@ -860,6 +860,35 @@ export function App() {
     if (dir) await desktopApi.revealProject(dir);
   }
 
+  /**
+   * Switches a project between metric and imperial at any point. Takeoffs are kept in sheet
+   * points, so every quantity converts by itself; type heights and sizes are converted here.
+   * Numbers typed into material formulas (a stud spacing of 0.61) are left for the user to check.
+   */
+  async function switchUnits(units: Units) {
+    const p = projectRef.current;
+    if (!p || p.units === units) return;
+    const hasFormulaNumbers = p.types.some((t) => t.items.some((i) => /\d*\.\d+|\b\d{2,}\b/.test(i.formula)));
+    if (p.types.length || p.measurements.length) {
+      const ok = await askConfirm(
+        `Switch this project to ${units === 'metric' ? 'metric (m, m²)' : 'imperial (ft, SF)'}? Quantities and type heights convert automatically.${hasFormulaNumbers ? ' Numbers typed into material formulas (like a stud spacing) stay as they are, so check those.' : ''}`,
+        { confirmLabel: 'Switch units' },
+      );
+      if (!ok) return;
+    }
+    const f = units === 'imperial' ? 1 / 0.3048 : 0.3048;
+    const conv = (v: number | undefined) => (v === undefined ? v : Math.round(v * f * 1000) / 1000);
+    commit(
+      (q) => ({
+        ...q,
+        units,
+        types: q.types.map((t) => ({ ...t, height: conv(t.height) ?? 0, width: conv(t.width), depth: conv(t.depth), thickness: conv(t.thickness) })),
+      }),
+      'Units',
+    );
+    setToast({ text: `Project now in ${units}`, undo: true });
+  }
+
   async function startNewProject(units: Units) {
     const name = await askText('New project', {
       initial: '',
@@ -2971,9 +3000,10 @@ export function App() {
               setPopover(null);
               void switchProject(id);
             }}
-            onNew={(units) => {
+            onNew={() => {
               setPopover(null);
-              void startNewProject(units);
+              // Same units as the project open now; they can be switched any time (More menu).
+              void startNewProject(project.units);
             }}
             onDelete={(id) => void removeProject(id)}
             onDuplicate={() => {
@@ -3177,6 +3207,11 @@ export function App() {
                 : []),
               ...(canUseServiceWorker() && !isInstalled() ? [{ label: 'Install as an app…', onSelect: () => void installApp() }] : []),
               ...(isHosted ? [] : [{ label: 'AI settings…', onSelect: () => setAiDialog('settings') }]),
+              {
+                label: project.units === 'metric' ? 'Switch to imperial (ft, SF)…' : 'Switch to metric (m, m²)…',
+                hint: `Now ${project.units}`,
+                onSelect: () => void switchUnits(project.units === 'metric' ? 'imperial' : 'metric'),
+              },
               ...(desktopApi
                 ? syncFolder
                   ? [

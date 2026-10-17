@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react';
-import type { Units } from '../model';
 import { listProjects, storageEstimate, type ProjectSummary } from '../storage';
 import { Icon } from './Icons';
 
@@ -9,7 +8,7 @@ interface Props {
   /** Desktop app: the shared projects folder, e.g. "iCloud Drive › Takeoff AI". */
   folder?: string;
   onOpen: (id: string) => void;
-  onNew: (units: Units) => void;
+  onNew: () => void;
   onDelete: (id: string) => void;
   /** Copies the open project, drawings included, and opens the copy. */
   onDuplicate: () => void;
@@ -75,11 +74,8 @@ export function ProjectsPanel({ currentId, persisted, folder, onOpen, onNew, onD
       </ul>
       <div className="pop-section">
         <div className="button-row">
-          <button onClick={() => onNew('metric')}>
-            <Icon name="plus" size={14} /> New metric
-          </button>
-          <button onClick={() => onNew('imperial')}>
-            <Icon name="plus" size={14} /> New imperial
+          <button className="on" onClick={onNew}>
+            <Icon name="plus" size={14} /> New project
           </button>
         </div>
         <div className="button-row">
