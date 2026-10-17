@@ -74,25 +74,36 @@ export function findWallRuns(lines: Segment[], tmin: number, tmax: number, step 
   const segs = lines.filter((s) => Math.hypot(s.x2 - s.x1, s.y2 - s.y1) >= 0.5);
   const index = new SegmentIndex(segs);
   const pieces: Piece[] = [];
-  // A ray's hit may lie up to 1% of a line's length past its end: lines that far round the ray are looked at.
-  let longest = 0;
-  for (const s of segs) longest = Math.max(longest, Math.hypot(s.x2 - s.x1, s.y2 - s.y1));
-  const margin = longest * 0.0101 + 1;
-  /** Each line's place in the current line's `near` (-1: not in it). */
-  const rank = new Int32Array(segs.length).fill(-1);
+  // A ray's hit may lie up to 1% of a line's length past its end: the lines, so lengthened, by the
+  // cells they cover (for looking round a ray), and the cells the lines themselves cover (16 pt,
+  // as `index`), which say whether and where a line comes in `index.query`'s answer.
+  const ext = segs.map((s) => {
+    const k = 0.0101;
+    const [dx, dy] = [(s.x2 - s.x1) * k, (s.y2 - s.y1) * k];
+    return { ...s, x1: s.x1 - dx, y1: s.y1 - dy, x2: s.x2 + dx, y2: s.y2 + dy };
+  });
+  const around = new SegmentIndex(ext, 16);
+  const cellOf = (v: number) => Math.floor(v / 16);
+  const rx0 = Int32Array.from(segs, (s) => cellOf(Math.min(s.x1, s.x2)));
+  const ry0 = Int32Array.from(segs, (s) => cellOf(Math.min(s.y1, s.y2)));
+  const rx1 = Int32Array.from(segs, (s) => cellOf(Math.max(s.x1, s.x2)));
+  const ry1 = Int32Array.from(segs, (s) => cellOf(Math.max(s.y1, s.y2)));
 
   segs.forEach((a, ai) => {
     const La = Math.hypot(a.x2 - a.x1, a.y2 - a.y1);
     const ux = (a.x2 - a.x1) / La;
     const uy = (a.y2 - a.y1) / La;
     const n = Math.max(1, Math.round(La / step));
-    const near = index.query(
-      Math.min(a.x1, a.x2) - tmax - 1,
-      Math.min(a.y1, a.y2) - tmax - 1,
-      Math.max(a.x1, a.x2) + tmax + 1,
-      Math.max(a.y1, a.y2) + tmax + 1,
-    );
-    near.forEach((bi, r) => (rank[bi] = r));
+    const box = [Math.min(a.x1, a.x2) - tmax - 1, Math.min(a.y1, a.y2) - tmax - 1, Math.max(a.x1, a.x2) + tmax + 1, Math.max(a.y1, a.y2) + tmax + 1];
+    const [ax0, ay0, ax1, ay1] = box.map(cellOf);
+    // A short line: every line near it, as `index.query` lists them. A long one (on a busy sheet
+    // thousands of lines are near it): per ray, the lines round the ray's first tmax that that
+    // list has, in its order (by the first of its cells they cover, then as drawn).
+    const few = (ax1 - ax0 + 1) * (ay1 - ay0 + 1) <= 12;
+    const near = few ? index.query(box[0], box[1], box[2], box[3]) : [];
+    const inNear = (b: number) => rx1[b] >= ax0 && rx0[b] <= ax1 && ry1[b] >= ay0 && ry0[b] <= ay1;
+    const firstX = (b: number) => Math.max(rx0[b], ax0);
+    const firstY = (b: number) => Math.max(ry0[b], ay0);
     for (const side of [1, -1]) {
       const nx = -uy * side;
       const ny = ux * side;
@@ -106,15 +117,13 @@ export function findWallRuns(lines: Segment[], tmin: number, tmax: number, step 
         let bestIdx = -1;
         // Only a hit up to tmax away counts (a nearer one past it leaves the sample without a face):
         // the lines of `near` round the ray's first tmax, in `near`'s order (the first of equal hits wins).
-        // (Worth it only round a line with many lines near it.)
         const [ex, ey] = [px + nx * tmax, py + ny * tmax];
-        const along =
-          near.length <= 64
-            ? near
-            : index
-                .query(Math.min(px, ex) - margin, Math.min(py, ey) - margin, Math.max(px, ex) + margin, Math.max(py, ey) + margin)
-                .filter((bi) => rank[bi] >= 0)
-                .sort((p, q) => rank[p] - rank[q]);
+        const along = few
+          ? near
+          : around
+              .query(Math.min(px, ex) - 1, Math.min(py, ey) - 1, Math.max(px, ex) + 1, Math.max(py, ey) + 1)
+              .filter(inNear)
+              .sort((p, q) => firstX(p) - firstX(q) || firstY(p) - firstY(q) || p - q);
         for (const bi of along) {
           if (bi === ai) continue;
           const b = segs[bi];
@@ -159,7 +168,6 @@ export function findWallRuns(lines: Segment[], tmin: number, tmax: number, step 
         i = j;
       }
     }
-    for (const bi of near) rank[bi] = -1;
   });
   return mergePieces(pieces);
 }
