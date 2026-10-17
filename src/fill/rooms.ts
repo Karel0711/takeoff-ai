@@ -302,6 +302,11 @@ export function findDoorTags(texts: PageText[], segs: Segment[]): DoorTag[] {
       // Ovals and circles come as many chords, hexagons as six sides; rectangles (drawn
       // single or double) are rooms.
       if (loop.length < 5 || loop.every((s) => Math.abs(s.x1 - s.x2) < 0.2 || Math.abs(s.y1 - s.y2) < 0.2)) continue;
+      // A detail or section callout holds a second number (1 over A601): a door tag holds its number alone.
+      const xs = loop.flatMap((s) => [s.x1, s.x2]);
+      const ys = loop.flatMap((s) => [s.y1, s.y2]);
+      const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
+      if (texts.some((o) => o !== t && o.str.trim() && o.cx > x0 && o.cx < x1 && o.cy > y0 && o.cy < y1)) break;
       seen.add(t.str);
       out.push({ number: t.str, at: [t.cx, t.cy] });
       break;

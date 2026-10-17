@@ -6,7 +6,7 @@
  *   Every job: npx vitest run -c bench/vitest.config.ts bench/run.test.ts
  *   Score only (no re-run): npx vitest run -c bench/vitest.config.ts bench/score.test.ts
  *
- * TOOLS=walls,rooms,doors,finishes,ceilings,symbols,sprinklers runs only those (Count symbols
+ * TOOLS=walls,rooms,doors,windows,finishes,ceilings,symbols,sprinklers runs only those (Count symbols
  * is the slow one: minutes on a big set).
  *
  * A job is a folder of drawing PDFs with an optional key.json, in BENCH (default

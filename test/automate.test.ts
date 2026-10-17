@@ -51,7 +51,7 @@ describe('automations on the sample plan', () => {
     expect(total(p, /^Rooms$/)).toBeCloseTo(186, 0);
 
     const doors = doorTakeoff(p, await findDoorTagsIn(p, access, plan, true), plan, true);
-    expect(doors.message).toBe('Counted 5 Doors on 1 sheet');
+    expect(doors.message).toBe('Counted 5 doors on 1 sheet');
     p = doors.apply!(p);
 
     const read = await readFinishes(p, finishRooms(p), access, p.types);

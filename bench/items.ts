@@ -80,6 +80,7 @@ export function resultItems(p: Project, toolOfType: Map<string, string>): Result
     if (tool === 'walls') category = 'wall';
     // Opening tags lettered W (W144) are windows.
     else if (tool === 'doors') category = /^W – /.test(t.name) ? 'window' : 'door';
+    else if (tool === 'windows') category = 'window';
     else if (tool === 'symbols') category = /\bwindow\b/i.test(t.name) ? 'window' : /\bdoor\b/i.test(t.name) ? 'door' : 'symbol';
     else if (tool === 'ceilings') category = /demolish/i.test(t.name) ? 'other' : 'ceiling';
     else if (tool === 'sprinklers') category = t.kind === 'count' && /head/i.test(t.name) ? 'symbol' : 'other';
