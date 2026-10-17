@@ -20,6 +20,8 @@ export interface Segment {
   curve?: boolean;
   /** Its ink, as #rrggbb: the stroke colour of a line, the fill colour of a fill. */
   color?: string;
+  /** Stroked with a dash pattern (a hidden or overhead line). */
+  dashed?: boolean;
 }
 
 type Matrix = [number, number, number, number, number, number];
@@ -57,30 +59,31 @@ export function extractSegments(fnArray: ArrayLike<number>, argsArray: ArrayLike
   let lineWidth = 1;
   let stroke = '#000000';
   let fill = '#000000';
-  const stack: { ctm: Matrix; lineWidth: number; stroke: string; fill: string }[] = [];
+  let dashed = false;
+  const stack: { ctm: Matrix; lineWidth: number; stroke: string; fill: string; dashed: boolean }[] = [];
 
   for (let i = 0; i < fnArray.length; i++) {
     const fn = fnArray[i];
     const args = argsArray[i] as unknown[];
     switch (fn) {
       case OPS.save:
-        stack.push({ ctm, lineWidth, stroke, fill });
+        stack.push({ ctm, lineWidth, stroke, fill, dashed });
         break;
       case OPS.restore: {
         const s = stack.pop();
-        if (s) ({ ctm, lineWidth, stroke, fill } = s);
+        if (s) ({ ctm, lineWidth, stroke, fill, dashed } = s);
         break;
       }
       case OPS.transform:
         ctm = multiply(ctm, args as Matrix);
         break;
       case OPS.paintFormXObjectBegin:
-        stack.push({ ctm, lineWidth, stroke, fill });
+        stack.push({ ctm, lineWidth, stroke, fill, dashed });
         if (Array.isArray(args[0])) ctm = multiply(ctm, args[0] as Matrix);
         break;
       case OPS.paintFormXObjectEnd: {
         const s = stack.pop();
-        if (s) ({ ctm, lineWidth, stroke, fill } = s);
+        if (s) ({ ctm, lineWidth, stroke, fill, dashed } = s);
         break;
       }
       case OPS.setStrokeRGBColor:
@@ -89,11 +92,17 @@ export function extractSegments(fnArray: ArrayLike<number>, argsArray: ArrayLike
       case OPS.setFillRGBColor:
         if (typeof args[0] === 'string') fill = args[0];
         break;
+      case OPS.setDash:
+        dashed = Array.isArray(args[0]) && (args[0] as number[]).some((v) => v > 0);
+        break;
       case OPS.setLineWidth:
         lineWidth = args[0] as number;
         break;
       case OPS.setGState:
-        for (const [key, value] of (args[0] as [string, unknown][]) ?? []) if (key === 'LW') lineWidth = value as number;
+        for (const [key, value] of (args[0] as [string, unknown][]) ?? []) {
+          if (key === 'LW') lineWidth = value as number;
+          if (key === 'D' && Array.isArray(value)) dashed = Array.isArray(value[0]) && (value[0] as number[]).some((v) => v > 0);
+        }
         break;
       case OPS.constructPath: {
         const paint = args[0] as number;
@@ -103,7 +112,9 @@ export function extractSegments(fnArray: ArrayLike<number>, argsArray: ArrayLike
         const data = (args[1] as unknown[])?.[0];
         if (!data || typeof (data as ArrayLike<number>).length !== 'number') break;
         const width = stroked ? lineWidth * Math.sqrt(Math.abs(ctm[0] * ctm[3] - ctm[1] * ctm[2])) : 0;
+        const start = out.length;
         addPath(data as ArrayLike<number>, ctm, width, filled, out, counter, stroked ? stroke : fill);
+        if (stroked && dashed) for (let k = start; k < out.length; k++) out[k].dashed = true;
         break;
       }
     }

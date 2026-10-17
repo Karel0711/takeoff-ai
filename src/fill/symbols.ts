@@ -18,7 +18,13 @@ type Line = {
   width: number;
   /** Which drawn shape of the sample the line is part of. */
   group?: number;
+  /** Part of a filled shape. */
+  filled?: boolean;
+  /** Drawn with a dash pattern. */
+  dashed?: boolean;
 };
+/** A line of a symbol sample, about the symbol's centre. */
+export type SymbolLine = Line;
 
 const len = (s: Line) => Math.hypot(s.x2 - s.x1, s.y2 - s.y1);
 
@@ -136,7 +142,7 @@ export function sampleSymbol(segs: Segment[], box: [number, number, number, numb
   const groups = shapesOf(lines);
   const span = Math.max(x1 - x0, y1 - y0, bx1 - bx0, by1 - by0);
   return {
-    lines: lines.map((s, i) => ({ x1: s.x1 - cx, y1: s.y1 - cy, x2: s.x2 - cx, y2: s.y2 - cy, width: s.width, group: groups[i] })),
+    lines: lines.map((s, i) => ({ x1: s.x1 - cx, y1: s.y1 - cy, x2: s.x2 - cx, y2: s.y2 - cy, width: s.width, group: groups[i], ...(s.filled ? { filled: true } : {}), ...(s.dashed ? { dashed: true } : {}) })),
     span,
     origin: [cx, cy],
     ink: inkAt(new Index(segs, Math.max(4, span / 2)), cx, cy, Math.max(0.5, (bx1 - bx0) / 2), Math.max(0.5, (by1 - by0) / 2)),
