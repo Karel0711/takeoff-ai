@@ -74,6 +74,11 @@ export function readLegend(texts: PageText[], segs: Segment[], box: Box): Legend
   return rows;
 }
 
+/** The legend's rows and their graphics, without looking for the symbols on the sheet. */
+export function readLegendRows(texts: PageText[], segs: Segment[], box: Box): LegendRow[] {
+  return legendRows(texts, segs, box);
+}
+
 /**
  * The same, yielding between symbols so a big sheet does not freeze the page:
  * each symbol is matched against the whole sheet.
