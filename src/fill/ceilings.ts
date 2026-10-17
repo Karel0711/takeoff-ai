@@ -10,6 +10,7 @@ import { drawSegments, makeGrid, simplify, traceBoundary } from './raster';
 import { snapToLines } from './roomFill';
 import { findRoomLabels } from './rooms';
 import type { Segment } from './vectors';
+import { findRoot, maxOf, minOf } from '../arrays';
 
 /**
  * Ceilings by ceiling type, read off a reflected ceiling plan the way an estimator reads one:
@@ -345,7 +346,7 @@ export function hatchFamilies(segs: Segment[], minSpacing: number, maxSpacing = 
       while (hi + 1 < gaps.length && gaps[hi + 1] <= gaps[i] * 1.07) hi++;
       support.push([gaps[i], hi - lo + 1]);
     }
-    const top = Math.max(...support.map((x) => x[1]));
+    const top = maxOf(support.map((x) => x[1]));
     const chosen: number[] = [];
     for (const [g2, c] of [...support].sort((x, y) => y[1] - x[1])) {
       if (chosen.length >= 3 || c < Math.max(4, top * 0.35)) break;
@@ -355,7 +356,7 @@ export function hatchFamilies(segs: Segment[], minSpacing: number, maxSpacing = 
     if (!chosen.length) continue;
     // Lines linked at a spacing taken (or a multiple of it, across a light), in runs of three or more.
     const parent = items.map((_, i) => i);
-    const find = (i: number): number => (parent[i] === i ? i : (parent[i] = find(parent[i])));
+    const find = (i: number): number => findRoot(parent, i);
     for (const [i, j, d] of links) if (chosen.some((g2) => Math.abs(d - g2) <= g2 * 0.08)) parent[find(i)] = find(j);
     const size = new Map<number, number>();
     items.forEach((_, i) => size.set(find(i), (size.get(find(i)) ?? 0) + 1));
@@ -1085,7 +1086,7 @@ function snapRing(ring: Pt[], index: SegmentIndex, lines: Segment[], tol: number
   if (ring.length < 3) return ring;
   const xs = ring.map((p) => p[0]);
   const ys = ring.map((p) => p[1]);
-  const near = index.query(Math.min(...xs) - 3, Math.min(...ys) - 3, Math.max(...xs) + 3, Math.max(...ys) + 3).map((i) => lines[i]);
+  const near = index.query(minOf(xs) - 3, minOf(ys) - 3, maxOf(xs) + 3, maxOf(ys) + 3).map((i) => lines[i]);
   const snapped = snapToLines(ring, near, tol);
   // A snap that wrecked the outline (a corner pulled far off) is not used.
   const a0 = Math.abs(ringArea(ring));

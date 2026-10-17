@@ -1,5 +1,6 @@
 import { ceilingLabel, ceilingPlanKind, ceilingTypeFor, mergeDefs, readCeilingDefs, readCeilingSheet, type CeilingDef, type CeilingSheetRead } from '../fill/ceilings';
 import { newId, type Project, type Sheet, type TakeoffType } from '../model';
+import { hasCeilingPlan } from '../sheetKind';
 import { titleBlockBox } from '../titleBlock';
 import { formatQty } from '../units';
 import type { Automation } from './result';
@@ -7,8 +8,12 @@ import { pause, perSheet, PALETTE, type SetAccess } from './set';
 
 const title = (x: Sheet) => `${x.name} ${x.title ?? ''}`;
 
-/** A reflected ceiling plan, by its sheet number and title. */
-export const isCeilingPlan = (x: Sheet) => /REFLECTED CEILING|\bRCP\b|CEILING PLAN/i.test(title(x));
+/**
+ * A reflected ceiling plan, by its sheet number and title, as the set is sorted (`classifySheet`):
+ * "Reflected ceiling plan", "RCP", "Ceiling plan", "Ground floor plan & RCP", an architectural
+ * sheet (not an electrical lighting RCP).
+ */
+export const isCeilingPlan = (x: Sheet) => hasCeilingPlan(x);
 
 /**
  * Ceilings, with nothing marked: on every reflected ceiling plan, each ceiling area by its

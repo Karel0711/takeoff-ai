@@ -4,6 +4,7 @@ import { legendRows, type LegendRow } from './legend';
 import { look, type LookLine } from './symbolLook';
 import { sampleSymbol, type SymbolLine, type SymbolSample } from './symbols';
 import type { Segment } from './vectors';
+import { findRoot } from '../arrays';
 
 /**
  * Count symbols with nothing boxed: the legends on a sheet are found by their headings
@@ -271,7 +272,7 @@ export function closedShape(lines: readonly SymbolLine[]): boolean {
   const count = new Map<number | undefined, number>();
   for (const l of lines) count.set(l.group, (count.get(l.group) ?? 0) + 1);
   const parent = lines.map((_, i) => i);
-  const find = (i: number): number => (parent[i] === i ? i : (parent[i] = find(parent[i])));
+  const find = (i: number): number => findRoot(parent, i);
   const loose = (l: SymbolLine) => l.group === undefined || count.get(l.group) === 1;
   for (let i = 0; i < lines.length; i++)
     for (let j = i + 1; j < lines.length; j++) {

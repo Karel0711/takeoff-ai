@@ -4,6 +4,7 @@ import { marksOf } from './marks';
 import { simplify, traceBoundary } from './raster';
 import { detectWallPens, penStats } from './walls';
 import type { Segment } from './vectors';
+import { maxOf, minOf } from '../arrays';
 
 export interface HatchRegion {
   points: Pt[];
@@ -53,10 +54,10 @@ export function hatchRegionsOf(segs: Segment[], keys: string[], cell: number, op
   const pad = cell * 2;
   const xs = lines.flatMap((m) => [m.line![0], m.line![2]]);
   const ys = lines.flatMap((m) => [m.line![1], m.line![3]]);
-  const x0 = Math.min(...xs) - pad;
-  const y0 = Math.min(...ys) - pad;
-  const w = Math.ceil((Math.max(...xs) + pad - x0) * res);
-  const h = Math.ceil((Math.max(...ys) + pad - y0) * res);
+  const x0 = minOf(xs) - pad;
+  const y0 = minOf(ys) - pad;
+  const w = Math.ceil((maxOf(xs) + pad - x0) * res);
+  const h = Math.ceil((maxOf(ys) + pad - y0) * res);
   const mask = new Uint8Array(w * h);
   for (const m of lines) {
     const [ax, ay, bx, by] = m.line!.map((v, i) => (v - (i % 2 ? y0 : x0)) * res);

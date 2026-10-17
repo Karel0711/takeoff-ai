@@ -1,5 +1,6 @@
 import type { Pt } from '../model';
 import type { Segment } from './vectors';
+import { findRoot } from '../arrays';
 
 export interface SymbolMatch {
   /** Centre of the matched symbol, in sheet points. */
@@ -102,7 +103,7 @@ export interface SymbolSample {
 function shapesOf(lines: Segment[]): number[] {
   if (lines.every((l) => l.sub !== undefined)) return lines.map((l) => l.sub!);
   const parent = lines.map((_, i) => i);
-  const find = (i: number): number => (parent[i] === i ? i : (parent[i] = find(parent[i])));
+  const find = (i: number): number => findRoot(parent, i);
   const near = (ax: number, ay: number, bx: number, by: number) => Math.hypot(ax - bx, ay - by) <= 0.05;
   for (let i = 0; i < lines.length; i++)
     for (let j = i + 1; j < lines.length; j++) {

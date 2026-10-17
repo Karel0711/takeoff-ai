@@ -1,4 +1,5 @@
 import type { Segment } from './vectors';
+import { maxOf, minOf, pushAll } from '../arrays';
 
 const len = (s: Segment) => Math.hypot(s.x2 - s.x1, s.y2 - s.y1);
 
@@ -35,7 +36,10 @@ class Grid {
     const r = Math.ceil(radius / this.size);
     const cx = Math.floor(x / this.size);
     const cy = Math.floor(y / this.size);
-    for (let i = cx - r; i <= cx + r; i++) for (let j = cy - r; j <= cy + r; j++) out.push(...(this.cells.get(`${i},${j}`) ?? []));
+    for (let i = cx - r; i <= cx + r; i++) for (let j = cy - r; j <= cy + r; j++) {
+      const cell = this.cells.get(`${i},${j}`);
+      if (cell) pushAll(out, cell);
+    }
     return out;
   }
 }
@@ -187,8 +191,8 @@ export function wallShapedFills(segs: Segment[], minGap: number, maxGap: number)
   for (const list of bySub.values()) {
     const xs = list.flatMap((s) => [s.x1, s.x2]);
     const ys = list.flatMap((s) => [s.y1, s.y2]);
-    const w = Math.max(...xs) - Math.min(...xs);
-    const h = Math.max(...ys) - Math.min(...ys);
+    const w = maxOf(xs) - minOf(xs);
+    const h = maxOf(ys) - minOf(ys);
     const [narrow, long] = w < h ? [w, h] : [h, w];
     const edge = list.reduce((n, s) => n + len(s), 0);
     all += edge;
@@ -389,7 +393,7 @@ export function symbolShapes(segs: Segment[], maxSize: number): Set<Segment> {
     if (list.some((s, i) => i > 0 && Math.hypot(s.x1 - list[i - 1].x2, s.y1 - list[i - 1].y2) > 0.3)) continue;
     const xs = list.flatMap((s) => [s.x1, s.x2]);
     const ys = list.flatMap((s) => [s.y1, s.y2]);
-    if (Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) > maxSize) continue;
+    if (Math.max(maxOf(xs) - minOf(xs), maxOf(ys) - minOf(ys)) > maxSize) continue;
     const slanted = list.some((s) => Math.min(Math.abs(s.x2 - s.x1), Math.abs(s.y2 - s.y1)) > 0.1 * len(s));
     if (slanted) for (const s of list) out.add(s);
   }

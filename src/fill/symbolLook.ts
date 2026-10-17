@@ -4,6 +4,7 @@
  * matched end to end can miss that a half-filled circle is not a quartered one, or that a fill
  * was cut into other pieces; the picture does not.
  */
+import { findRoot } from '../arrays';
 
 export interface LookLine {
   x1: number;
@@ -154,7 +155,7 @@ interface Part {
  */
 function partsOf(lines: LookLine[]): Part[] {
   const parent = lines.map((_, i) => i);
-  const find = (i: number): number => (parent[i] === i ? i : (parent[i] = find(parent[i])));
+  const find = (i: number): number => findRoot(parent, i);
   const join = (a: number, b: number) => {
     parent[find(a)] = find(b);
   };
