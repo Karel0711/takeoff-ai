@@ -47,6 +47,8 @@ interface Props {
   /** Replaces a measurement's outline (used when Shift+click grows a fill). */
   /** New points; `openings` given for a fill, cleared for a hand edit. */
   onReplacePoints: (id: string, points: Pt[], source?: string, openings?: number) => void;
+  /** A whole takeoff dragged to a new place: its points and cutouts moved together. */
+  onMoveTakeoff: (id: string, points: Pt[], holes: Pt[][]) => void;
   /** The sheet's wall model for Fill, read on first use. */
   getWallModel: () => Promise<WallModel> | null;
   onAddHole: (measurementId: string, ring: Pt[]) => void;
@@ -78,8 +80,10 @@ export function Viewer(props: Props) {
   const [view, setView] = useState<View>({ zoom: 0.3, x: 0, y: 0 });
   const [draft, setDraft] = useState<Pt[]>([]);
   /** A selected takeoff's points while one is being dragged. */
-  const [edit, setEdit] = useState<{ id: string; points: Pt[] } | null>(null);
+  const [edit, setEdit] = useState<{ id: string; points: Pt[]; holes?: Pt[][] } | null>(null);
   const drag = useRef<{ id: string; index: number; insert: boolean; moved: boolean; points: Pt[] } | null>(null);
+  /** A whole takeoff being dragged in Select: where the drag started and its original shape. */
+  const move = useRef<{ id: string; from: Pt; points: Pt[]; holes: Pt[][]; moved: boolean; sx: number; sy: number } | null>(null);
   /** The box being dragged with Count symbols. */
   /** A box being dragged: around a symbol to count, or over takeoffs to select (`add` with Shift). */
   const [band, setBand] = useState<{ a: Pt; b: Pt; select?: boolean; add?: boolean } | null>(null);
@@ -411,6 +415,18 @@ export function Viewer(props: Props) {
   };
 
   const onPointerMove = (e: PointerEvent<SVGSVGElement>) => {
+    const mv = move.current;
+    if (mv) {
+      // A few screen pixels of slack, so a click to select doesn't nudge the takeoff.
+      if (!mv.moved && Math.abs(e.clientX - mv.sx) + Math.abs(e.clientY - mv.sy) < 4) return;
+      mv.moved = true;
+      const { pt } = toPt(e);
+      const dx = pt[0] - mv.from[0];
+      const dy = pt[1] - mv.from[1];
+      const shift = (ring: Pt[]) => ring.map(([x, y]): Pt => [x + dx, y + dy]);
+      setEdit({ id: mv.id, points: shift(mv.points), holes: mv.holes.map(shift) });
+      return;
+    }
     const d = drag.current;
     if (d) {
       const { pt } = toPt(e);
@@ -448,12 +464,27 @@ export function Viewer(props: Props) {
 
   /** A drag the browser took away (touch cancel, window lost focus) is dropped, not saved. */
   const cancelDrag = () => {
+    if (move.current) {
+      move.current = null;
+      setEdit(null);
+      return;
+    }
     if (!drag.current) return;
     drag.current = null;
     setEdit(null);
   };
 
   const onPointerUp = () => {
+    const mv = move.current;
+    if (mv) {
+      move.current = null;
+      if (mv.moved && edit && edit.id === mv.id) {
+        suppressClick.current = true;
+        props.onMoveTakeoff(mv.id, edit.points, edit.holes ?? mv.holes);
+      }
+      setEdit(null);
+      return;
+    }
     const d = drag.current;
     if (d) {
       drag.current = null;
@@ -636,12 +667,21 @@ export function Viewer(props: Props) {
             />
           ))}
           {sheet && measurements.map((shown) => {
-            const m = edit && edit.id === shown.id ? { ...shown, points: edit.points } : shown;
+            const m = edit && edit.id === shown.id ? { ...shown, points: edit.points, holes: edit.holes ?? shown.holes } : shown;
             const type = typeById.get(m.typeId);
             if (!type) return null;
             const isSel = m.id === selectedId || multi.has(m.id);
             const common = {
               className: shapesInteractive ? 'shape interactive' : 'shape',
+              // In Select, press on a takeoff and drag to move the whole thing (corners still
+              // move one at a time from their handles once it is selected).
+              onPointerDown: (e: PointerEvent<SVGElement>) => {
+                if (!shapesInteractive || tool !== 'select' || e.button !== 0 || e.shiftKey || e.altKey || spaceHeld.current) return;
+                e.stopPropagation();
+                const { pt } = toPt(e);
+                move.current = { id: m.id, from: pt, points: shown.points, holes: shown.holes, moved: false, sx: e.clientX, sy: e.clientY };
+                svgRef.current!.setPointerCapture(e.pointerId);
+              },
               onClick: (e: MouseEvent) => {
                 if (!shapesInteractive) return;
                 e.stopPropagation();

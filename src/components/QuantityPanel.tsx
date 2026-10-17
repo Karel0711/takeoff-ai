@@ -28,9 +28,9 @@ interface Props {
 
 const GROUPINGS: [QtyGrouping, string][] = [
   ['type', 'By type'],
-  ['building', 'By building'],
+  ['building', 'By file'],
   ['division', 'By division'],
-  ['building-division', 'Building › division'],
+  ['building-division', 'File › division'],
 ];
 
 /** Project totals per takeoff type, with each assembly item's quantity. */

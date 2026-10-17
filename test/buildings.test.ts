@@ -27,14 +27,14 @@ describe('buildings', () => {
     measurements: [at('1', 's1', 'head'), at('2', 's1', 'head'), at('3', 's2', 'head'), at('4', 's2', 'door'), at('5', 's3', 'misc')],
   } as unknown as Project;
 
-  it('takes a set’s building from the estimator, then the file name; a sheet can differ', () => {
-    expect(project.sheets.map((s) => buildingOf(project, s))).toEqual(['VB06', 'North wing', 'Garage']);
+  it('groups by the label the estimator set, else the file name; a sheet can differ', () => {
+    expect(project.sheets.map((s) => buildingOf(project, s))).toEqual(['VB06 set', 'North wing', 'Garage']);
   });
 
   it('groups quantities by building, then by division', () => {
     const out = quantitySections(project, 'building-division').map((b) => [b.title, b.sections!.map((d) => [d.title, d.totals!.map((t) => `${t.type.id} ${t.vars.N}`)])]);
     expect(out).toEqual([
-      ['VB06', [['21 Fire Suppression', ['head 2']]]],
+      ['VB06 set', [['21 Fire Suppression', ['head 2']]]],
       ['North wing', [['08 Openings', ['door 1']], ['21 Fire Suppression', ['head 1']]]],
       ['Garage', [['No division', ['misc 1']]]],
     ]);

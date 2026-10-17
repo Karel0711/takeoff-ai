@@ -38,7 +38,7 @@ import { compareSheets } from './compareSheets';
 import { pageTexts, type PageText } from './pageText';
 import { readTitleBlock, titleBlockBox } from './titleBlock';
 import { middleOf, roomLocator } from './locate';
-import { buildingOfDoc, buildingsOf, guessBuilding, onBuilding, quantitySections, type QtyGrouping } from './buildings';
+import { buildingOfDoc, buildingsOf, fileLabel, onBuilding, quantitySections, type QtyGrouping } from './buildings';
 import { isHosted, saveFile } from './host';
 import { defaultTypes, newId, newProject, type Kind, type Measurement, type Project, type Pt, type Sheet, type TakeoffType, type Units } from './model';
 import { inspectPage, openPdf, type PDFDocumentProxy, type PDFPageProxy } from './pdf';
@@ -1685,10 +1685,10 @@ export function App() {
   async function setDocBuilding(docId: string) {
     const d = projectRef.current!.docs.find((x) => x.id === docId);
     if (!d) return;
-    const name = await askText('Building', { initial: buildingOfDoc(d), hint: `Quantities can be grouped by building. Read from the file name: ${guessBuilding(d.name)}` });
+    const name = await askText('Label for this file', { initial: buildingOfDoc(d), hint: 'Quantities can be grouped by file. Leave it blank to use the file name.' });
     if (name === null) return;
-    const building = name.trim() && name.trim() !== guessBuilding(d.name) ? name.trim() : undefined;
-    commit((p) => ({ ...p, docs: p.docs.map((x) => (x.id === docId ? { ...x, building } : x)) }), 'Set building');
+    const building = name.trim() && name.trim() !== fileLabel(d.name) ? name.trim() : undefined;
+    commit((p) => ({ ...p, docs: p.docs.map((x) => (x.id === docId ? { ...x, building } : x)) }), 'Label file');
   }
 
   /** Names every sheet from its title block: its sheet number, with the drawing title beside it. */
@@ -2449,12 +2449,12 @@ export function App() {
                             <Icon name="chevron" size={12} />
                           </span>
                           <span className="doc-name">{d.name.replace(/\.pdf$/i, '')}</span>
-                          <span className="doc-building" title="Building these sheets are for">
+                          <span className="doc-building" title="Label these sheets are grouped under">
                             {buildingOfDoc(d)}
                           </span>
                           <span className="doc-count">{done ? `${done}/${all.length}` : all.length}</span>
                         </button>
-                        <button className="icon-button small doc-building-edit" title="Set the building these sheets are for" aria-label={`Set building for ${d.name}`} onClick={() => void setDocBuilding(d.id)}>
+                        <button className="icon-button small doc-building-edit" title="Rename the label this file is grouped under" aria-label={`Label ${d.name}`} onClick={() => void setDocBuilding(d.id)}>
                           <Icon name="edit" size={13} />
                         </button>
                         <button className="icon-button small danger doc-remove" title={`Remove ${d.name} and its takeoffs`} aria-label={`Remove ${d.name}`} onClick={() => void removeDrawings(d.id)}>
@@ -2500,11 +2500,11 @@ export function App() {
                 typeView === 'folders'
                   ? 'Showing your groups · click to show by estimate division'
                   : typeView === 'division'
-                    ? 'Showing by division · click to show by building, then division'
-                    : 'Showing by building, then division · click to show your groups'
+                    ? 'Showing by division · click to show by file, then division'
+                    : 'Showing by file, then division · click to show your groups'
               }
             >
-              {typeView === 'folders' ? 'By group' : typeView === 'division' ? 'By division' : 'By building'}
+              {typeView === 'folders' ? 'By group' : typeView === 'division' ? 'By division' : 'By file'}
             </button>
           </div>
           <ul className="source-list">
@@ -2738,6 +2738,9 @@ export function App() {
           onAdd={addMeasurement}
           onReplacePoints={(id, points, source = 'Fill room', openings) =>
             commit((p) => ({ ...p, measurements: p.measurements.map((m) => (m.id === id ? { ...m, points, openings } : m)) }), source)
+          }
+          onMoveTakeoff={(id, points, holes) =>
+            commit((p) => ({ ...p, measurements: p.measurements.map((m) => (m.id === id ? { ...m, points, holes } : m)) }), 'Move takeoff')
           }
           getWallModel={() => (page && sheet ? wallModelFor(page, sheet, maxOpening) : null)}
           onAddHole={(id, ring) =>
