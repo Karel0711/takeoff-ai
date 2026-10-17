@@ -16,6 +16,8 @@ interface Props {
   page: PDFPageProxy;
   /** The drawing file the sheet is in: its assembly types sheets and legends say which codes are walls. */
   doc?: PDFDocumentProxy;
+  /** The project's other drawing files: their types sheets count too. */
+  others?: PDFDocumentProxy[];
   sheet: Sheet;
   units: Units;
   types: TakeoffType[];
@@ -38,7 +40,7 @@ let wallKey: { name: string; entries: WallKeyEntry[] } | null = null;
 
 type State = { phase: 'running' } | { phase: 'done'; result: WallTakeoffResult; lines: TypeLines[]; ms: number } | { phase: 'error'; message: string };
 
-export function WallTakeoffDialog({ page, doc, sheet, units, types, earlier, palette, legend, maxOpening, onApply, onClose }: Props) {
+export function WallTakeoffDialog({ page, doc, others, sheet, units, types, earlier, palette, legend, maxOpening, onApply, onClose }: Props) {
   const [state, setState] = useState<State>({ phase: 'running' });
   const [choice, setChoice] = useState<Map<string, string>>(new Map());
   const [set, setSet] = useState<SetTypes | undefined>(undefined);
@@ -62,7 +64,7 @@ export function WallTakeoffDialog({ page, doc, sheet, units, types, earlier, pal
     let live = true;
     setState({ phase: 'running' });
     const started = performance.now();
-    readWalls(page, doc, sheet, { maxOpening, throughDoors, stopAt: [...stopAt], known })
+    readWalls(page, doc, sheet, { maxOpening, throughDoors, stopAt: [...stopAt], known, others })
       .then(({ result, lines, setTypes }) => {
         if (!live) return;
         setSet(setTypes);

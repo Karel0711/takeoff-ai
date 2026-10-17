@@ -238,10 +238,27 @@ export function typeLists(texts: PageText[], pageWidth: number, pageHeight = pag
     const [b0, b1] = span(b);
     return Math.max(0, a0 - b1, b0 - a1);
   };
+  const aligned = (a: PageText, b: PageText) => {
+    const tol = Math.max(2, Math.max(a.h, b.h) * 2);
+    return Math.abs(a.cx - b.cx) <= tol || Math.abs(a.cx - a.w / 2 - (b.cx - b.w / 2)) <= tol;
+  };
+  const stepOf = (l: PageText[]) => (l.length > 1 ? (l[l.length - 1].cy - l[0].cy) / (l.length - 1) : 0);
   for (let grew = true; grew; ) {
     grew = false;
     for (const list of lists) {
-      if (headOf.has(list) || list.length < 3) continue;
+      if (headOf.has(list)) continue;
+      // A table column going on below an empty row or two.
+      const above = [...headOf].find(([l]) => {
+        const last = l[l.length - 1];
+        const gap = list[0].cy - last.cy;
+        return aligned(last, list[0]) && gap > 0 && gap <= Math.max(maxStep, 2.5 * stepOf(l)) && !headings.some((h) => h.cy > last.cy && h.cy < list[0].cy && dxOf(h, [last, list[0]]) <= pageWidth * 0.12);
+      });
+      if (above) {
+        headOf.set(list, above[1]);
+        grew = true;
+        continue;
+      }
+      if (list.length < 3) continue;
       const row = Math.max(list[0].h, 4) * 1.5;
       const next = [...headOf]
         .filter(([l, o]) => Math.abs(l[0].cy - list[0].cy) <= row && o.cy < list[0].cy && gapOf(l, list) <= pageWidth * 0.3)
