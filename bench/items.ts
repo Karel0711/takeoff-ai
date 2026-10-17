@@ -19,6 +19,11 @@ export interface ResultItem {
   sheets: string[];
   /** The automation that made it. */
   tool: string;
+  /**
+   * The same takeoff in its other dimension, when it has one: a wall finish is priced by area,
+   * but tile to a height is often taken off as its length along the walls.
+   */
+  alt?: { qty: number; unit: BenchUnit };
 }
 
 const unitFor = (dim: 'L' | 'A' | 'N', units: Units): BenchUnit => (dim === 'N' ? 'EA' : units === 'metric' ? (dim === 'L' ? 'm' : 'm2') : dim === 'L' ? 'LF' : 'SF');
@@ -46,8 +51,9 @@ export function resultItems(p: Project, toolOfType: Map<string, string>): Result
   const groups = new Map<string, ResultItem & { set: Set<string> }>();
   const add = (key: string, item: Omit<ResultItem, 'sheets'>, sheetId: string) => {
     let g = groups.get(key);
-    if (!g) groups.set(key, (g = { ...item, qty: 0, sheets: [], set: new Set() }));
+    if (!g) groups.set(key, (g = { ...item, qty: 0, ...(item.alt ? { alt: { ...item.alt, qty: 0 } } : {}), sheets: [], set: new Set() }));
     g.qty += item.qty;
+    if (g.alt && item.alt) g.alt.qty += item.alt.qty;
     g.set.add(sheetName.get(sheetId) ?? sheetId);
   };
   for (const c of contributions(p)) {
@@ -59,7 +65,8 @@ export function resultItems(p: Project, toolOfType: Map<string, string>): Result
     if (c.role) {
       const category: Category = c.role === 'walls' ? 'wall_finish' : c.role;
       const dim = c.role === 'base' ? 'L' : 'A';
-      add(`fin|${c.role}|${t.id}`, { category, code, name: t.name, qty: dim === 'L' ? c.vars.L : c.vars.A, unit: unitFor(dim, p.units), tool }, c.sheet.id);
+      const alt = c.role === 'walls' ? { qty: c.vars.L, unit: unitFor('L', p.units) } : undefined;
+      add(`fin|${c.role}|${t.id}`, { category, code, name: t.name, qty: dim === 'L' ? c.vars.L : c.vars.A, unit: unitFor(dim, p.units), tool, ...(alt ? { alt } : {}) }, c.sheet.id);
       continue;
     }
     if (c.m.source === 'rooms') {
@@ -78,5 +85,5 @@ export function resultItems(p: Project, toolOfType: Map<string, string>): Result
     else if (tool === 'sprinklers') category = t.kind === 'count' && /head/i.test(t.name) ? 'symbol' : 'other';
     add(`type|${t.id}`, { category, code, name: t.name, qty, unit: unitFor(dim, p.units), tool }, c.sheet.id);
   }
-  return [...groups.values()].map(({ set, ...g }) => ({ ...g, qty: +g.qty.toFixed(3), sheets: [...set].sort() }));
+  return [...groups.values()].map(({ set, ...g }) => ({ ...g, qty: +g.qty.toFixed(3), ...(g.alt ? { alt: { ...g.alt, qty: +g.alt.qty.toFixed(3) } } : {}), sheets: [...set].sort() }));
 }

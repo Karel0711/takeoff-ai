@@ -153,6 +153,12 @@ export interface Measurement {
    * schedule gives it. Its wall finishes run up to it (instead of the wall type's height).
    */
   ceilingHeight?: number;
+  /**
+   * Walls finished more than one way (a schedule with a column per wall: tile on two walls,
+   * paint on two): the share of the room's walls each wall finish type takes, by type id. Used
+   * while it includes `finishes.walls`; a wall finish picked by hand replaces it.
+   */
+  wallShares?: Record<string, number>;
 }
 
 export type FinishRole = 'floor' | 'base' | 'walls' | 'ceiling';

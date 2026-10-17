@@ -59,17 +59,21 @@ interface Group {
   /** Quantity in base units (m, m², ea). */
   qty: number;
   sheets: string[];
+  /** The same lines in their other dimension (a wall finish's length as well as its area), in base units. */
+  alt?: { dim: Dim; qty: number };
 }
 
 /** Lines of one category grouped by code (or description, when there is no code), quantities summed in base units. */
-function groupItems(items: { code: string | null; label: string; qty: number; unit: string; sheets?: string[] }[]): Group[] {
+function groupItems(items: { code: string | null; label: string; qty: number; unit: string; sheets?: string[]; alt?: { qty: number; unit: string } }[]): Group[] {
   const out = new Map<string, Group>();
   for (const it of items) {
     const u = unitInfo(it.unit);
     const key = it.code ? `c:${normCode(it.code)}` : `d:${it.label.toLowerCase().replace(/\s+/g, ' ').trim()}`;
     let g = out.get(key);
-    if (!g) out.set(key, (g = { key, code: it.code, label: it.label, dim: u?.dim ?? null, qty: 0, sheets: [] }));
+    const au = it.alt ? unitInfo(it.alt.unit) : null;
+    if (!g) out.set(key, (g = { key, code: it.code, label: it.label, dim: u?.dim ?? null, qty: 0, sheets: [], ...(au ? { alt: { dim: au.dim, qty: 0 } } : {}) }));
     if (u && g.dim && u.dim !== g.dim) g.dim = null;
+    if (g.alt && it.alt && au && au.dim === g.alt.dim) g.alt.qty += it.alt.qty * au.toBase;
     g.qty += u ? it.qty * u.toBase : it.qty;
     for (const s of it.sheets ?? []) if (!g.sheets.includes(s)) g.sheets.push(s);
   }
@@ -157,13 +161,20 @@ function pair(keys: Group[], got: Group[], category: Category, named = true): { 
       if (hit) take(k, hit, loose ? 'code (existing x ignored)' : 'code (x moved)');
     }
   }
-  if (named && ['symbol', 'door', 'window', 'other', 'ceiling'].includes(category)) {
+  if (named && ['symbol', 'door', 'window', 'other', 'ceiling', 'floor', 'base', 'wall_finish'].includes(category)) {
     const cands: { k: Group; g: Group; s: number }[] = [];
+    // A room finish type is named "<code> – <role>[: what the legend says it is]": its role is no description.
+    const what = (g: Group) => g.label.replace(/\s+–\s+(Floor finish|Base|Wall finish|Ceiling)\b:?/, ' ').trim();
     for (const k of keys) {
       if (out.has(k)) continue;
       for (const g of got) {
         if (used.has(g)) continue;
-        const s = Math.max(similarity(k.label, g.label), k.code && g.label ? similarity(k.code, g.label) : 0);
+        const s = Math.max(
+          similarity(k.label, what(g)),
+          k.code && g.label ? similarity(k.code, what(g)) : 0,
+          // An uncoded line named by its code ("LVT", "RUBBER BASE") against the tool's code.
+          !k.code && g.code ? similarity(k.label, g.code) : 0,
+        );
         if (s >= DESC_MATCH) cands.push({ k, g, s });
       }
     }
@@ -203,19 +214,21 @@ export function scoreJob(job: string, items: ResultItem[], key: KeyItem[] | null
     const keyUnit = (g: Group) => keyLines.find((k) => (k.code ? `c:${normCode(k.code)}` : `d:${k.description.toLowerCase().replace(/\s+/g, ' ').trim()}`) === g.key)!.unit;
     const byTool = tools.map((tool) => {
       const mine = items.filter((i) => i.category === category && i.tool === tool);
-      const got = groupItems(mine.map((i) => ({ code: i.code, label: i.name, qty: i.qty, unit: i.unit, sheets: i.sheets })));
+      const got = groupItems(mine.map((i) => ({ code: i.code, label: i.name, qty: i.qty, unit: i.unit, sheets: i.sheets, alt: i.alt })));
       const { pairs, used } = pair(keyGroups, got, category, tool !== 'doors');
       const lines: ItemScore[] = keyGroups.map((k) => {
         const p = pairs.get(k);
         const unit = keyUnit(k);
         const f = unitInfo(unit)?.toBase ?? 1;
         const want = p?.keyTotal ?? k.qty;
-        const comparable = !!p && !!k.dim && k.dim === p.g.dim && want > 0;
-        const error = comparable ? Math.abs(p!.g.qty - want) / want : null;
+        // In the key's dimension: the tool line's own, or its other one (a wall finish's length).
+        const g = p && p.g.dim !== k.dim && p.g.alt && p.g.alt.dim === k.dim ? { ...p.g, dim: p.g.alt.dim, qty: p.g.alt.qty } : p?.g;
+        const comparable = !!g && !!k.dim && k.dim === g.dim && want > 0;
+        const error = comparable ? Math.abs(g!.qty - want) / want : null;
         return {
           category,
           key: { code: k.code, description: k.label, qty: +(k.qty / f).toFixed(2), unit },
-          got: p ? { code: p.g.code, name: p.g.label, qty: +(p.g.qty / (p.g.dim === k.dim ? f : 1)).toFixed(2), unit: p.g.dim === k.dim ? unit : BASE_UNIT[p.g.dim ?? 'N'], tool } : null,
+          got: g ? { code: g.code, name: g.label, qty: +(g.qty / (g.dim === k.dim ? f : 1)).toFixed(2), unit: g.dim === k.dim ? unit : BASE_UNIT[g.dim ?? 'N'], tool } : null,
           how: p?.how ?? null,
           error: error === null ? null : +error.toFixed(4),
           score: error === null ? 0 : Math.max(0, 1 - error),

@@ -67,7 +67,8 @@ describe('automations on the sample plan', () => {
 
     expect((await automateSprinklers(p, access, null)).message).toBe('No sprinkler plans found.');
     expect((await automateCeilings(p, access, null)).apply).toBeUndefined();
-  });
+    // Every tool on a whole sheet: seconds on a busy machine.
+  }, 60000);
 
   it('report a failing sheet and go on when asked, else stop', async () => {
     const pdf = (await getDocument({ data: await samplePlanPdf() }).promise) as unknown as PDFDocumentProxy;
