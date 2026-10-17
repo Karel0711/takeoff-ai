@@ -89,6 +89,18 @@ Where the project stands, for picking it up in a new session.
   so wall pen detection now keeps every paired pen ≥55% of the heaviest and
   relaxes the paired share to 40% when no pen reaches 50% (the 1.44 pen also
   draws the sheet border).
+- **Automate › Count symbols (no boxing):** `src/fill/autoSymbols.ts` + `src/fill/symbolLook.ts`.
+  Legends are found by heading text ("Legend", "RCP Legend", "Symbols"…), framed or not; each
+  row drawn with a symbol (not a tag with a placeholder like 07/w#/A301, not a "see sheet…"
+  reference, not a hatch swatch of a surface) is matched by eye, not line by line, because
+  legends are drawn apart from the plan's blocks (84 Frederick: surface light 0.6x, heat
+  detector 0.78x, exterior sconces 1.56x, heavier pens): candidates are shapes like the
+  symbol's body, compared on a small raster at 8 turns (white mask fills ignored, filled parts
+  compared on their own, every part must be there both ways, short same-pen lines running out
+  of the footprint count as extra parts). Overlaps go to the bigger drawing (sconce over pot
+  light). A legend's symbols are counted on sheets carrying a legend of that name, and on
+  legend-less sheets at the same scale. A click with the Symbols tool picks the symbol under it
+  (`symbolBoxAt`), counted at block size on every sheet at that scale.
 - **Count symbols:** `src/fill/symbols.ts`. Takes the lines inside the dragged
   box as the sample, picks its rarest long line (by length and pen) as the
   anchor, and at every sheet line matching the anchor (4 quarter turns, both

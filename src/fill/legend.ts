@@ -116,7 +116,7 @@ function anyPen(segs: Segment[]): Segment[] {
   return out;
 }
 
-function legendRows(texts: PageText[], segs: Segment[], box: Box): LegendRow[] {
+export function legendRows(texts: PageText[], segs: Segment[], box: Box): LegendRow[] {
   const [x0, y0, x1, y1] = norm(box);
   const inside = texts.filter((t) => upright(t) && t.cx >= x0 && t.cx <= x1 && t.cy >= y0 && t.cy <= y1 && !/legend/i.test(t.str));
   if (!inside.length) return [];

@@ -52,6 +52,8 @@ import { desktopApi, folderLabel } from './desktop';
 import { FolderSync, type PullResult } from './folderSync';
 import { linesIn, onSheet, readNumber, readTitle, relativeBox, type Box } from './sheetNumbers';
 import { SheetNumbersDialog, type SheetNumberRow } from './components/SheetNumbersDialog';
+import { SymbolCountDialog, type SymbolChoice } from './components/SymbolCountDialog';
+import { countSymbolsInSet, findLegends, legendSymbols, pickSymbol, symbolBoxAt, visibleInk, type SetSheet, type SymbolTally } from './fill/autoSymbols';
 import { formatQty, lengthUnit, parseScale, toLength } from './units';
 
 const PALETTE = ['#0a84ff', '#ff9f0a', '#30d158', '#bf5af2', '#ff375f', '#64d2ff', '#ffd60a', '#ac8e68', '#5e5ce6', '#ff6961'];
@@ -155,8 +157,15 @@ export function App() {
   /** The marked spots, as fractions of the sheet, read on every sheet. */
   const numberBoxes = useRef<{ number?: Box; title?: Box }>({});
   const [sheetNumbers, setSheetNumbers] = useState<{ rows: SheetNumberRow[]; hasTitle: boolean } | null>(null);
+  /** Count symbols: the counts found across the set, shown before they are added. */
+  const [symbolTallies, setSymbolTallies] = useState<SymbolTally[] | null>(null);
+  /** Count symbols: the next click on a symbol counts it on every sheet. */
+  const [symbolPick, setSymbolPick] = useState(false);
   useEffect(() => {
-    if (tool !== 'symbol') setLegendPick(false);
+    if (tool !== 'symbol') {
+      setLegendPick(false);
+      setSymbolPick(false);
+    }
   }, [tool]);
   const [popover, setPopover] = useState<'scale' | 'more' | 'automate' | 'projects' | 'copy' | 'export' | 'newtype' | null>(null);
   const [tab, setTab] = useState<InspectorTab>('quantities');
@@ -1679,6 +1688,128 @@ export function App() {
     }
   }
 
+  /**
+   * Count symbols, with nothing marked: every legend in the set is found and each line drawn with
+   * a symbol counted on the sheets that legend is for (or, given a clicked symbol, that one on
+   * every sheet at its scale). The counts are shown before anything is added.
+   */
+  async function automateSymbols(picked?: { at: Pt; reach: number }) {
+    const p = projectRef.current!;
+    const set: (SetSheet & { sheet: Sheet })[] = p.sheets.filter((x) => !x.superseded).map((x) => ({ id: x.id, name: x.name, width: x.width, height: x.height, sheet: x }));
+    const byId = new Map(set.map((x) => [x.id, x]));
+    const segsOf = async (x: SetSheet) => {
+      const s = byId.get(x.id)!.sheet;
+      const pg = await pdfsRef.current.get(s.docId)?.getPage(s.page);
+      return pg ? (s.id === sheet?.id ? segmentsOf(pg) : segmentsOnce(pg)) : null;
+    };
+    try {
+      setBusy(picked ? 'Looking at this symbol…' : 'Finding legends…');
+      await new Promise((r) => setTimeout(r, 30));
+      let home: (typeof set)[number] | undefined;
+      let symbol = null;
+      if (picked) {
+        home = sheet ? byId.get(sheet.id) : undefined;
+        const segs = home && (await segsOf(home));
+        if (!home || !segs) return;
+        const texts = await sheetTexts(home.sheet);
+        // Named after the legend line it matches, when this sheet has one.
+        const block = titleBlockBox(texts, home.width, home.height);
+        const legends = findLegends(texts, segs, home.width, home.height, block ? [block] : []).flatMap((l) => legendSymbols(l, texts, segs));
+        symbol = pickSymbol(segs, texts, picked.at, legends, 60);
+        if (!symbol) {
+          setToast({ text: 'No symbol there. Click right on its linework.', undo: false });
+          return;
+        }
+      }
+      const tallies = await countSymbolsInSet(
+        set,
+        {
+          texts: (x) => sheetTexts(byId.get(x.id)!.sheet),
+          segments: segsOf,
+          exclude: (x, texts) => {
+            const b = titleBlockBox(texts, x.width, x.height);
+            return b ? [b] : [];
+          },
+          sameScale: async (x, from) => {
+            const a = byId.get(x.id)!.sheet;
+            const b = byId.get(from.id)!.sheet;
+            if (a.metersPerPoint && b.metersPerPoint) return Math.abs(a.metersPerPoint / b.metersPerPoint - 1) <= 0.01;
+            // Unscaled: the scale read from its dimensions, and nothing when there are none to read.
+            const want = b.metersPerPoint;
+            const segs = await segsOf(x);
+            const read = segs ? checkScale(await sheetTexts(a), segs, p.units) : null;
+            return !!want && !!read && read.agree >= 5 && Math.abs(read.metersPerPoint / want - 1) <= 0.02;
+          },
+          progress: (t) => setBusy(t),
+        },
+        symbol && home ? { symbol, home } : undefined,
+      );
+      if (!tallies.length) {
+        setToast({ text: 'No symbol legend found. Click a symbol on the sheet to count it on every sheet.', undo: false, action: page ? { label: 'Click a symbol', run: startSymbolPick } : undefined });
+        return;
+      }
+      setSymbolTallies(tallies);
+    } catch (e) {
+      setToast({ text: `Something went wrong: ${e instanceof Error ? e.message : String(e)}`, undo: false });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  function startSymbolPick() {
+    setSymbolTallies(null);
+    setLegendPick(false);
+    setNumberPick(null);
+    setTool('symbol');
+    setSymbolPick(true);
+    setToast({ text: 'Click a symbol on the sheet: it is counted on every sheet.', undo: false });
+  }
+
+  /** A click with the Symbols tool: the symbol under it, on this sheet as the active count type, or across the set. */
+  async function pickSymbolAt(at: Pt, reach: number) {
+    if (numberPick || legendPick || !page) return;
+    if (symbolPick || activeType?.kind !== 'count') {
+      setSymbolPick(false);
+      setTool('select');
+      void automateSymbols({ at, reach });
+      return;
+    }
+    const box = symbolBoxAt(visibleInk(await segmentsOf(page)), at, 60, reach);
+    if (!box) {
+      setToast({ text: 'No symbol there. Click right on its linework, or drag a box round it.', undo: false });
+      return;
+    }
+    void countSymbols([box[0] - 0.5, box[1] - 0.5, box[2] + 0.5, box[3] + 0.5]);
+  }
+
+  /** Adds the symbols chosen as count types (a type of that name already there gets its symbol count replaced). */
+  function addSymbolTypes(choices: SymbolChoice[]) {
+    const p = projectRef.current!;
+    const types: TakeoffType[] = [];
+    const ids = choices.map((c) => {
+      const got = p.types.find((t) => t.kind === 'count' && t.name === c.name) ?? types.find((t) => t.name === c.name);
+      if (got) return got.id;
+      const t: TakeoffType = {
+        id: newId(),
+        name: c.name,
+        color: PALETTE[(p.types.length + types.length) % PALETTE.length],
+        kind: 'count',
+        height: 0,
+        division: guessDivision(c.name),
+        items: [{ id: newId(), name: c.name, unit: 'ea', formula: 'N' }],
+      };
+      types.push(t);
+      return t.id;
+    });
+    const added: Project['measurements'] = choices.flatMap((c, i) =>
+      c.tally.places.flatMap((pl) => pl.at.map((at) => ({ id: newId(), sheetId: pl.sheetId, typeId: ids[i], points: [at], holes: [], source: 'symbols' as const }))),
+    );
+    const typeIds = new Set(ids);
+    commit((q) => ({ ...q, types: [...q.types, ...types], measurements: [...q.measurements.filter((m) => !(m.source === 'symbols' && typeIds.has(m.typeId))), ...added] }), 'Count symbols');
+    setActiveTypeId(ids[0]);
+    setToast({ text: `Counted ${added.length} symbol${added.length === 1 ? '' : 's'} as ${choices.length} type${choices.length === 1 ? '' : 's'}`, undo: true });
+  }
+
   /** Reads the legend boxed on the sheet into rows for the legend dialog. */
   /** Starts marking where the sheet number (or title) sits in the title block. */
   /** Sets which building a drawing set is for: its quantities are grouped under that name. */
@@ -2750,6 +2881,7 @@ export function App() {
           onCalibrate={(mpp, label) => sheet && updateSheet(sheet.id, { metersPerPoint: mpp, scaleLabel: label, scaleSource: 'calibrated' }, 'Calibrate')}
           onToolDone={() => setTool('select')}
           onFindSymbols={(box) => void (numberPick ? readNumberBox(box) : legendPick ? readLegendBox(box) : countSymbols(box))}
+          onPickSymbol={(at, reach) => void pickSymbolAt(at, reach)}
           onTrace={(at, reach) => void traceAt(at, reach)}
           focus={focus}
           highlights={sheet ? hitsOn(sheet.id) : undefined}
@@ -3065,6 +3197,13 @@ export function App() {
                 ready: !!page,
               },
               {
+                id: 'symbols' as const,
+                icon: 'count' as const,
+                title: 'Count symbols',
+                text: 'Every legend in the set is read and each symbol in it counted on every sheet it is for. Or click a symbol on the sheet to count it everywhere.',
+                ready: true,
+              },
+              {
                 id: 'ceilings' as const,
                 icon: 'area' as const,
                 title: 'Ceilings',
@@ -3095,6 +3234,7 @@ export function App() {
                   setPopover(null);
                   if (a.id === 'doors') void countDoorTags();
                   else if (a.id === 'sprinklers') void automateSprinklers();
+                  else if (a.id === 'symbols') void automateSymbols();
                   else if (a.id === 'ceilings') void automateCeilings();
                   else if (a.id === 'legend') {
                     setLegendPick(true);
@@ -3304,6 +3444,19 @@ export function App() {
             )
           }
           onClose={() => setAiDialog(null)}
+        />
+      )}
+      {symbolTallies && (
+        <SymbolCountDialog
+          tallies={symbolTallies}
+          sheetName={(id) => project.sheets.find((x) => x.id === id)?.name ?? ''}
+          existing={project.types}
+          onClose={() => setSymbolTallies(null)}
+          onPick={startSymbolPick}
+          onAdd={(choices) => {
+            setSymbolTallies(null);
+            addSymbolTypes(choices);
+          }}
         />
       )}
       {aiDialog === 'legend' && legend && (
