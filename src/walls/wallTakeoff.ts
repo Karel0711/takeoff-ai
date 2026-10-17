@@ -52,14 +52,15 @@ export interface WallTakeoffOptions {
 /** Kinds of wall tag. A wall has at most one of each; a tag's type spreads only within its kind. */
 export function tagKind(code: string, exterior?: readonly string[], kinds?: Record<string, string>): string {
   if (exterior?.includes(code)) return 'exterior';
-  const given = kinds?.[code];
-  if (given) return given;
   const letters = code.replace(/-?\d.*$/, '').toUpperCase();
   // An "x" after the prefix marks existing work of the same kind (wx1, FRX2).
   const prefix = letters.length > 1 && letters.endsWith('X') && letters !== 'EX' ? letters.slice(0, -1) : letters;
-  if (prefix === 'EW' || prefix === 'EXT' || prefix === 'EP') return 'exterior';
-  if (prefix === 'FR') return 'furring';
-  if (prefix === 'FW') return 'foundation';
+  // Furring and foundation walls by their letters, even listed among the interior or exterior wall types.
+  const lettered = prefix === 'FR' ? 'furring' : prefix === 'FW' ? 'foundation' : null;
+  const given = kinds?.[code];
+  if (given) return lettered && (given === 'partition' || given === 'exterior') ? lettered : given;
+  if (lettered) return lettered;
+  if (prefix === 'EW' || prefix === 'EXT' || prefix === 'EP' || prefix === 'EX') return 'exterior';
   return 'partition';
 }
 
@@ -580,11 +581,23 @@ function offSquare(runs: WallRun[]): WallRun[] {
  * triangle, a room number in a box.
  */
 function sameFamily(tags: WallTag[]): WallTag[] {
-  const shapes = new Set(tags.filter((t) => t.confirmed && t.symbol).map((t) => t.symbol!.shape));
+  const kind = (t: WallTag) => t.symbol!.core ?? t.symbol!.shape;
+  const confirmed = tags.filter((t) => t.confirmed && t.symbol);
+  const count = new Map<string, number>();
+  for (const t of confirmed) count.set(kind(t), (count.get(kind(t)) ?? 0) + 1);
+  const all = new Map<string, number>();
+  for (const t of tags) if (t.symbol) all.set(kind(t), (all.get(kind(t)) ?? 0) + 1);
+  const shapes = new Set([...count].filter(([, n]) => n >= Math.max(1, confirmed.length * 0.1)).map(([s]) => s));
+  // A code the set lists as a wall type, in a symbol a family of other codes use and few wall
+  // tags do, is another kind of tag sharing its code (window type W3 in a hexagon among window
+  // types W1a, W2b, beside wall type W3 in boxes).
+  const settled = confirmed.length >= 8;
+  const otherFamily = (k: string) => (all.get(k) ?? 0) >= 3 && (count.get(k) ?? 0) < (all.get(k) ?? 0) / 2;
   return tags.filter((t) => {
-    if (t.confirmed || !t.symbol) return true;
+    if (!t.symbol) return true;
+    if (t.confirmed) return !settled || shapes.has(kind(t)) || !otherFamily(kind(t));
     if (t.symbol.shape === 'triangle') return false;
-    return !shapes.size || shapes.has(t.symbol.shape);
+    return !shapes.size || shapes.has(kind(t));
   });
 }
 

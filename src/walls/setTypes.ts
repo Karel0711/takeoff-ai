@@ -1,3 +1,4 @@
+import { WALL_TAG } from './tags';
 import type { PageText } from '../pageText';
 
 /**
@@ -29,12 +30,15 @@ export const emptySetTypes = (): SetTypes => ({ wall: [], other: [], kinds: {}, 
  * A type code as drawings write them: one to four letters (an "x" in them often marks
  * existing work: px7, fwx2), an optional dash, a number and an optional letter.
  */
-export const CODE = /^[A-Za-z]{1,4}-?\d{1,3}[A-Za-z]?$/;
+export const CODE = /^[A-Za-z]{1,4}[- ]?\d{1,3} ?[A-Za-z]?$/;
+
+/** A code as written, without the spaces some sets put in it ("EX 1", "P1 a"). */
+export const codeOfText = (str: string) => str.trim().replace(/\s+/g, '');
 
 const WALL_WORDS = /\b(?:walls?|partitions?|furring|linings?|shaft\s*walls?|demising|chase|parapets?)\b/i;
 const OTHER_WORDS = /\b(?:floors?|roofs?|ceilings?|soffits?|slabs?|decks?|doors?|windows?|openings?|frames?|glazing|storefronts?|millwork|casework|equipment|rooms?|fixtures?|finish(?:es)?|stairs?|curtain\s*walls?|louvres?|louvers?|bulkheads?)\b/i;
 /** A heading over a list of types: "Partition (p) Types:", "WALL TYPES", "Floor Assemblies". */
-const HEADING = /^(.{2,48}?)\s*(?:\(([A-Za-z]{1,4})\)\s*)?(?:types?|assembl(?:y|ies)|schedule)(?:\s*[-–(]?\s*continued\)?)?\s*:?$/i;
+const HEADING = /^(.{2,48}?)\s*(?:\(([A-Za-z]{1,4})\)\s*)?(?:types?|assembl(?:y|ies)|schedules?|legend)(?:\s*[-–(]?\s*continued\)?)?\s*:?$/i;
 
 /** A code's letters without the digits, and without a trailing existing-work "x" (px7 → p). */
 export function codePrefix(code: string): { letters: string; base: string } {
@@ -62,74 +66,208 @@ export function describes(text: string, partitionsListed = false): 'exterior' | 
 
 interface Heading {
   text: string;
-  kind: NonNullable<ReturnType<typeof describes>>;
+  /** Null: a heading over a list of several kinds (a construction legend): its codes are listed, their kind unsaid. */
+  kind: ReturnType<typeof describes>;
   prefix?: string;
   x0: number;
+  x1: number;
   cy: number;
+}
+
+/** Structural members and other non-wall things a schedule lists ("PIER SCHEDULE", "BLOCK LINTEL SCHEDULE"). */
+const MEMBER_WORDS = /\b(?:footings?|piers?|columns?|lintels?|beams?|brac(?:es?|ing)|plates?|joists?|girders?|trusses?|anchors?|dowels?|reinforc\w*|connections?|hatch(?:es|ing)?|lines?|symbols?|keynotes?|abbreviations?|fixtures?)\b/i;
+
+/**
+ * What a list heading names: its last word is the thing listed ("WALL PLATE schedule" lists
+ * plates); a heading naming walls and other things together ("Wall / Floor / Roof Types",
+ * "Exterior Walls & Roofs") says nothing about any one code.
+ */
+export function headingKind(phrase: string, partitionsListed = false): ReturnType<typeof describes> {
+  const t = phrase.replace(/\([^)]*\)/g, ' ').replace(/[-–:]+\s*$/, '').replace(/\s+types?$/i, '').trim();
+  // A plan's legend explains every symbol on the plan.
+  if (/\bplans?\b/i.test(t)) return null;
+  const words = t.split(/[^A-Za-z]+/).filter(Boolean);
+  const last = words[words.length - 1] ?? '';
+  const parts = t.split(/\s*(?:\/|&|\+|,|\band\b)\s*/i).filter(Boolean);
+  if (MEMBER_WORDS.test(last) || (OTHER_WORDS.test(last) && !/curtain/i.test(t))) {
+    // "Wall plate": plates. "Exterior walls & roofs": both.
+    return parts.length > 1 && parts.some((q) => WALL_WORDS.test(q.replace(/curtain\s*walls?/gi, ''))) ? null : 'other';
+  }
+  if (parts.length > 1) {
+    const kinds = new Set(parts.map((q) => describes(q, partitionsListed)).filter(Boolean));
+    if (kinds.size > 1 && kinds.has('other')) return null;
+  }
+  if (MEMBER_WORDS.test(t) && !WALL_WORDS.test(t)) return 'other';
+  // "Foundation Types": foundation walls.
+  if (/^foundations?$/i.test(last) && !OTHER_WORDS.test(t)) return 'foundation';
+  return describes(t, partitionsListed);
 }
 
 /**
  * The codes an assembly types sheet lists, sorted by the heading each sits under: the
  * nearest heading above it in its column (and, when the heading names its prefix
- * "(fw)", only codes with that prefix).
+ * "(fw)", only codes with that prefix). Codes listed under a heading naming several kinds
+ * (or none: "Construction Legend") are wall types when they read as wall tags.
  */
 export function readTypeSheet(texts: PageText[], pageWidth: number, pageHeight = pageWidth * 0.7): Pick<SetTypes, 'wall' | 'other' | 'kinds'> | null {
   const owner = listedCodes(texts, pageWidth, pageHeight);
   const out = { wall: [] as string[], other: [] as string[], kinds: {} as Record<string, string> };
   for (const [t, kind] of owner) {
-    const code = t.str.trim();
-    if (kind === 'other') {
+    // W-1 and W1 are the same type.
+    const code = codeOfText(t.str).replace('-', '');
+    if (kind === null) {
+      if (WALL_TAG.test(code)) {
+        if (!out.wall.includes(code)) out.wall.push(code);
+      } else if (!out.other.includes(code)) out.other.push(code);
+    } else if (kind === 'other') {
       if (!out.other.includes(code)) out.other.push(code);
     } else if (!out.wall.includes(code)) {
       out.wall.push(code);
       out.kinds[code] = kind;
     }
   }
+  out.other = out.other.filter((c) => !out.wall.includes(c));
   return out.wall.length + out.other.length ? out : null;
 }
 
-/** The codes a sheet lists under type headings (a schedule or legend), each with its heading's kind. */
-export function listedCodes(texts: PageText[], pageWidth: number, pageHeight = pageWidth * 0.7): Map<PageText, Heading['kind']> {
+/** A sheet of assembly types, by a title on it ("ASSEMBLY TYPES MATRIX", "WALL TYPES"): its lists of codes are the types even where their headings are not text. */
+const TYPES_SHEET = /^(?:[A-Za-z]+\s+){0,2}(?:assembl(?:y|ies)|wall|partition|construction)\s+types?(?:\s+(?:matrix|legend|schedule))?$/i;
+
+/**
+ * Codes listed one under another down a column: aligned on their centres or their left
+ * edges, each a table row or so below the last. A legend or schedule lists its codes that
+ * way; a plan's tags lie scattered over the drawing.
+ */
+export function codeLists(codes: PageText[], maxStep: number): PageText[][] {
+  const lists: PageText[][] = [];
+  for (const t of [...codes].sort((a, b) => a.cy - b.cy)) {
+    const tol = Math.max(2, t.h * 2);
+    let best: PageText[] | null = null;
+    let bestDy = Infinity;
+    for (const l of lists) {
+      const q = l[l.length - 1];
+      const dy = t.cy - q.cy;
+      if (dy < Math.max(t.h, q.h) * 0.8 || dy > maxStep) continue;
+      const aligned = Math.abs(t.cx - q.cx) <= tol || Math.abs(t.cx - t.w / 2 - (q.cx - q.w / 2)) <= tol;
+      if (aligned && dy < bestDy) {
+        best = l;
+        bestDy = dy;
+      }
+    }
+    if (best) best.push(t);
+    else lists.push([t]);
+  }
+  return lists;
+}
+
+/** The codes a sheet lists under type headings (a schedule or legend), each with its heading's kind (null: listed, kind unsaid). */
+export function listedCodes(texts: PageText[], pageWidth: number, pageHeight = pageWidth * 0.7, directOnly = false): Map<PageText, Heading['kind']> {
+  const owner = new Map<PageText, Heading['kind']>();
+  for (const { list, heading, direct } of typeLists(texts, pageWidth, pageHeight)) {
+    if (directOnly && !direct) continue;
+    for (const t of list) owner.set(t, heading ? heading.kind : null);
+  }
+  return owner;
+}
+
+/**
+ * The lists of codes a sheet has under type headings, each with its heading (none: a list on a
+ * types sheet whose heading is not text); `direct`: right under its heading, not a further
+ * column of a table the heading is centred over.
+ */
+export function typeLists(texts: PageText[], pageWidth: number, pageHeight = pageWidth * 0.7): { list: PageText[]; heading: Heading | null; direct: boolean }[] {
   const heights = texts.map((t) => t.h).sort((a, b) => a - b);
   const median = heights[Math.floor(heights.length / 2)] ?? 0;
-  const raw = texts.filter((t) => Math.abs(Math.sin(t.angle ?? 0)) < 0.5 && HEADING.test(t.str.trim()));
+  const flat = (t: PageText) => Math.abs(Math.sin(t.angle ?? 0)) < 0.5;
+  // A heading is a title, not a sentence in the notes ("refer to the Construction Schedule, ...").
+  const raw = texts.filter((t) => flat(t) && HEADING.test(t.str.trim()) && !/[,.;]/.test(t.str));
   // Headings stand out from the notes by their size, when the sheet sizes them.
-  const big = raw.filter((t) => t.h >= median * 1.3);
-  const pool = big.length >= 2 ? big : raw;
+  // A title of a few words that starts like no note ("refer to door schedule", "- existing
+  // exterior wall assembly") counts at any size.
+  const titled = (t: PageText) => t.str.trim().split(/\s+/).length <= 5 && !/^(?:[-–•*]|(?:see|refer|as|per|for|to|in|on|and|or|the|all|by|with|notes?|existing)\b)/i.test(t.str.trim());
+  const pool = raw.filter((t) => t.h >= median * 1.3 || titled(t));
   const partitionsListed = pool.some((t) => /partition|interior/i.test(t.str));
-  const headings: (Heading & { left: number; right: number })[] = [];
+  const headings: Heading[] = [];
   for (const t of pool) {
     const m = HEADING.exec(t.str.trim())!;
-    const kind = describes(m[1], partitionsListed);
-    if (!kind) continue;
-    headings.push({ text: t.str, kind, prefix: m[2], x0: t.cx - t.w / 2, cy: t.cy, left: 0, right: 0 });
+    // "Wall Type", "Partition Type": a legend's words for the symbol beside them; a list is headed "Wall Types".
+    if (/\btype\s*:?\s*$/i.test(t.str.trim())) continue;
+    // A legend's line ("p#  Partition Type", "W1  Window Type") explains a symbol beside it: no heading.
+    const beside = texts.some((o) => o !== t && (PLACEHOLDER.test(o.str.trim()) || CODE.test(o.str.trim())) && Math.abs(o.cy - t.cy) < 1.5 * Math.max(o.h, t.h) && o.cx < t.cx && t.cx - t.w / 2 - (o.cx + o.w / 2) < 12 * t.h && t.cx - t.w / 2 - (o.cx + o.w / 2) > -t.h);
+    if (beside) continue;
+    const kind = headingKind(m[1] ?? '', partitionsListed);
+    // A heading naming no kind ("Construction Legend") is a title of a few words, not a note ("see schedule").
+    if (kind === null && (m[1].trim().split(/\s+/).length > 4 || /\d/.test(m[1]) || /^(?:see|refer|as|per|for|to|in|on|and|or|the|all|by|with|notes?)\b/i.test(m[1].trim()))) continue;
+    headings.push({ text: t.str, kind, prefix: m[2], x0: t.cx - t.w / 2, x1: t.cx + t.w / 2, cy: t.cy });
   }
-  if (headings.length < 1) return new Map();
-  // Each heading's column: from its start (or, with no column to its left, well left of it:
-  // a title centred over its table) to where the next column starts.
-  for (const h of headings) {
-    const before = headings.some((o) => o.x0 < h.x0 - 40 && o.x0 > h.x0 - pageWidth * 0.25);
-    h.left = h.x0 - (before ? 10 : pageWidth * 0.12);
-    h.right = headings.filter((o) => o.x0 > h.x0 + 40).reduce((m, o) => Math.min(m, o.x0 - 10), h.x0 + pageWidth * 0.25);
+  const typesSheet = texts.some((t) => TYPES_SHEET.test(t.str.trim()) && t.h >= median * 1.3);
+  if (!headings.length && !typesSheet) return [];
+  const codes = texts.filter((t) => CODE.test(t.str.trim()) && flat(t));
+  // A list's rows are at most this far apart; its heading at most this far above its first code.
+  const maxStep = pageHeight * 0.15;
+  const span = (list: PageText[]) => [Math.min(...list.map((t) => t.cx - t.w / 2)), Math.max(...list.map((t) => t.cx + t.w / 2))];
+  const dxOf = (h: Heading, list: PageText[]) => {
+    const [lx0, lx1] = span(list);
+    return Math.max(0, h.x0 - lx1, lx0 - h.x1);
+  };
+  // A list ends at a heading between two of its rows (the next kind's list starts under it).
+  const lists = codeLists(codes, maxStep).flatMap((list) => {
+    const parts: PageText[][] = [[list[0]]];
+    for (let i = 1; i < list.length; i++) {
+      const q = list[i - 1];
+      const t = list[i];
+      if (headings.some((h) => h.cy > q.cy && h.cy < t.cy && dxOf(h, [q, t]) <= pageWidth * 0.12)) parts.push([]);
+      parts[parts.length - 1].push(t);
+    }
+    return parts;
+  });
+  // Its heading: above it, the best aligned one; of those as well aligned, the lowest. Over
+  // its column first; then a title centred over a wide table heads the table's other type
+  // columns too, those starting on the same row as a column it heads.
+  const near = pageWidth * 0.1;
+  const headOf = new Map<PageText[], Heading>();
+  for (const list of lists) {
+    const over = headings.filter((h) => h.cy < list[0].cy && list[0].cy - h.cy <= maxStep && dxOf(h, list) <= near);
+    const nearest = Math.min(...over.map((h) => dxOf(h, list)));
+    const h = over.filter((o) => dxOf(o, list) <= nearest + 40).sort((x, y) => y.cy - x.cy)[0];
+    if (h) headOf.set(list, h);
   }
-  const codes = texts.filter((t) => CODE.test(t.str.trim()) && Math.abs(Math.sin(t.angle ?? 0)) < 0.5).sort((a, b) => a.cy - b.cy);
-  // A list runs down its column: it ends at the next heading in the column, or at a gap
-  // no table row leaves (a plan's own tags further down the sheet are not in it).
-  const gap = pageHeight * 0.12;
-  const owner = new Map<PageText, (typeof headings)[number]>();
-  for (const h of headings) {
-    let last = h.cy;
-    for (const t of codes) {
-      if (t.cy <= h.cy || t.cx < h.left || t.cx > h.right) continue;
-      if (t.cy - last > gap) break;
-      if (headings.some((o) => o !== h && Math.abs(o.x0 - h.x0) <= 40 && o.cy > h.cy && o.cy < t.cy)) break;
-      last = t.cy;
-      if (h.prefix && h.prefix.toLowerCase() !== codePrefix(t.str.trim()).base.toLowerCase()) continue;
-      const prev = owner.get(t);
-      if (!prev || h.cy > prev.cy) owner.set(t, h);
+  const nearHead = new Set(headOf.keys());
+  const gapOf = (a: PageText[], b: PageText[]) => {
+    const [a0, a1] = span(a);
+    const [b0, b1] = span(b);
+    return Math.max(0, a0 - b1, b0 - a1);
+  };
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const list of lists) {
+      if (headOf.has(list) || list.length < 3) continue;
+      const row = Math.max(list[0].h, 4) * 1.5;
+      const next = [...headOf]
+        .filter(([l, o]) => Math.abs(l[0].cy - list[0].cy) <= row && o.cy < list[0].cy && gapOf(l, list) <= pageWidth * 0.3)
+        .sort(([a], [b]) => gapOf(a, list) - gapOf(b, list))[0];
+      if (next) {
+        headOf.set(list, next[1]);
+        grew = true;
+      }
     }
   }
-  return new Map([...owner].map(([t, h]) => [t, h.kind]));
+  const out: { list: PageText[]; heading: Heading | null; direct: boolean }[] = [];
+  for (const list of lists) {
+    const h = headOf.get(list);
+    const distinct = new Set(list.map((t) => codeOfText(t.str))).size;
+    if (!h) {
+      // No heading read over it: on a types sheet, a list of several types is still one.
+      if (typesSheet && list.length >= 3 && distinct === list.length) out.push({ list, heading: null, direct: false });
+      continue;
+    }
+    // A column of a few codes repeated over and over is a detail's notes, not a list of types;
+    // a legend of all sorts of symbols lists more than one.
+    if ((list.length >= 3 && distinct < list.length / 2) || (h.kind === null && list.length < 2)) continue;
+    const mine = h.prefix ? list.filter((t) => h.prefix!.toLowerCase() === codePrefix(codeOfText(t.str)).base.toLowerCase()) : list;
+    if (mine.length) out.push({ list: mine, heading: h, direct: nearHead.has(list) });
+  }
+  return out;
 }
 
 /** A legend placeholder: a prefix and "#", "##", "xx" or "XX" in place of the number (w#, Wxx). */
@@ -164,7 +302,8 @@ export function mergeSetTypes(parts: Partial<SetTypes>[]): SetTypes {
   for (const p of parts) {
     for (const c of p.wall ?? []) if (!out.wall.includes(c)) out.wall.push(c);
     for (const c of p.other ?? []) if (!out.other.includes(c) && !out.wall.includes(c)) out.other.push(c);
-    Object.assign(out.kinds, p.kinds ?? {});
+    // A plain "Wall Types" heading reads as partitions: a sheet naming the kind outright wins.
+    for (const [c, k] of Object.entries(p.kinds ?? {})) if (!out.kinds[c] || out.kinds[c] === 'partition') out.kinds[c] = k;
     for (const c of p.wallPrefixes ?? []) if (!out.wallPrefixes.includes(c)) out.wallPrefixes.push(c);
     for (const c of p.otherPrefixes ?? []) if (!out.otherPrefixes.includes(c)) out.otherPrefixes.push(c);
   }
@@ -195,8 +334,10 @@ export function classifyCode(code: string, set: SetTypes, known: readonly string
   const exact = (list: string[]) => list.includes(letters) || list.includes(base);
   const loose = (list: string[]) => list.some((q) => [letters, base].some((p) => q.toLowerCase() === p.toLowerCase()));
   if (exact(set.otherPrefixes)) return null;
-  // The set lists its wall types and this is none of them (a legend's "w#" does not add w1).
-  if (set.wall.length >= 2) return null;
+  // The set lists its wall types and this is none of them (a legend's "w#" does not add w1),
+  // unless it is lettered like listed ones (P2b beside a legend of P1a, P1b, P2a): a type the
+  // legend leaves out, read as a guess.
+  if (set.wall.length >= 2) return set.wall.some((w) => codePrefix(w.replace('-', '')).letters === letters) ? { wall: true, confirmed: false } : null;
   if (exact(set.wallPrefixes)) return { wall: true, confirmed: true };
   if (loose(set.otherPrefixes) && !loose(set.wallPrefixes)) return null;
   if (loose(set.wallPrefixes) && !loose(set.otherPrefixes)) return { wall: true, confirmed: true };

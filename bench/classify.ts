@@ -17,7 +17,9 @@ const TRADE = /SPRINKLER|SUPPRESSION|FIRE PROTECTION|FIRE ALARM|LIGHTING|POWER|E
  */
 export function classifySheet(sheet: Pick<Sheet, 'name' | 'title'>): { kind: SheetClass; why: string; level?: PlanLevel } {
   const t = `${sheet.title ?? ''}`.toUpperCase().replace(/\s+/g, ' ').trim();
-  if (/SCHEDULE/.test(t)) return { kind: 'schedule', why: 'title says schedule' };
+  // "Ground floor plan & finishes schedule": a level's plan with its schedule beside it.
+  const planWithSchedule = /\b(FLOOR|LEVEL|GROUND|BASEMENT|MAIN|MEZZANINE)\b[^&]*\bPLAN\b\s*(&|AND|\+|\/)/.test(t) && !/REFLECTED|\bRCP\b|CEILING|FINISH(ES)? PLAN|DEMO|REMOVAL|EXISTING/.test(t.split(/\s*(?:&|AND|\+|\/)\s*/)[0]);
+  if (/SCHEDULE/.test(t) && !planWithSchedule) return { kind: 'schedule', why: 'title says schedule' };
   if (/ASSEMBL|\b(WALL|PARTITION|FLOOR|ROOF|CEILING|CONSTRUCTION)\s+TYPES\b|^TYPES\b/.test(t)) return { kind: 'assembly', why: 'title names assembly types' };
   if (/LEGEND|SYMBOLS|ABBREVIATIONS/.test(t)) return { kind: 'legend', why: 'title says legend' };
   const demo = /DEMO|REMOVAL|EXISTING/.test(t);

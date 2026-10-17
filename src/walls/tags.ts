@@ -29,6 +29,11 @@ export interface TagSymbol {
   shape: string;
   /** Across its outermost outline, in sheet points. */
   size: number;
+  /**
+   * The symbol itself: the shapes of its smallest outline and any about as big (a diamond in
+   * a square), sorted and joined with "+", leaving out bigger outlines that happen to be near.
+   */
+  core?: string;
   /** Drawn as a filled shape (a black diamond with white text). */
   filled: boolean;
 }
@@ -147,7 +152,8 @@ export function describeSymbol(outlines: Segment[][], filled: boolean): TagSymbo
   if (!found.length) return undefined;
   found.sort((a, b) => a.size - b.size);
   const shapes = [...new Set(found.map((f) => f.shape))];
-  return { shape: shapes.join('+'), size: found[found.length - 1].size, filled };
+  const core = [...new Set(found.filter((f) => f.size <= found[0].size * 1.15 + 0.5).map((f) => f.shape))].sort().join('+');
+  return { shape: shapes.join('+'), size: found[found.length - 1].size, filled, core };
 }
 
 /** The shape of one closed outline, by how many straight sides it has. */
