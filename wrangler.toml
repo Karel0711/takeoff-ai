@@ -1,0 +1,26 @@
+# Cloudflare Pages: the web app (dist) plus the AI service at /api/ai (functions/).
+# Setup and deploy steps: docs/web-deploy.md.
+name = "takeoff-ai"
+pages_build_output_dir = "dist"
+compatibility_date = "2026-10-01"
+
+# Daily request counts per access code. Create it once:
+#   npx wrangler kv namespace create USAGE
+# and paste the id it prints here.
+[[kv_namespaces]]
+binding = "USAGE"
+id = "PASTE_KV_NAMESPACE_ID_HERE"
+
+[vars]
+# Any OpenAI-compatible endpoint. OpenRouter reaches Gemini, Qwen, GPT, Claude and others with one key.
+AI_BASE_URL = "https://openrouter.ai/api/v1"
+# A vision model's id from openrouter.ai/models. Pick the cheapest one that scores well
+# on your legends (More > Show bid workbook scoring, then Score against bid workbook).
+AI_MODEL = "PICK_A_VISION_MODEL"
+# Requests per access code per day, and across everyone per day.
+DAILY_LIMIT = "25"
+GLOBAL_DAILY_LIMIT = "200"
+
+# Secrets (never in this file):
+#   npx wrangler pages secret put AI_API_KEY      the provider key (OpenRouter)
+#   npx wrangler pages secret put ACCESS_CODES    e.g.  k7Pq2xR9=Joe Drywall;m3Vt8wL4=Sam Ceilings

@@ -120,7 +120,7 @@ export function AiAssembliesDialog({ page, sheet, units, existingTypes, onApply,
         setState({
           phase: 'error',
           message:
-            'No assembly schedule found on this sheet. This reads tables with a TYPE column and a DESCRIPTION or CONSTRUCTION column. If the sheet has one, its text may be drawn as outlines (try selecting text in the PDF): then use Read with Claude.',
+            'No assembly schedule found on this sheet. This reads tables with a TYPE column and a DESCRIPTION or CONSTRUCTION column. If the sheet has one, its text may be drawn as outlines (try selecting text in the PDF): then use Read with AI.',
         });
         return;
       }
@@ -148,7 +148,7 @@ export function AiAssembliesDialog({ page, sheet, units, existingTypes, onApply,
     const started = Date.now();
     abort.current = new AbortController();
     try {
-      setState({ phase: 'running', step: 'Claude is reading the assembly types…', started });
+      setState({ phase: 'running', step: 'AI is reading the assembly types…', started });
       const { extraction, runsText, answeredBy } = await readLegend(page, sheet.name, abort.current.signal);
       const printed = findAssemblyCodes(runsText);
       const assemblies = extraction.assemblies;
@@ -224,9 +224,9 @@ export function AiAssembliesDialog({ page, sheet, units, existingTypes, onApply,
               <button
                 disabled={route === null || route === 'none'}
                 onClick={() => void run()}
-                title={route === 'none' ? 'Needs a Claude API key (AI settings)' : 'For schedules drawn as pictures or in an unusual layout'}
+                title={route === 'none' ? 'Needs AI: set it up in AI settings' : 'For schedules drawn as pictures or in an unusual layout'}
               >
-                Read with Claude instead
+                Read with AI instead
               </button>
               {route === 'none' && <button onClick={onOpenSettings}>AI settings</button>}
             </div>
@@ -256,7 +256,7 @@ export function AiAssembliesDialog({ page, sheet, units, existingTypes, onApply,
             <div className="row-actions">
               <button onClick={() => void runLocal()}>Read again</button>
               <button disabled={route === null || route === 'none'} onClick={() => void run()}>
-                Read with Claude instead
+                Read with AI instead
               </button>
               {route === 'none' && <button onClick={onOpenSettings}>AI settings</button>}
             </div>
@@ -320,8 +320,8 @@ export function AiAssembliesDialog({ page, sheet, units, existingTypes, onApply,
               Read again
             </button>
             {route !== null && route !== 'none' && (
-              <button onClick={() => void run()} title="Ask Claude to read this sheet instead">
-                Read with Claude
+              <button onClick={() => void run()} title="Ask AI to read this sheet instead">
+                Read with AI
               </button>
             )}
             <button

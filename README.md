@@ -114,7 +114,7 @@ undo/redo, and an activity log of every change.
   18 s for the 51-sheet set.
 - **Sheet names without text (done):** some sheets have their text drawn as
   outlines (no text layer), so they come in as "Page 34". **More › Name sheets
-  with Claude…** reads each one's title block (the right and bottom strips) and
+  with AI…** reads each one's title block (the right and bottom strips) and
   names it with its sheet number. Double-click a sheet to rename it by hand.
 - **Scale check (done):** the scale picker reads the sheet's dimension strings
   (5300, 12'-6") against the dimension lines they sit on and reports the scale
@@ -126,7 +126,15 @@ undo/redo, and an activity log of every change.
 **Phase 3 — AI takeoff:** walls by type from the plan tags and PDF vector lines,
 rooms with finishes, all as suggestions you accept or correct.
 
-## Use it hosted
+## Use it on the web (for subs)
+
+The web app runs on Cloudflare Pages with its own AI service at `/api/ai`: subs
+open a URL, enter an access code in **AI settings**, and never need an API key.
+The server holds the model key (any OpenAI-compatible model, OpenRouter by
+default) and caps each code's requests per day. Setup and deploy:
+`docs/web-deploy.md`; deploy with `npm run deploy:web`.
+
+## Use it hosted on claude.ai
 
 A hosted copy runs on claude.ai as a private artifact. AI features there use your
 own Claude account, so no API key is needed. To update it, run

@@ -1,6 +1,7 @@
+import { buildingOf, buildingsOf, onBuilding, quantitySections } from './buildings';
 import type { ActivityEvent } from './activity';
 import type { Workbook, Worksheet } from 'exceljs';
-import { FINISH_ROLES, type Project, type TakeoffType } from './model';
+import { FINISH_ROLES, type Measurement, type Project, type TakeoffType } from './model';
 import { contributions, measurementVars, primaryOf, primaryUnit, sheetRepeat, typeTotals } from './quantities';
 
 /*
@@ -205,7 +206,7 @@ function writeDivision(ws: Worksheet, division: string, types: TakeoffType[], ro
 }
 
 /** Builds the workbook; separate from the Blob step so it can be tested in Node. */
-export async function buildWorkbook(project: Project, activity: ActivityEvent[] = []): Promise<Workbook> {
+export async function buildWorkbook(project: Project, activity: ActivityEvent[] = [], roomOf?: (m: Measurement) => string | null): Promise<Workbook> {
   const { default: ExcelJS } = await import('exceljs');
   const wb = new ExcelJS.Workbook();
   wb.created = new Date();
@@ -296,12 +297,42 @@ export async function buildWorkbook(project: Project, activity: ActivityEvent[] 
   materials.getRow(1).fill = solid(COLOR.header);
   materials.views = [{ state: 'frozen', ySplit: 1 }];
 
+  // Per building, each division's types and their materials.
+  const buildings = buildingsOf(project);
+  if (buildings.length > 1) {
+    const byBuilding = wb.addWorksheet(sheetName('By Building', used));
+    byBuilding.columns = [
+      { header: 'Building', key: 'building', width: 16 },
+      { header: 'Division', key: 'division', width: 28 },
+      { header: 'Takeoff type', key: 'type', width: 50 },
+      { header: 'Item', key: 'item', width: 44 },
+      { header: 'Quantity', key: 'qty', width: 14, style: { numFmt: '#,##0.00' } },
+      { header: 'Unit', key: 'unit', width: 8 },
+    ];
+    for (const b of buildings) {
+      const sections = quantitySections(onBuilding(project, b), 'division');
+      for (const sec of sections)
+        for (const tt of sec.totals ?? []) {
+          if (tt.vars.N === 0) continue;
+          const head = byBuilding.addRow({ building: b, division: sec.title, type: tt.type.name, item: '', qty: tt.primary, unit: tt.unit });
+          head.font = { bold: true };
+          for (const it of tt.items) byBuilding.addRow({ building: b, division: sec.title, type: tt.type.name, item: it.name, qty: it.value ?? `ERROR: ${it.error}`, unit: it.unit });
+        }
+    }
+    byBuilding.getRow(1).font = { bold: true };
+    byBuilding.getRow(1).fill = solid(COLOR.header);
+    byBuilding.views = [{ state: 'frozen', ySplit: 1 }];
+    byBuilding.autoFilter = { from: 'A1', to: 'F1' };
+  }
+
   // Every measurement, for checking.
   const detail = wb.addWorksheet(sheetName('Measurements', used));
   detail.columns = [
+    { header: 'Building', key: 'building', width: 14 },
     { header: 'Sheet', key: 'sheet', width: 10 },
     { header: 'Takeoff type', key: 'type', width: 50 },
     { header: 'Name', key: 'label', width: 34 },
+    { header: 'Location', key: 'where', width: 26 },
     { header: 'Quantity', key: 'qty', width: 14, style: { numFmt: '#,##0.000' } },
     { header: 'Unit', key: 'unit', width: 8 },
     { header: 'Sheet counts', key: 'times', width: 12 },
@@ -315,9 +346,11 @@ export async function buildWorkbook(project: Project, activity: ActivityEvent[] 
       if (c.sheet.id !== s.id) continue;
       const { type, vars: v } = c;
       detail.addRow({
+        building: buildingOf(project, s),
         sheet: s.name,
         type: type.name,
         label: [c.m.label, c.role ? `(${roleLabel.get(c.role)})` : ''].filter(Boolean).join(' '),
+        where: roomOf?.(c.m) ?? '',
         // As drawn, the same as the app shows for the takeoff; a typical floor's count is beside it.
         qty: v ? primaryOf(type.kind, v) / sheetRepeat(s) : 'not scaled',
         unit: primaryUnit(type.kind, project.units),
@@ -391,8 +424,8 @@ export async function buildWorkbook(project: Project, activity: ActivityEvent[] 
   return wb;
 }
 
-export async function exportWorkbook(project: Project, activity: ActivityEvent[] = []): Promise<Blob> {
-  const wb = await buildWorkbook(project, activity);
+export async function exportWorkbook(project: Project, activity: ActivityEvent[] = [], roomOf?: (m: Measurement) => string | null): Promise<Blob> {
+  const wb = await buildWorkbook(project, activity, roomOf);
   const buffer = await wb.xlsx.writeBuffer();
   return new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
 }

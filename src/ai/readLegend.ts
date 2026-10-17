@@ -5,6 +5,7 @@ import { textLines } from '../sheetInfo';
 import { describeError, getApiKey, readAssemblyLegend } from './claude';
 import { findAssemblyCodes } from '../assemblyBuilder';
 import { LEGEND_INSTRUCTIONS, legendRequest } from './prompt';
+import { askService, serviceReady, ServiceError } from './service';
 import { ExtractionSchema, type Extraction } from './schema';
 
 export interface LegendResult {
@@ -15,13 +16,20 @@ export interface LegendResult {
   answeredBy: string;
 }
 
-export type AiRoute = 'account' | 'api-key' | 'none';
+export type AiRoute = 'account' | 'service' | 'api-key' | 'none';
 
-/** Hosted pages use the viewer's Claude account; local runs use the user's API key. */
+/**
+ * Claude artifacts use the viewer's Claude account; the web app uses its own AI service
+ * (an access code); local runs use the user's API key.
+ */
 export async function aiRoute(): Promise<AiRoute> {
   if (await getSample()) return 'account';
+  if (serviceReady()) return 'service';
   return getApiKey() ? 'api-key' : 'none';
 }
+
+const schemaInstruction = () =>
+  `Reply with only one JSON object matching this JSON Schema:\n${JSON.stringify(z.toJSONSchema(ExtractionSchema))}`;
 
 /**
  * Tile grid for the hosted route, which downsizes each image to about
@@ -46,6 +54,7 @@ const SAMPLE_ERRORS: Record<string, string> = {
 };
 
 export function describeAiError(e: unknown): string {
+  if (e instanceof ServiceError) return e.message;
   if (isSampleError(e)) return SAMPLE_ERRORS[e.code] ?? 'Something went wrong talking to Claude. Try again.';
   return describeError(e);
 }
@@ -65,7 +74,7 @@ export async function readLegend(page: PDFPageProxy, sheetName: string, signal: 
     const prompt = [
       LEGEND_INSTRUCTIONS,
       legendRequest(sheetName, lines, printedTags),
-      `Reply with only one JSON object matching this JSON Schema:\n${JSON.stringify(z.toJSONSchema(ExtractionSchema))}`,
+      schemaInstruction(),
     ].join('\n\n');
     const raw = await sample.json(prompt, {
       signal,
@@ -75,6 +84,24 @@ export async function readLegend(page: PDFPageProxy, sheetName: string, signal: 
     const parsed = ExtractionSchema.safeParse(raw);
     if (!parsed.success) throw new Error('Claude’s answer did not match the expected assembly format. Try again.');
     return { extraction: parsed.data, runsText, answeredBy: 'your Claude account' };
+  }
+
+  if (serviceReady()) {
+    // Four tiles about 1600 px each: small print stays legible and the request stays cheap.
+    const tiles = await renderTiles(page, 2, 2, 1600);
+    const { json, model } = await askService<unknown>(
+      {
+        task: 'legend',
+        system: LEGEND_INSTRUCTIONS,
+        prompt: `${legendRequest(sheetName, lines, printedTags)}\n\n${schemaInstruction()}`,
+        images: tiles,
+        maxTokens: 16000,
+      },
+      signal,
+    );
+    const parsed = ExtractionSchema.safeParse(json);
+    if (!parsed.success) throw new ServiceError('invalid_json', 'The AI answer did not match the expected assembly format. Try again.');
+    return { extraction: parsed.data, runsText, answeredBy: model };
   }
 
   const tiles = await renderTiles(page, 2, 2, 2576);

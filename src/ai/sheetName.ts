@@ -1,6 +1,7 @@
 import { getSample } from '../host';
 import type { PDFPageProxy } from '../pdf';
 import { askClaudeJson, getApiKey } from './claude';
+import { askService, blobToBase64, serviceReady } from './service';
 
 const PROMPT = `These images are the title block of one sheet of a construction drawing set: the right-hand strip and the bottom strip of the sheet.
 Read the sheet number (for example A6.1, S2.0, M-101) as printed in the title block, and the drawing title.
@@ -21,9 +22,9 @@ export interface SheetName {
   title: string | null;
 }
 
-/** Whether Claude can be asked from here: the hosted page's account, or an API key. */
+/** Whether AI can be asked from here: the artifact's Claude account, the web app's service, or an API key. */
 export async function canAskClaude(): Promise<boolean> {
-  return !!(await getSample()) || !!getApiKey();
+  return !!(await getSample()) || serviceReady() || !!getApiKey();
 }
 
 /**
@@ -37,7 +38,11 @@ export async function readSheetName(page: PDFPageProxy, signal?: AbortSignal): P
     await renderRegion(page, 0, height * 0.86, width, height * 0.14, 1500),
   ];
   const sample = await getSample();
-  const raw = sample ? await sample.json<SheetName>(PROMPT, { signal, images, modelTier: 'default' }) : await askClaudeJson<SheetName>(PROMPT, images, signal);
+  const raw = sample
+    ? await sample.json<SheetName>(PROMPT, { signal, images, modelTier: 'default' })
+    : serviceReady()
+      ? (await askService<SheetName>({ task: 'sheet-name', prompt: PROMPT, images: await Promise.all(images.map(blobToBase64)), maxTokens: 300 }, signal)).json
+      : await askClaudeJson<SheetName>(PROMPT, images, signal);
   const clean = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : null);
   return { number: clean(raw?.number), title: clean(raw?.title) };
 }

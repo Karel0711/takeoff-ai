@@ -9,6 +9,8 @@
     "typecheck": "tsc",
     "test": "vitest run",
     "build:artifact": "tsc && vite build && node scripts/artifact-page.mjs",
+    "build:web": "tsc && vite build --mode web",
+    "deploy:web": "npm run build:web && wrangler pages deploy",
     "desktop": "vite build && electron .",
     "desktop:mac": "tsc && vite build && electron-builder --mac --publish never",
     "desktop:win": "tsc && vite build && electron-builder --win --publish never"
@@ -33,7 +35,8 @@
     "electron-builder": "^26.15.3",
     "typescript": "^7.0.2",
     "vite": "^8.3.4",
-    "vitest": "^5.0.4"
+    "vitest": "^5.0.4",
+    "wrangler": "^4.151.1"
   },
   "private": true,
   "type": "module",

@@ -31,15 +31,18 @@ import type { Segment } from './fill/vectors';
 import { matchSymbol, sampleSymbol, type SymbolSample } from './fill/symbols';
 import { linesLike, traceLine } from './fill/trace';
 import { readSprinklerSheet, runsOf, sizeValue, type FittingKind, type HeadShape } from './fill/sprinkler';
+import { findGridHatch } from './fill/hatchRegions';
 import { checkScale, type ScaleCheck } from './scaleCheck';
 import { sheetImage } from './sheetImage';
 import { compareSheets } from './compareSheets';
 import { pageTexts, type PageText } from './pageText';
 import { readTitleBlock, titleBlockBox } from './titleBlock';
+import { middleOf, roomLocator } from './locate';
+import { buildingOfDoc, buildingsOf, guessBuilding, onBuilding, quantitySections, type QtyGrouping } from './buildings';
 import { isHosted, saveFile } from './host';
 import { defaultTypes, newId, newProject, type Kind, type Measurement, type Project, type Pt, type Sheet, type TakeoffType, type Units } from './model';
 import { inspectPage, openPdf, type PDFDocumentProxy, type PDFPageProxy } from './pdf';
-import { typeTotals } from './quantities';
+import { measurementVars, primaryOf, primaryUnit, sheetRepeat, typeTotals, type TypeTotals } from './quantities';
 import { clearStarterTypes, deleteProject, listProjects, type ProjectSummary, loadActivity, loadCurrentProject, deletePdf, loadPdf, loadProjectById, loadStarterTypes, persistStorage, saveActivity, savePdf, saveProject, saveStarterTypes, setStorageHooks, getSyncMark, setSyncMark } from './storage';
 import { readProjectFiles, writeBackup, writeProjectFile } from './projectFile';
 import { canUseServiceWorker, isInstalled, onLaunchFiles, promptInstall, registerServiceWorker } from './pwa';
@@ -361,10 +364,133 @@ export function App() {
   }, [sheetFilter, sheetList, pdfs]);
 
   const totals = useMemo(() => (project ? typeTotals(project) : []), [project]);
+  type TypeView = 'folders' | 'division' | 'building';
+  const [typeView, setTypeView] = useState<TypeView>(() => {
+    try {
+      const v = localStorage.getItem('typeView');
+      return v === 'division' || v === 'building' ? v : 'folders';
+    } catch {
+      return 'folders';
+    }
+  });
+  const chooseTypeView = (v: TypeView) => {
+    setTypeView(v);
+    try {
+      localStorage.setItem('typeView', v);
+    } catch {
+      // Remembering the choice is a convenience only.
+    }
+  };
+  const [qtyGrouping, setQtyGrouping] = useState<QtyGrouping>(() => {
+    try {
+      return (localStorage.getItem('qtyGrouping') as QtyGrouping) || 'type';
+    } catch {
+      return 'type';
+    }
+  });
+  const chooseGrouping = (g: QtyGrouping) => {
+    setQtyGrouping(g);
+    try {
+      localStorage.setItem('qtyGrouping', g);
+    } catch {
+      // Remembering the choice is a convenience only.
+    }
+  };
+  // Each building's own quantities, for the type list shown by building.
+  const buildingTotals = useMemo(
+    () => (project && typeView === 'building' ? buildingsOf(project).map((building) => ({ building, totals: typeTotals(onBuilding(project, building)) })) : []),
+    [project, typeView],
+  );
+  const qtySections = useMemo(() => (project && qtyGrouping !== 'type' ? quantitySections(project, qtyGrouping) : []), [project, qtyGrouping]);
   const sheetTotals = useMemo(
     () => (project && sheetId ? typeTotals({ ...project, measurements: project.measurements.filter((m) => m.sheetId === sheetId) }) : []),
     [project, sheetId],
   );
+
+  // Where each takeoff is: the room it sits in, read from the sheet's room tags. Worked out in
+  // the background, sheet by sheet, and kept until the takeoff moves.
+  const [rooms, setRooms] = useState<Map<string, string | null>>(new Map());
+  const roomsRef = useRef(rooms);
+  roomsRef.current = rooms;
+  const locators = useRef(new Map<string, Promise<(at: Pt) => string | null>>());
+  const placeKey = (m: Measurement) => `${m.id}:${m.points.length}:${m.points[0]?.[0]},${m.points[0]?.[1]}`;
+  useEffect(() => {
+    if (!project) return;
+    let stop = false;
+    const t = window.setTimeout(async () => {
+      const todo = new Map<string, Measurement[]>();
+      for (const m of project.measurements) {
+        if (roomsRef.current.has(placeKey(m))) continue;
+        const list = todo.get(m.sheetId);
+        if (list) list.push(m);
+        else todo.set(m.sheetId, [m]);
+      }
+      for (const [sid, ms] of todo) {
+        if (stop) return;
+        const s = project.sheets.find((x) => x.id === sid);
+        if (!s || !pdfsRef.current.get(s.docId)) continue;
+        const key = `${s.docId}:${s.page}:${s.metersPerPoint ?? ''}`;
+        let loc = locators.current.get(key);
+        if (!loc) {
+          loc = (async () => {
+            const pg = await pdfsRef.current.get(s.docId)!.getPage(s.page);
+            const [segs, texts] = await Promise.all([segmentsOnce(pg), sheetTexts(s)]);
+            return roomLocator(texts, segs, s.metersPerPoint);
+          })();
+          locators.current.set(key, loc);
+          loc.catch(() => locators.current.delete(key));
+        }
+        const find = await loc.catch(() => null);
+        if (!find || stop) continue;
+        const types = new Map(project.types.map((x) => [x.id, x]));
+        const found = new Map(roomsRef.current);
+        for (const m of ms) found.set(placeKey(m), m.points.length ? find(middleOf(m.points, types.get(m.typeId)?.kind === 'area')) : null);
+        if (!stop) setRooms(found);
+        await new Promise((r) => setTimeout(r, 0));
+      }
+    }, 800);
+    return () => {
+      stop = true;
+      window.clearTimeout(t);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project?.measurements, project?.sheets, pdfs]);
+  const roomOf = useCallback((m: Measurement) => rooms.get(placeKey(m)) ?? null, [rooms]);
+
+  /** Where a type's takeoffs are: each sheet with its share, for the Quantities card. */
+  const whereOf = useCallback(
+    (typeId: string) => {
+      if (!project) return [];
+      const type = project.types.find((t) => t.id === typeId);
+      if (!type) return [];
+      const out = new Map<string, { sheetId: string; name: string; n: number; qty: number }>();
+      for (const m of project.measurements) {
+        if (m.typeId !== typeId) continue;
+        const s = project.sheets.find((x) => x.id === m.sheetId);
+        if (!s) continue;
+        const v = measurementVars(m, type, s, project.units);
+        const e = out.get(s.id) ?? out.set(s.id, { sheetId: s.id, name: s.name, n: 0, qty: 0 }).get(s.id)!;
+        e.n++;
+        if (v) e.qty += primaryOf(type.kind, v) * sheetRepeat(s);
+      }
+      const unit = primaryUnit(type.kind, project.units);
+      const order = new Map(project.sheets.map((s, i) => [s.id, i]));
+      return [...out.values()].sort((a, b) => (order.get(a.sheetId) ?? 0) - (order.get(b.sheetId) ?? 0)).map((e) => ({ ...e, unit }));
+    },
+    [project],
+  );
+
+  /** Goes to a sheet and frames every takeoff of a type on it. */
+  const showTypeOn = (typeId: string, sid: string) => {
+    if (!project) return;
+    const pts = project.measurements.filter((m) => m.typeId === typeId && m.sheetId === sid).flatMap((m) => m.points);
+    if (sid !== sheetId) setSheetId(sid);
+    setSelectedId(null);
+    if (!pts.length) return;
+    const xs = pts.map((p) => p[0]);
+    const ys = pts.map((p) => p[1]);
+    setFocus((f) => ({ box: [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)], n: (f?.n ?? 0) + 1 }));
+  };
 
   const record = useCallback((events: ActivityEvent[], replaceBatch?: string) => {
     if (!events.length && !replaceBatch) return;
@@ -933,7 +1059,7 @@ export function App() {
   async function exportExcel() {
     setBusy('Building the Excel file…');
     try {
-      const blob = await exportWorkbook(project!, activityRef.current);
+      const blob = await exportWorkbook(project!, activityRef.current, roomOf);
       const filename = `${project!.name.replace(/[^\w\- ]+/g, '').trim() || 'takeoff'} - takeoff.xlsx`;
       if ((await saveFile(filename, blob)) === 'failed') {
         await notify('The Excel file could not be saved here. Try again in a moment.');
@@ -1136,8 +1262,24 @@ export function App() {
     setToast({ text: `Removed the group ${g?.name ?? ''}; its types are kept, ungrouped`, undo: true });
   }
 
+  /** Renames a division on every type in it; naming it as another division merges the two. */
+  async function renameDivision(from: string) {
+    const name = await askText('Rename division', { initial: from, hint: `Every type in ${from || 'no division'} moves to this division; naming an existing one merges them.` });
+    if (name === null) return;
+    const to = name.trim() || undefined;
+    if ((to ?? '') === from) return;
+    commit((p) => ({ ...p, types: p.types.map((t) => ((t.division?.trim() || '') === from ? { ...t, division: to } : t)) }), 'Rename division');
+  }
+
   function moveToGroup(typeId: string, groupId: string | undefined) {
     const t = project!.types.find((x) => x.id === typeId);
+    // In the by-division view, dropping a type on a division files it in that division.
+    if (groupId?.startsWith('div:')) {
+      const division = groupId.slice(4) || undefined;
+      if (!t || (t.division ?? undefined) === division) return;
+      commit((p) => ({ ...p, types: p.types.map((x) => (x.id === typeId ? { ...x, division } : x)) }), 'Move to division');
+      return;
+    }
     if (!t || (t.groupId ?? undefined) === groupId) return;
     commit((p) => ({ ...p, types: p.types.map((x) => (x.id === typeId ? { ...x, groupId } : x)) }), 'Move to group');
   }
@@ -1292,7 +1434,8 @@ export function App() {
         color: PALETTE[types.length % PALETTE.length],
         kind,
         height: 0,
-        division: '21 Fire Suppression',
+        // The estimator's workbook prices fire suppression in its mechanical tab.
+        division: '20-25 Mechanical',
         package: 'Fire protection',
         groupId,
         items: items.map((it) => ({ id: newId(), ...it })),
@@ -1367,6 +1510,109 @@ export function App() {
     });
   }
 
+  /**
+   * Ceilings, with nothing marked: on every reflected ceiling plan, the areas the ceiling grid is
+   * drawn over. A demolition plan's are existing ceiling to take down, an existing plan's (no new
+   * ceiling shown) existing ceiling to take down and put back for the work above it, and any
+   * other plan's new ceiling. A re-run replaces what the last run made.
+   */
+  async function automateCeilings() {
+    const p = projectRef.current!;
+    const metric = p.units === 'metric';
+    const title = (x: Sheet) => `${x.name} ${x.title ?? ''}`;
+    let targets = p.sheets.filter((x) => !x.superseded && /REFLECTED CEILING|\bRCP\b|CEILING PLAN/i.test(title(x)));
+    if (!targets.length && sheet) targets = [sheet];
+    const unscaled = targets.filter((x) => !x.metersPerPoint);
+    targets = targets.filter((x) => x.metersPerPoint);
+    if (!targets.length) {
+      setToast({ text: unscaled.length ? 'Set the ceiling plans’ scale first.' : 'No reflected ceiling plans found.', undo: false });
+      return;
+    }
+    type Kind = 'new' | 'demo' | 'reinstate';
+    const kindOf = (x: Sheet): Kind => (/DEMO/i.test(title(x)) ? 'demo' : /EXISTING/i.test(title(x)) ? 'reinstate' : 'new');
+    const found: { sheet: Sheet; kind: Kind; regions: Pt[][] }[] = [];
+    try {
+      for (const [i, x] of targets.entries()) {
+        setBusy(`Ceilings: reading ${x.name} (${i + 1} of ${targets.length})…`);
+        await new Promise((r) => setTimeout(r, 0));
+        const pg = await pdfsRef.current.get(x.docId)?.getPage(x.page);
+        if (!pg) continue;
+        const [segs, texts] = await Promise.all([segmentsOnce(pg), sheetTexts(x)]);
+        const block = titleBlockBox(texts, x.width, x.height);
+        const grid = findGridHatch(segs, x.metersPerPoint, block ? [block] : []);
+        if (grid?.regions.length) found.push({ sheet: x, kind: kindOf(x), regions: grid.regions.map((r) => r.points) });
+      }
+    } catch (e) {
+      setToast({ text: `Something went wrong: ${e instanceof Error ? e.message : String(e)}`, undo: false });
+      return;
+    } finally {
+      setBusy(null);
+    }
+    if (!found.length) {
+      setToast({ text: 'No ceiling grid found on the ceiling plans.', undo: false });
+      return;
+    }
+    const area = metric ? 'm²' : 'SF';
+    const len = metric ? 'm' : 'ft';
+    const tile = metric ? 0.72 : 8;
+    const TYPES: Record<Kind, { name: string; division: string; pkg: string; items: { name: string; unit: string; formula: string }[] }> = {
+      new: {
+        name: metric ? 'Ceiling – new suspended T-bar, 600×1200' : 'Ceiling – new suspended T-bar, 2×4',
+        division: '09 Finishes',
+        pkg: 'Drywall & ceilings',
+        items: [
+          { name: 'Ceiling area', unit: area, formula: 'A' },
+          { name: metric ? 'Tiles 600×1200 + 5%' : 'Tiles 2×4 + 5%', unit: 'ea', formula: `ceil(A / ${tile} * 1.05)` },
+          { name: metric ? 'Main tees @ 1200, 3.66 m long' : "Main tees @ 4', 12' long", unit: 'ea', formula: metric ? 'ceil(A / 1.2 / 3.66)' : 'ceil(A / 4 / 12)' },
+          { name: metric ? '1200 cross tees @ 600' : "4' cross tees @ 2'", unit: 'ea', formula: `ceil(A / ${tile})` },
+          { name: 'Wall angle', unit: len, formula: 'P' },
+          { name: metric ? 'Hanger wires @ 1200×1200' : "Hanger wires @ 4'×4'", unit: 'ea', formula: metric ? 'ceil(A / 1.44)' : 'ceil(A / 16)' },
+        ],
+      },
+      demo: {
+        name: 'Ceiling – demolish existing',
+        division: '02 Existing Conditions',
+        pkg: 'Demolition & abatement',
+        items: [{ name: 'Existing ceiling to demolish', unit: area, formula: 'A' }],
+      },
+      reinstate: {
+        name: 'Ceiling – remove & reinstate existing tiles',
+        division: '09 Finishes',
+        pkg: 'Drywall & ceilings',
+        items: [{ name: 'Existing ceiling to remove and reinstate', unit: area, formula: 'A' }],
+      },
+    };
+    const types: TakeoffType[] = [...p.types];
+    const made: TakeoffType[] = [];
+    const typeFor = (k: Kind) => {
+      const def = TYPES[k];
+      const got = types.find((t) => t.name === def.name && t.kind === 'area');
+      if (got) return got.id;
+      const t: TakeoffType = { id: newId(), name: def.name, color: PALETTE[types.length % PALETTE.length], kind: 'area', height: 0, division: def.division, package: def.pkg, items: def.items.map((it) => ({ id: newId(), ...it })) };
+      types.push(t);
+      made.push(t);
+      return t.id;
+    };
+    const added: Project['measurements'] = [];
+    let total = 0;
+    for (const f of found)
+      for (const points of f.regions) {
+        added.push({ id: newId(), sheetId: f.sheet.id, typeId: typeFor(f.kind), points, holes: [], source: 'ceilings' });
+        total += ringArea(points) * f.sheet.metersPerPoint! ** 2;
+      }
+    const sheets = new Set(found.map((f) => f.sheet.id));
+    commit(
+      (q) => ({ ...q, types: [...q.types, ...made], measurements: [...q.measurements.filter((m) => !(m.source === 'ceilings' && sheets.has(m.sheetId))), ...added] }),
+      'Ceilings',
+    );
+    const byKind = (['new', 'demo', 'reinstate'] as Kind[]).map((k) => [k, found.filter((f) => f.kind === k).length] as const).filter(([, n]) => n);
+    const words: Record<Kind, string> = { new: 'new', demo: 'demolition', reinstate: 'remove & reinstate' };
+    setToast({
+      text: `Ceilings on ${found.length} plan${found.length === 1 ? '' : 's'} (${byKind.map(([k, n]) => `${n} ${words[k]}`).join(', ')}): ${formatQty(metric ? total : total * 10.7639)} ${area}${unscaled.length ? ` · ${unscaled.length} without a scale skipped` : ''}`,
+      undo: true,
+    });
+  }
+
   /** Counts every copy of the symbol in the box, as the active count type. */
   async function countSymbols(box: [number, number, number, number]) {
     if (!page || !sheet || activeType?.kind !== 'count') return;
@@ -1406,6 +1652,16 @@ export function App() {
 
   /** Reads the legend boxed on the sheet into rows for the legend dialog. */
   /** Starts marking where the sheet number (or title) sits in the title block. */
+  /** Sets which building a drawing set is for: its quantities are grouped under that name. */
+  async function setDocBuilding(docId: string) {
+    const d = projectRef.current!.docs.find((x) => x.id === docId);
+    if (!d) return;
+    const name = await askText('Building', { initial: buildingOfDoc(d), hint: `Quantities can be grouped by building. Read from the file name: ${guessBuilding(d.name)}` });
+    if (name === null) return;
+    const building = name.trim() && name.trim() !== guessBuilding(d.name) ? name.trim() : undefined;
+    commit((p) => ({ ...p, docs: p.docs.map((x) => (x.id === docId ? { ...x, building } : x)) }), 'Set building');
+  }
+
   /** Names every sheet from its title block: its sheet number, with the drawing title beside it. */
   async function autoNameSheets() {
     const sheets = projectRef.current!.sheets;
@@ -1717,7 +1973,7 @@ export function App() {
     const unnamed = project!.sheets.filter((x) => /^Page \d+$/.test(x.name));
     if (!unnamed.length) return;
     if (!(await canAskClaude())) {
-      setToast({ text: 'Reading sheet names needs Claude: add your API key in AI settings.', undo: false });
+      setToast({ text: 'Reading sheet names needs AI: set it up in AI settings.', undo: false });
       return;
     }
     const names = new Map<string, string>();
@@ -2164,7 +2420,13 @@ export function App() {
                             <Icon name="chevron" size={12} />
                           </span>
                           <span className="doc-name">{d.name.replace(/\.pdf$/i, '')}</span>
+                          <span className="doc-building" title="Building these sheets are for">
+                            {buildingOfDoc(d)}
+                          </span>
                           <span className="doc-count">{done ? `${done}/${all.length}` : all.length}</span>
+                        </button>
+                        <button className="icon-button small doc-building-edit" title="Set the building these sheets are for" aria-label={`Set building for ${d.name}`} onClick={() => void setDocBuilding(d.id)}>
+                          <Icon name="edit" size={13} />
                         </button>
                         <button className="icon-button small danger doc-remove" title={`Remove ${d.name} and its takeoffs`} aria-label={`Remove ${d.name}`} onClick={() => void removeDrawings(d.id)}>
                           <Icon name="trash" size={13} />
@@ -2202,10 +2464,30 @@ export function App() {
             <button className="icon-button small" onClick={() => void newGroup()} title="New group (a folder for takeoff types)" aria-label="New group">
               <Icon name="folderPlus" size={16} />
             </button>
+            <button
+              className={`link-button type-view ${typeView !== 'folders' ? 'on' : ''}`}
+              onClick={() => chooseTypeView(typeView === 'folders' ? 'division' : typeView === 'division' ? 'building' : 'folders')}
+              title={
+                typeView === 'folders'
+                  ? 'Showing your groups · click to show by estimate division'
+                  : typeView === 'division'
+                    ? 'Showing by division · click to show by building, then division'
+                    : 'Showing by building, then division · click to show your groups'
+              }
+            >
+              {typeView === 'folders' ? 'By group' : typeView === 'division' ? 'By division' : 'By building'}
+            </button>
           </div>
           <ul className="source-list">
             {(() => {
-              const groups = project.groups ?? [];
+              const byDivision = typeView === 'division';
+              const divisionName = (t: TakeoffType) => t.division?.trim() || '';
+              const groups = byDivision
+                ? [...new Set(project.types.map(divisionName))]
+                    .sort((a, b) => (!a ? 1 : !b ? -1 : a.localeCompare(b, undefined, { numeric: true })))
+                    .map((d) => ({ id: `div:${d}`, name: d || 'No division' }))
+                : (project.groups ?? []);
+              const groupOf = (t: TakeoffType) => (byDivision ? `div:${divisionName(t)}` : t.groupId);
               const known = new Set(groups.map((g) => g.id));
               const eye = (ids: string[], hidden: boolean, label: string) => (
                 <button
@@ -2236,12 +2518,12 @@ export function App() {
                   setDropOn(null);
                 },
               });
-              const renderType = (t: TakeoffType) => {
-                const tt = totalFor(t.id);
+              const renderType = (t: TakeoffType, own?: TypeTotals, keyPrefix = '') => {
+                const tt = own ?? totalFor(t.id);
                 return (
                   <li
-                    key={t.id}
-                    className={`type-item ${t.hidden ? 'is-hidden' : ''} ${t.groupId && known.has(t.groupId) ? 'in-group' : ''}`}
+                    key={keyPrefix + t.id}
+                    className={`type-item ${t.hidden ? 'is-hidden' : ''} ${(keyPrefix && keyPrefix !== 'unused|') || (!keyPrefix && groupOf(t) && known.has(groupOf(t)!)) ? 'in-group' : ''} ${keyPrefix.includes('|') && keyPrefix !== 'unused|' ? 'in-division' : ''}`}
                     draggable
                     onDragStart={(e) => {
                       dragType.current = t.id;
@@ -2283,11 +2565,73 @@ export function App() {
                   </li>
                 );
               };
-              const loose = project.types.filter((t) => !t.groupId || !known.has(t.groupId));
+              if (typeView === 'building') {
+                // Each building, its divisions, and the types taken off on it with that building's quantities.
+                const fold = (id: string) => setCollapsedGroups((c) => (c.has(id) ? new Set([...c].filter((x) => x !== id)) : new Set(c).add(id)));
+                const order = (a: string, b: string) => (!a ? 1 : !b ? -1 : a.localeCompare(b, undefined, { numeric: true }));
+                const usedAnywhere = new Set<string>();
+                const sections = buildingTotals.map(({ building, totals: bt }) => {
+                  const used = bt.filter((x) => x.vars.N > 0 || x.unscaled > 0);
+                  for (const x of used) usedAnywhere.add(x.type.id);
+                  const bid = `b:${building}`;
+                  const open = !collapsedGroups.has(bid);
+                  const divisions = [...new Set(used.map((x) => divisionName(x.type)))].sort(order);
+                  return (
+                    <Fragment key={bid}>
+                      <li className="type-group building-group">
+                        {used.length ? eye(used.map((x) => x.type.id), used.every((x) => x.type.hidden), building) : <span className="eye-space" />}
+                        <button className="doc-head group-head" onClick={() => fold(bid)} aria-expanded={open} title={`${building} · click to fold`}>
+                          <span className={`doc-chevron ${open ? 'open' : ''}`}>
+                            <Icon name="chevron" size={12} />
+                          </span>
+                          <Icon name="folder" size={14} />
+                          <span className="doc-name">{building}</span>
+                          <span className="doc-count">{used.length}</span>
+                        </button>
+                      </li>
+                      {open &&
+                        divisions.map((d) => {
+                          const did = `${bid}|${d}`;
+                          const dOpen = !collapsedGroups.has(did);
+                          const members = used.filter((x) => divisionName(x.type) === d);
+                          return (
+                            <Fragment key={did}>
+                              <li className="type-group division-group">
+                                <span className="eye-space" />
+                                <button className="doc-head group-head" onClick={() => fold(did)} aria-expanded={dOpen} title={`${d || 'No division'} in ${building} · click to fold`}>
+                                  <span className={`doc-chevron ${dOpen ? 'open' : ''}`}>
+                                    <Icon name="chevron" size={12} />
+                                  </span>
+                                  <span className="doc-name">{d || 'No division'}</span>
+                                  <span className="doc-count">{members.length}</span>
+                                </button>
+                              </li>
+                              {dOpen && members.map((x) => renderType(x.type, x, `${did}|`))}
+                            </Fragment>
+                          );
+                        })}
+                    </Fragment>
+                  );
+                });
+                const unused = project.types.filter((t) => !usedAnywhere.has(t.id));
+                return (
+                  <>
+                    {sections}
+                    {unused.length > 0 && (
+                      <li className="type-group loose">
+                        <span className="eye-space" />
+                        <span className="group-head muted">Not taken off yet</span>
+                      </li>
+                    )}
+                    {unused.map((t) => renderType(t, undefined, 'unused|'))}
+                  </>
+                );
+              }
+              const loose = project.types.filter((t) => !groupOf(t) || !known.has(groupOf(t)!));
               return (
                 <>
                   {groups.map((g) => {
-                    const members = project.types.filter((t) => t.groupId === g.id);
+                    const members = project.types.filter((t) => groupOf(t) === g.id);
                     const open = !collapsedGroups.has(g.id);
                     const allHidden = members.length > 0 && members.every((t) => t.hidden);
                     return (
@@ -2297,7 +2641,7 @@ export function App() {
                           <button
                             className="doc-head group-head"
                             onClick={() => setCollapsedGroups((c) => (c.has(g.id) ? new Set([...c].filter((x) => x !== g.id)) : new Set(c).add(g.id)))}
-                            onDoubleClick={() => void renameGroup(g.id)}
+                            onDoubleClick={() => void (byDivision ? renameDivision(g.id.slice(4)) : renameGroup(g.id))}
                             aria-expanded={open}
                             title={`${g.name} · click to fold, double-click to rename, drag types here to file them`}
                           >
@@ -2309,15 +2653,20 @@ export function App() {
                             <span className="doc-count">{members.length}</span>
                           </button>
                           <span className="row-actions-hover">
-                            <button className="icon-button small" title="Rename group" aria-label={`Rename ${g.name}`} onClick={() => void renameGroup(g.id)}>
+                            <button
+                              className="icon-button small"
+                              title={byDivision ? 'Rename the division for all its types (an existing division merges them)' : 'Rename group'}
+                              aria-label={`Rename ${g.name}`}
+                              onClick={() => void (byDivision ? renameDivision(g.id.slice(4)) : renameGroup(g.id))}
+                            >
                               <Icon name="edit" size={13} />
                             </button>
-                            <button className="icon-button small danger" title="Remove the group (its types are kept)" aria-label={`Remove group ${g.name}`} onClick={() => deleteGroup(g.id)}>
+                            <button className="icon-button small danger" hidden={byDivision} title="Remove the group (its types are kept)" aria-label={`Remove group ${g.name}`} onClick={() => deleteGroup(g.id)}>
                               <Icon name="trash" size={13} />
                             </button>
                           </span>
                         </li>
-                        {open && members.map(renderType)}
+                        {open && members.map((t) => renderType(t))}
                         {open && !members.length && <li className="group-empty">Drag types here, or use a type’s folder button</li>}
                       </Fragment>
                     );
@@ -2328,7 +2677,7 @@ export function App() {
                       <span className="group-head muted">No group</span>
                     </li>
                   )}
-                  {loose.map(renderType)}
+                  {loose.map((t) => renderType(t))}
                 </>
               );
             })()}
@@ -2558,6 +2907,12 @@ export function App() {
             sheet={sheet}
             totals={totals}
             sheetTotals={sheetTotals}
+            sections={qtySections}
+            roomOf={roomOf}
+            whereOf={whereOf}
+            onShowType={showTypeOn}
+            grouping={qtyGrouping}
+            onGrouping={chooseGrouping}
             activity={activity}
             selectedId={selectedId}
             onSelect={setSelectedId}
@@ -2680,6 +3035,13 @@ export function App() {
                 ready: !!page,
               },
               {
+                id: 'ceilings' as const,
+                icon: 'area' as const,
+                title: 'Ceilings',
+                text: 'Every reflected ceiling plan in the set: new ceiling, ceiling to demolish, and existing ceiling to remove and reinstate, from the ceiling grid drawn.',
+                ready: true,
+              },
+              {
                 id: 'sprinklers' as const,
                 icon: 'count' as const,
                 title: 'Fire sprinklers',
@@ -2703,6 +3065,7 @@ export function App() {
                   setPopover(null);
                   if (a.id === 'doors') void countDoorTags();
                   else if (a.id === 'sprinklers') void automateSprinklers();
+                  else if (a.id === 'ceilings') void automateCeilings();
                   else if (a.id === 'legend') {
                     setLegendPick(true);
                     setTool('symbol');
@@ -2810,7 +3173,7 @@ export function App() {
                 ? [{ label: 'Copy takeoffs to another sheet…', hint: 'Typical floors', onSelect: () => setTimeout(() => setPopover('copy'), 0) }]
                 : []),
               ...(project.sheets.some((x) => /^Page \d+$/.test(x.name))
-                ? [{ label: 'Name sheets with Claude…', hint: 'Sheets with no text', onSelect: () => void nameSheetsWithAi() }]
+                ? [{ label: 'Name sheets with AI…', hint: 'Sheets with no text', onSelect: () => void nameSheetsWithAi() }]
                 : []),
               ...(canUseServiceWorker() && !isInstalled() ? [{ label: 'Install as an app…', onSelect: () => void installApp() }] : []),
               ...(isHosted ? [] : [{ label: 'AI settings…', onSelect: () => setAiDialog('settings') }]),

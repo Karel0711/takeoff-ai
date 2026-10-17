@@ -810,11 +810,68 @@ input[type='checkbox'] {
   font-weight: 400;
   color: var(--text-3);
 }
-.doc-group .doc-remove {
+.doc-group .doc-remove,
+.doc-group .doc-building-edit {
   opacity: 0;
 }
-.doc-group:hover .doc-remove {
+.doc-group:hover .doc-remove,
+.doc-group:hover .doc-building-edit {
   opacity: 1;
+}
+/* The building a drawing set is for, beside its name. */
+.doc-building {
+  flex: none;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--fill);
+  font-weight: 500;
+  color: var(--text-2);
+}
+
+/* Quantities grouped by building and division. */
+.qty-grouping {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
+  font-size: 12px;
+}
+.qty-grouping select {
+  font-size: 12px;
+}
+.qty-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.qty-section.depth-1 {
+  margin-left: 10px;
+}
+.qty-section-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 2px;
+  border: none;
+  background: none;
+  box-shadow: none;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  text-align: left;
+}
+.qty-section.depth-1 > .qty-section-head {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2);
+}
+.qty-section-title {
+  flex: 1;
 }
 
 /* Sheet numbers read from the title block. */
@@ -1202,6 +1259,70 @@ input[type='checkbox'] {
 .row-sheet {
   color: var(--text-3);
   font-size: 12px;
+}
+.row-where {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  max-width: 45%;
+  min-width: 0;
+  line-height: 1.25;
+}
+.row-where > span {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.row-room {
+  color: var(--text-2);
+  font-size: 11px;
+}
+.selection-sub .link-button {
+  padding: 0;
+  font-size: inherit;
+}
+.qty-where {
+  padding: 2px 12px 8px;
+}
+.qty-where > .link-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  padding: 2px 0;
+}
+.qty-where ul {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+}
+.qty-where li button {
+  display: flex;
+  width: 100%;
+  gap: 8px;
+  align-items: baseline;
+  padding: 4px 6px;
+  border: none;
+  background: none;
+  border-radius: 6px;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  color: var(--text);
+}
+.qty-where li button:hover {
+  background: var(--window);
+}
+.where-sheet {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.qty-where .num {
+  font-variant-numeric: tabular-nums;
 }
 .row-delete {
   opacity: 0;
@@ -2238,7 +2359,7 @@ button.link-button:hover {
 /* Quick start */
 .quick-start {
   margin: 4px 0 0;
-  padding-left: 22px;
+  padding-left: 14px;
 }
 .quick-start li {
   margin-bottom: 12px;
@@ -2383,4 +2504,20 @@ button.link-button:hover {
 .done-tag {
   color: #248a3d;
   font-weight: 600;
+}
+
+/* The type list shown by group or by estimate division. */
+.source-head .type-view {
+  margin-left: 4px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+/* The type list by building: divisions sit under their building, types under their division. */
+.type-group.division-group .group-head {
+  padding-left: 18px;
+  font-weight: 500;
+}
+.type-item.in-division .source-row {
+  padding-left: 14px;
 }

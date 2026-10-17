@@ -5,6 +5,8 @@ import { measurementVars, primaryOf, primaryUnit, type TypeTotals } from '../qua
 import { formatQty } from '../units';
 import { Icon } from './Icons';
 import { QuantityPanel } from './QuantityPanel';
+import type { QtyGrouping, QtySection } from '../buildings';
+import type { Where } from './QuantityPanel';
 
 export type InspectorTab = 'quantities' | 'takeoffs' | 'history';
 
@@ -16,6 +18,15 @@ interface Props {
   totals: TypeTotals[];
   /** The same, for the current sheet only. */
   sheetTotals: TypeTotals[];
+  sections: QtySection[];
+  /** The room a takeoff sits in, once worked out. */
+  roomOf: (m: Measurement) => string | null;
+  /** Each sheet a type is taken off on, with its share. */
+  whereOf: (typeId: string) => Where[];
+  /** Goes to a sheet and frames a type's takeoffs on it. */
+  onShowType: (typeId: string, sheetId: string) => void;
+  grouping: QtyGrouping;
+  onGrouping: (g: QtyGrouping) => void;
   activity: ActivityEvent[];
   selectedId: string | null;
   onSelect: (id: string | null) => void;
@@ -52,7 +63,7 @@ export function Inspector(props: Props) {
         </div>
       </div>
       <div className="inspector-body">
-        {tab === 'quantities' && <QuantityPanel totals={props.totals} sheetTotals={props.sheetTotals} sheetName={props.sheet ? `${props.sheet.name}${props.sheet.repeat ? ` ×${props.sheet.repeat}` : ''}` : undefined} onEdit={props.onEditType} />}
+        {tab === 'quantities' && <QuantityPanel totals={props.totals} sheetTotals={props.sheetTotals} sections={props.sections} grouping={props.grouping} onGrouping={props.onGrouping} whereOf={props.whereOf} onShowType={props.onShowType} sheetName={props.sheet ? `${props.sheet.name}${props.sheet.repeat ? ` ×${props.sheet.repeat}` : ''}` : undefined} onEdit={props.onEditType} />}
         {tab === 'takeoffs' && <TakeoffList {...props} />}
         {tab === 'history' && <HistoryList events={props.activity} />}
       </div>
@@ -67,9 +78,10 @@ function qtyOf(m: Measurement, type: TakeoffType | undefined, project: Project):
   return v ? `${formatQty(primaryOf(type.kind, v))} ${primaryUnit(type.kind, project.units)}` : 'no scale';
 }
 
-function SelectionCard({ m, project, sheet: current, onDelete, onRetype, onSelect, onEditFinishes, onFindSimilar, canFindSimilar, onRename }: Props & { m: Measurement }) {
+function SelectionCard({ m, project, sheet: current, onDelete, onRetype, onSelect, onEditFinishes, onFindSimilar, canFindSimilar, onRename, roomOf, onShow }: Props & { m: Measurement }) {
   const type = project.types.find((t) => t.id === m.typeId);
   const sheet = project.sheets.find((s) => s.id === m.sheetId);
+  const room = roomOf(m);
   return (
     <div className="selection-card">
       <div className="selection-top">
@@ -77,7 +89,10 @@ function SelectionCard({ m, project, sheet: current, onDelete, onRetype, onSelec
         <div className="selection-text">
           <div className="selection-qty">{qtyOf(m, type, project)}</div>
           <div className="selection-sub">
-            Selected takeoff · {sheet?.name}
+            <button className="link-button" title="Show it on the sheet" onClick={() => onShow(m.id)}>
+              {sheet?.name}
+              {room ? ` · ${room}` : ''}
+            </button>
             {m.source === 'walls' ? ' · wall takeoff' : ''}
           </div>
         </div>
@@ -127,13 +142,19 @@ function SelectionCard({ m, project, sheet: current, onDelete, onRetype, onSelec
   );
 }
 
-function TakeoffList({ project, sheet, selectedId, onShow, onDelete }: Props) {
+function TakeoffList({ project, sheet, selectedId, onShow, onDelete, roomOf }: Props) {
   const [scope, setScope] = useState<'sheet' | 'all'>('sheet');
   const [query, setQuery] = useState('');
   const typeName = useMemo(() => new Map(project.types.map((t) => [t.id, t.name.toLowerCase()])), [project.types]);
   const q = query.trim().toLowerCase();
+  const sheetNames = useMemo(() => new Map(project.sheets.map((s) => [s.id, s.name])), [project.sheets]);
   const list = (scope === 'sheet' && sheet ? project.measurements.filter((m) => m.sheetId === sheet.id) : project.measurements).filter(
-    (m) => !q || (m.label ?? '').toLowerCase().includes(q) || (typeName.get(m.typeId) ?? '').includes(q),
+    (m) =>
+      !q ||
+      (m.label ?? '').toLowerCase().includes(q) ||
+      (typeName.get(m.typeId) ?? '').includes(q) ||
+      (roomOf(m) ?? '').toLowerCase().includes(q) ||
+      (scope === 'all' && (sheetNames.get(m.sheetId) ?? '').toLowerCase().includes(q)),
   );
   const groups = useMemo(() => {
     const byType = new Map<string, Measurement[]>();
@@ -144,7 +165,7 @@ function TakeoffList({ project, sheet, selectedId, onShow, onDelete }: Props) {
     }
     return project.types.filter((t) => byType.has(t.id)).map((t) => ({ type: t, items: byType.get(t.id)! }));
   }, [list, project.types]);
-  const sheetName = (id: string) => project.sheets.find((s) => s.id === id)?.name ?? '';
+  const sheetName = (id: string) => sheetNames.get(id) ?? '';
 
   return (
     <div className="takeoff-list">
@@ -165,7 +186,7 @@ function TakeoffList({ project, sheet, selectedId, onShow, onDelete }: Props) {
       </div>
       <label className="search takeoff-search">
         <Icon name="search" size={14} />
-        <input id="takeoff-filter" placeholder="Find a room, door or type" value={query} onChange={(e) => setQuery(e.target.value)} />
+        <input id="takeoff-filter" placeholder="Find a room, sheet or type" value={query} onChange={(e) => setQuery(e.target.value)} />
       </label>
       {groups.length === 0 && (
         <div className="empty-note">
@@ -194,7 +215,10 @@ function TakeoffList({ project, sheet, selectedId, onShow, onDelete }: Props) {
                   {/* An unnamed count is one each: its type's name says more than "1 ea". */}
                   {type.kind === 'count' && !m.label ? type.name.split(' – ')[0] : qtyOf(m, type, project)}
                 </span>
-                {scope === 'all' && <span className="row-sheet">{sheetName(m.sheetId)}</span>}
+                <span className="row-where" title={[scope === 'all' ? sheetName(m.sheetId) : '', roomOf(m) ?? ''].filter(Boolean).join(' · ')}>
+                  {scope === 'all' && <span className="row-sheet">{sheetName(m.sheetId)}</span>}
+                  {roomOf(m) && <span className="row-room">{roomOf(m)}</span>}
+                </span>
                 <button
                   className="icon-button row-delete"
                   title="Delete takeoff"
