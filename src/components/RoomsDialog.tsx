@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { findRoomLabels, fillRoomsAsync, type FoundRoom } from '../fill/rooms';
+import { findRoomLabels, fillRoomsAsync, roomPoint, type FoundRoom } from '../fill/rooms';
 import { fillRoom } from '../fill/roomFill';
 import { ringArea } from '../geometry';
 import { segmentsOf, wallModelFor } from '../fill/sheetWalls';
@@ -86,7 +86,7 @@ export function RoomsDialog({ page, sheet, units, types, earlier, palette, maxOp
       const model = await wallModelFor(page, sheet, Math.max(8, maxOpening * 2));
       await new Promise((r) => setTimeout(r, 0));
       const room = state.rooms[i];
-      const res = fillRoom(model, room.labels.map((l) => l.at), sheet.width, sheet.height, 2);
+      const res = fillRoom(model, room.labels.map(roomPoint), sheet.width, sheet.height, 2);
       if (res.ok) {
         // From the latest state: another retry may have finished meanwhile.
         setState((cur) =>

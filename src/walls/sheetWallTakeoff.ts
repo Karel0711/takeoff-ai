@@ -80,7 +80,8 @@ export async function sheetWallTakeoff(
 ): Promise<WallTakeoffResult> {
   if (!sheet.metersPerPoint) throw new Error('Set the sheet scale first.');
   const [model, segments, texts] = await Promise.all([wallModelFor(page, sheet, maxOpening), segmentsOf(page), wallTagTexts(page, known.codes, known.set)]);
-  return wallTakeoff(model.lines, segments, texts, sheet.metersPerPoint, {
+  // The wall takeoff reads tags and leaders itself: it takes the wall pens' symbols as drawn.
+  return wallTakeoff([...model.lines, ...(model.symbols ?? [])], segments, texts, sheet.metersPerPoint, {
     doors: model.openings,
     throughDoors,
     stopAtDoors,
