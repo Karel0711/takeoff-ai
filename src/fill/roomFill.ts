@@ -1,7 +1,8 @@
 import type { Pt } from '../model';
 import { drawSegments, fillHoles, floodFill, makeGrid, simplify, toSheet, traceBoundary, type Grid } from './raster';
 import type { Segment } from './vectors';
-import { bridgeGaps, detectWallPens, penStats, wallShapedFills, widthKey, type PenStats } from './walls';
+import { SegmentIndex } from '../walls/bands';
+import { bridgeGaps, detectWallPens, penStats, symbolShapes, wallShapedFills, widthKey, type PenStats } from './walls';
 
 export interface WallModel {
   /** Wall linework plus the lines that close door and window openings. */
@@ -11,6 +12,34 @@ export interface WallModel {
   bridges: number;
   /** The floor strip across each closed opening, between the bridges on its two wall faces. */
   openings: Pt[][];
+  /**
+   * The same sheet with the next lighter pen that also draws in wall-like pairs taken as
+   * wall too (walls drawn lighter: existing walls on a renovation, thin partitions), or
+   * null when there is none. For rooms that do not close, or swallow another room's tag,
+   * with the pens chosen for the whole sheet. `skip` passes over pens known not to be
+   * walls (the pen the room tags are drawn in).
+   */
+  lighter?: (skip?: (pen: string) => boolean) => WallModel | null;
+  /** The range of wall thicknesses looked for, in sheet points. */
+  thickness?: [number, number];
+  /** Small symbols in the wall pens (keynote triangles, tag diamonds), left out of `lines`. */
+  symbols?: Segment[];
+}
+
+/**
+ * Pens that also draw in wall-like pairs but were not taken as the sheet's walls, heaviest
+ * first: candidates for walls drawn lighter. Solid fills shaped like walls (poché) first.
+ */
+export function lighterPens(stats: PenStats[], chosen: string[]): string[] {
+  const most = Math.max(0, ...stats.map((s) => s.paired));
+  const lightest = Math.min(...chosen.map(Number).filter((n) => !Number.isNaN(n)));
+  const paired = stats.filter((s) => !chosen.includes(s.key) && s.length > 0 && s.paired >= most * 0.05 && s.paired / s.length >= 0.4);
+  const fill = paired.filter((s) => s.key === 'fill').map((s) => s.key);
+  const stroked = paired
+    .filter((s) => s.key !== 'fill' && Number(s.key) < lightest && Number(s.key) > 0)
+    .sort((a, b) => Number(b.key) - Number(a.key))
+    .map((s) => s.key);
+  return [...fill, ...stroked].slice(0, 3);
 }
 
 /**
@@ -95,13 +124,13 @@ export function doorLeaves(segs: Segment[]): Set<Segment> {
 export function buildWallModel(
   segs: Segment[],
   metersPerPoint: number | null,
-  options: { pens?: string[]; maxOpening?: number } = {},
+  options: { pens?: string[]; maxOpening?: number; stats?: PenStats[]; extra?: string[] } = {},
 ): WallModel {
   const { pens, maxOpening = 3.0 } = options;
   const pt = (m: number, fallback: number) => (metersPerPoint ? m / metersPerPoint : fallback);
-  let stats = penStats(segs, pt(0.06, 1.5), pt(0.7, 20));
+  let stats = options.stats ?? penStats(segs, pt(0.06, 1.5), pt(0.7, 20));
   let chosen = pens?.length ? pens : detectWallPens(stats);
-  if (!chosen.length) {
+  if (!chosen.length && !options.stats) {
     // Walls exploded into short pieces pair poorly piece by piece: score joined runs.
     // Strictly: a sheet of details joined into runs can pair nearly as well as walls.
     stats = penStats(segs, pt(0.06, 1.5), pt(0.7, 20), true);
@@ -111,8 +140,9 @@ export function buildWallModel(
   // Dots (a carpet stipple in the wall pen) are no part of a wall, and nor are doors: a swing
   // drawn in the wall pen, and its leaf, would otherwise cut the swing out of the room.
   const leaves = doorLeaves(segs);
+  const symbols = symbolShapes(segs, pt(1.5, 42));
   const walls = segs.filter(
-    (s) => chosen.includes(widthKey(s)) && !s.curve && !leaves.has(s) && (!s.filled || wallFill?.has(s)) && Math.hypot(s.x2 - s.x1, s.y2 - s.y1) >= 0.3,
+    (s) => chosen.includes(widthKey(s)) && !s.curve && !leaves.has(s) && !symbols.has(s) && (!s.filled || wallFill?.has(s)) && Math.hypot(s.x2 - s.x1, s.y2 - s.y1) >= 0.3,
   );
   // Glazing and frames are drawn with lighter pens than walls, but heavier than hatching.
   const wallWidth = Math.min(...chosen.map(Number).filter((n) => !Number.isNaN(n)));
@@ -125,12 +155,25 @@ export function buildWallModel(
     maxGap: pt(Math.max(10, maxOpening), 280),
     band: pt(0.7, 20),
   });
+  // Walls drawn lighter, tried room by room. Only from the sheet's own pick (pens given by
+  // the caller are taken as they are).
+  const extra = options.extra ?? (pens?.length ? [] : chosen.length ? lighterPens(stats, chosen) : []);
+  const next = new Map<string, WallModel>();
   return {
     lines: [...walls, ...bridges],
     pens: chosen,
     stats,
     bridges: bridges.length,
     openings: openingStrips(bridges, pt(0.7, 20)),
+    thickness: [pt(0.06, 1.5), pt(0.7, 20)],
+    symbols: [...symbols].filter((s) => chosen.includes(widthKey(s))),
+    lighter: (skip) => {
+      const i = extra.findIndex((p) => !skip?.(p));
+      if (i < 0) return null;
+      let m = next.get(extra[i]);
+      if (!m) next.set(extra[i], (m = buildWallModel(segs, metersPerPoint, { maxOpening, pens: [...chosen, extra[i]], stats, extra: extra.slice(i + 1) })));
+      return m;
+    },
   };
 }
 
@@ -273,6 +316,67 @@ export function openingLength(points: Pt[], model: WallModel): number {
     total += (L * near) / steps;
   }
   return total;
+}
+
+const faceIndex = new WeakMap<WallModel, SegmentIndex>();
+
+/**
+ * How much of an outline runs along the face of a wall: a drawn line with another line
+ * parallel to it a wall thickness further out (the wall's other face), or a closed
+ * opening. A room is bounded by walls; a space cut out by a door swing or the edge of a
+ * table is not, for most of its outline.
+ */
+export function wallFaceShare(points: Pt[], model: WallModel): number {
+  const [minGap, maxGap] = model.thickness ?? [1.5, 20];
+  let index = faceIndex.get(model);
+  if (!index) faceIndex.set(model, (index = new SegmentIndex(model.lines, 16)));
+  const lines = model.lines;
+  // Outward normal: the ring's winding decides which side is out.
+  let twice = 0;
+  for (let i = 0; i < points.length; i++) {
+    const [ax, ay] = points[i];
+    const [bx, by] = points[(i + 1) % points.length];
+    twice += ax * by - bx * ay;
+  }
+  const sign = twice > 0 ? 1 : -1;
+  let total = 0;
+  let face = 0;
+  for (let i = 0; i < points.length; i++) {
+    const [ax, ay] = points[i];
+    const [bx, by] = points[(i + 1) % points.length];
+    const L = Math.hypot(bx - ax, by - ay);
+    if (L < 0.5) continue;
+    const ux = (bx - ax) / L;
+    const uy = (by - ay) / L;
+    // Outward normal for a counter-clockwise ring in y-down sheet space.
+    const nx = sign * uy;
+    const ny = sign * -ux;
+    const steps = Math.max(1, Math.round(L / 2));
+    for (let k = 0; k < steps; k++) {
+      const t = ((k + 0.5) / steps) * L;
+      const x = ax + ux * t;
+      const y = ay + uy * t;
+      total += L / steps;
+      const r = maxGap + 2;
+      let onFace = false;
+      let opening = false;
+      const out: number[] = [];
+      for (const j of index.query(x - r, y - r, x + r, y + r)) {
+        const s = lines[j];
+        const Ls = Math.hypot(s.x2 - s.x1, s.y2 - s.y1);
+        if (Ls < 0.3 || Math.abs(ux * (s.y2 - s.y1) - uy * (s.x2 - s.x1)) / Ls > 0.05) continue;
+        const ts = ((x - s.x1) * (s.x2 - s.x1) + (y - s.y1) * (s.y2 - s.y1)) / (Ls * Ls);
+        if (ts < -0.02 || ts > 1.02) continue;
+        const off = (s.x1 + (s.x2 - s.x1) * ts - x) * nx + (s.y1 + (s.y2 - s.y1) * ts - y) * ny;
+        if (Math.abs(off) <= 1.5) {
+          onFace = true;
+          if (s.bridge) opening = true;
+        } else if (off > 0) out.push(off);
+      }
+      if (opening || (onFace && out.some((d) => d >= minGap && d <= maxGap + 1.5))) face += L / steps;
+    }
+  }
+  return total ? face / total : 0;
 }
 
 /** Distance from a point to a segment, when the point lies beside it (between its ends); else infinite. */

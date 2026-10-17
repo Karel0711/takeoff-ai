@@ -3,7 +3,7 @@ import type { PageText } from '../pageText';
 import { ringArea } from '../geometry';
 import { SegmentIndex } from '../walls/bands';
 import { dedupe, symbolLoop } from '../walls/tags';
-import { fillRoom, type WallModel } from './roomFill';
+import { fillRoom, wallFaceShare, type WallModel } from './roomFill';
 import type { Segment } from './vectors';
 
 /** A room tag: its number in a box, and the name printed with it. */
@@ -14,7 +14,19 @@ export interface RoomLabel {
   at: Pt;
   /** The number box (x0, y0, x1, y1), when the number is boxed. */
   box?: [number, number, number, number];
+  /**
+   * Where the room is when the tag stands outside it: the dot or arrow at the end of a
+   * leader drawn from the box into a room too small to hold the tag (a WC, a closet).
+   */
+  seed?: Pt;
+  /** About where the room's name is written beside the box. */
+  nameAt?: Pt;
+  /** The pen the tag box is drawn in (as `widthKey` gives it). */
+  pen?: string;
 }
+
+/** The point a room is filled from: the leader's end when the tag has one, else the tag. */
+export const roomPoint = (l: RoomLabel): Pt => l.seed ?? l.at;
 
 export interface FoundRoom {
   labels: RoomLabel[];
@@ -37,7 +49,7 @@ const TAG_LIKE = /^[A-Za-z]{1,4}-?\d{1,4}[A-Za-z]?$/;
 /** Words that are notes or device marks round a tag, not a room's name: x, sim, UP, DN, a dimension. */
 const NOT_NAME = /^([A-Za-z]|sim\.?|typ\.?|UP|DN|\d.*['"].*|[\d.,/\s-]+|\d+(\.\d+)?\s*(hr|hour|min)\b.*)$/i;
 
-type Box = { x0: number; y0: number; x1: number; y1: number };
+type Box = { x0: number; y0: number; x1: number; y1: number; pen?: string };
 
 /** The rectangle closed round a text (drawn once or doubled), if any. */
 function boxAround(t: PageText, index: SegmentIndex, lines: Segment[]): Box | null {
@@ -57,7 +69,66 @@ function boxAround(t: PageText, index: SegmentIndex, lines: Segment[]): Box | nu
     if (!axisAligned) continue;
     const xs = loop.flatMap((s) => [s.x1, s.x2]);
     const ys = loop.flatMap((s) => [s.y1, s.y2]);
-    return { x0: Math.min(...xs), y0: Math.min(...ys), x1: Math.max(...xs), y1: Math.max(...ys) };
+    return { x0: Math.min(...xs), y0: Math.min(...ys), x1: Math.max(...xs), y1: Math.max(...ys), pen: pen.toFixed(2) };
+  }
+  return null;
+}
+
+/**
+ * The end of a leader drawn from a tag box into the room it names: a straight line (or a
+ * few, with elbows) starting on the box's outline and running away from it, ending at a
+ * small filled dot or arrowhead. Returns the centre of the dot or arrow. A line that merely
+ * touches the box, with nothing at its end, is not a leader.
+ */
+function leaderEnd(box: Box, index: SegmentIndex, lines: Segment[], marks: Map<number, Box>, markIndex: SegmentIndex): Pt | null {
+  const h = Math.min(box.x1 - box.x0, box.y1 - box.y0);
+  const tol = 1;
+  const onOutline = (x: number, y: number) =>
+    x >= box.x0 - tol &&
+    x <= box.x1 + tol &&
+    y >= box.y0 - tol &&
+    y <= box.y1 + tol &&
+    (Math.abs(x - box.x0) <= tol || Math.abs(x - box.x1) <= tol || Math.abs(y - box.y0) <= tol || Math.abs(y - box.y1) <= tol);
+  const outside = (x: number, y: number, by: number) => x < box.x0 - by || x > box.x1 + by || y < box.y0 - by || y > box.y1 + by;
+  const len = (s: Segment) => Math.hypot(s.x2 - s.x1, s.y2 - s.y1);
+  const near = dedupe(index.query(box.x0 - 2, box.y0 - 2, box.x1 + 2, box.y1 + 2).map((i) => lines[i]));
+  for (const first of near) {
+    if (first.curve || len(first) < 0.6 * h) continue;
+    const ends: [Pt, Pt][] = [
+      [
+        [first.x1, first.y1],
+        [first.x2, first.y2],
+      ],
+      [
+        [first.x2, first.y2],
+        [first.x1, first.y1],
+      ],
+    ];
+    for (const [start, far] of ends) {
+      if (!onOutline(start[0], start[1]) || !outside(far[0], far[1], 0.6 * h)) continue;
+      // Follow the leader through its elbows, same pen, end to end.
+      let end = far;
+      let prev = first;
+      for (let link = 0; link < 4; link++) {
+        const next = dedupe(index.query(end[0] - 0.5, end[1] - 0.5, end[0] + 0.5, end[1] + 0.5).map((i) => lines[i])).find(
+          (o) => o !== prev && !o.curve && o.width === first.width && len(o) >= 2 && (Math.hypot(o.x1 - end[0], o.y1 - end[1]) < 0.5 || Math.hypot(o.x2 - end[0], o.y2 - end[1]) < 0.5),
+        );
+        if (!next) break;
+        end = Math.hypot(next.x1 - end[0], next.y1 - end[1]) < 0.5 ? [next.x2, next.y2] : [next.x1, next.y1];
+        prev = next;
+      }
+      // The dot or arrowhead: a small filled shape at the end, no bigger than the tag.
+      for (const i of markIndex.query(end[0] - 1, end[1] - 1, end[0] + 1, end[1] + 1)) {
+        const m = marks.get(markIndex.segs[i].sub!);
+        if (!m) continue;
+        const size = Math.max(m.x1 - m.x0, m.y1 - m.y0);
+        if (size < 1 || size > 1.5 * h) continue;
+        if (end[0] < m.x0 - 1 || end[0] > m.x1 + 1 || end[1] < m.y0 - 1 || end[1] > m.y1 + 1) continue;
+        const c: Pt = [(m.x0 + m.x1) / 2, (m.y0 + m.y1) / 2];
+        if (!outside(c[0], c[1], 0)) continue;
+        return c;
+      }
+    }
   }
   return null;
 }
@@ -88,6 +159,19 @@ function legendLine(texts: PageText[], t: PageText, box: Box): boolean {
 export function findRoomLabels(texts: PageText[], segs: Segment[]): RoomLabel[] {
   const lines = segs.filter((s) => !s.filled && Math.hypot(s.x2 - s.x1, s.y2 - s.y1) > 0.2);
   const index = new SegmentIndex(lines, 16);
+  // Small filled shapes (leader dots, arrowheads) by subpath, for leaders from tags.
+  const filled = segs.filter((s) => s.filled && s.sub !== undefined);
+  const marks = new Map<number, Box>();
+  for (const s of filled) {
+    const m = marks.get(s.sub!);
+    if (m) {
+      m.x0 = Math.min(m.x0, s.x1, s.x2);
+      m.y0 = Math.min(m.y0, s.y1, s.y2);
+      m.x1 = Math.max(m.x1, s.x1, s.x2);
+      m.y1 = Math.max(m.y1, s.y1, s.y2);
+    } else marks.set(s.sub!, { x0: Math.min(s.x1, s.x2), y0: Math.min(s.y1, s.y2), x1: Math.max(s.x1, s.x2), y1: Math.max(s.y1, s.y2) });
+  }
+  let markIndex: SegmentIndex | null = null;
   const boxed: { t: PageText; box: Box; above: string; below: string; lettered: boolean }[] = [];
   for (const t of texts) {
     // A corridor can be lettered (A, C) rather than numbered: boxed, with its name by it.
@@ -122,7 +206,20 @@ export function findRoomLabels(texts: PageText[], segs: Segment[]): RoomLabel[] 
     if (b.lettered && (!name || roomTags < 3)) continue;
     if (!name && named < 3 && numbered.length < 5) continue;
     const { box } = b;
-    out.push({ number: b.t.str, name, at: [(box.x0 + box.x1) / 2, (box.y0 + box.y1) / 2], box: [box.x0, box.y0, box.x1, box.y1] });
+    markIndex ??= new SegmentIndex(filled, 16);
+    const seed = leaderEnd(box, index, lines, marks, markIndex);
+    // The name's first line, about a box height off the side it was read from.
+    const h = box.y1 - box.y0;
+    const nameAt: Pt | undefined = name ? [(box.x0 + box.x1) / 2, b[first] ? (first === 'below' ? box.y1 + h : box.y0 - h) : second === 'below' ? box.y1 + h : box.y0 - h] : undefined;
+    out.push({
+      number: b.t.str,
+      name,
+      at: [(box.x0 + box.x1) / 2, (box.y0 + box.y1) / 2],
+      box: [box.x0, box.y0, box.x1, box.y1],
+      ...(seed ? { seed } : {}),
+      ...(nameAt ? { nameAt } : {}),
+      ...(box.pen ? { pen: box.pen } : {}),
+    });
   }
   if (out.length) return out;
 
@@ -243,10 +340,10 @@ const withinBox = (pts: Pt[], [x0, y0, x1, y1]: [number, number, number, number]
 function fillOne(model: WallModel, label: RoomLabel, sheetW: number, sheetH: number): FoundRoom {
   // A space that leaks past the window is an open area or a gap in the walls, left for
   // drawing by hand (or named by another tag inside it, below).
-  let res = fillRoom(model, [label.at], sheetW, sheetH, 2);
+  let res = fillRoom(model, [roomPoint(label)], sheetW, sheetH, 2);
   // Drawn without lineweights, the number's own box is in the wall pen and fills first:
   // start again just outside it, below, above the name, then to either side.
-  if (res.ok && label.box && withinBox(res.points, label.box)) {
+  if (res.ok && label.box && !label.seed && withinBox(res.points, label.box)) {
     const [x0, y0, x1, y1] = label.box;
     const [cx, cy] = label.at;
     const w = x1 - x0;
@@ -277,7 +374,7 @@ function place(rooms: FoundRoom[], label: RoomLabel, fill: () => FoundRoom) {
   const twin = rooms.find((r) => r.labels.some((l) => l.number === label.number));
   if (twin?.points) return;
   // Several tags in one open space share its outline.
-  const shared = rooms.find((r) => r.points && pointInRing(label.at, r.points));
+  const shared = rooms.find((r) => r.points && pointInRing(roomPoint(label), r.points));
   if (shared) {
     shared.labels.push(label);
     return;
@@ -292,7 +389,7 @@ function place(rooms: FoundRoom[], label: RoomLabel, fill: () => FoundRoom) {
 function adoptStrays(rooms: FoundRoom[]) {
   for (const r of [...rooms]) {
     if (r.points) continue;
-    const home = rooms.find((o) => o.points && r.labels.every((l) => pointInRing(l.at, o.points!)));
+    const home = rooms.find((o) => o.points && r.labels.every((l) => pointInRing(roomPoint(l), o.points!)));
     if (home) {
       home.labels.push(...r.labels);
       rooms.splice(rooms.indexOf(r), 1);
@@ -315,12 +412,114 @@ function splitLeaks(rooms: FoundRoom[]): FoundRoom[] {
   );
 }
 
+/** The distinct room numbers whose tags (or leader ends) lie inside a room's outline. */
+const numbersIn = (room: FoundRoom, labels: RoomLabel[]) => new Set(labels.filter((l) => pointInRing(roomPoint(l), room.points!)).map((l) => l.number));
+
+/**
+ * Whether a room needs another look with lighter pens as walls: it did not close, or its
+ * outline holds more than one room's tag (a partition the sheet's wall pens missed).
+ */
+const unsettled = (room: FoundRoom, labels: RoomLabel[]) => !room.points || numbersIn(room, labels).size > 1;
+
+/** The model with outlines added as walls: a space left over once rooms inside it are taken out. */
+function withOutlines(model: WallModel, rooms: FoundRoom[]): WallModel {
+  const edges: Segment[] = rooms.flatMap((r) =>
+    r.points!.map(([x1, y1], k) => {
+      const [x2, y2] = r.points![(k + 1) % r.points!.length];
+      return { x1, y1, x2, y2, width: 0, filled: false };
+    }),
+  );
+  return { ...model, lines: [...model.lines, ...edges], lighter: undefined };
+}
+
+/**
+ * Fills a group of tags again with a lighter pen as wall too, and gives the rooms that
+ * replace the group's, or null. A room found this way must hold its own tags and no other
+ * room's, span its tag box, and be bounded mostly by wall faces (a door swing or a table
+ * drawn in the lighter pen does not make a room). When the group had closed as one space
+ * with the sheet's pens, the tags that did not get a room of their own share what is left
+ * of it, and the parts must still cover most of it: an open space is not carved up round
+ * its furniture.
+ */
+function retryLighter(room: FoundRoom, from: WallModel, model: WallModel, labels: RoomLabel[], sheetW: number, sheetH: number): FoundRoom[] | null {
+  const own = (r: FoundRoom) => {
+    if (!r.points) return false;
+    const inside = numbersIn(r, labels);
+    const mine = new Set(r.labels.map((l) => l.number));
+    if (inside.size !== mine.size || [...inside].some((n) => !mine.has(n))) return false;
+    // A tag and its name stand in their room: an outline that cuts between them is no room.
+    return r.labels.every(
+      (l) => l.seed || !l.box || (spans(r.points!, l.box) && !withinBox(r.points!, l.box) && (!l.nameAt || pointInRing(l.nameAt, r.points!))),
+    );
+  };
+  const trial: FoundRoom[] = [];
+  for (const label of room.labels) place(trial, label, () => fillOne(model, label, sheetW, sheetH));
+  adoptStrays(trial);
+  const good = trial.filter((r) => own(r) && wallFaceShare(r.points!, model) >= 0.6);
+  if (!good.length) return null;
+  const rest = room.labels.filter((l) => !good.some((r) => r.labels.includes(l)));
+  if (!room.points) return [...good, ...rest.map((l): FoundRoom => ({ labels: [l], points: null, reason: room.reason, area: 0 }))];
+  const left: FoundRoom[] = [];
+  if (rest.length) {
+    const remainder = withOutlines(from, good);
+    for (const label of rest) place(left, label, () => fillOne(remainder, label, sheetW, sheetH));
+    adoptStrays(left);
+    if (!left.every(own)) return null;
+  }
+  const parts = [...good, ...left];
+  // Only the group's own tags inside: one space or several, judged by how much is kept.
+  const others = [...numbersIn(room, labels)].some((n) => !room.labels.some((l) => l.number === n));
+  if (!others && parts.reduce((a, r) => a + r.area, 0) < 0.8 * room.area) return null;
+  return parts;
+}
+
+/** Retries unsettled rooms with each lighter wall pen in turn. */
+function* settle(rooms: FoundRoom[], model: WallModel, labels: RoomLabel[], sheetW: number, sheetH: number): Generator<void, FoundRoom[]> {
+  let out = rooms;
+  const source = new Map<FoundRoom, WallModel>(rooms.map((r) => [r, model]));
+  // The pens the tag boxes are drawn in are tags, not walls.
+  const tagPens = new Set(labels.flatMap((l) => (l.pen ? [l.pen] : [])));
+  for (let m: WallModel | null = model; out.some((r) => unsettled(r, labels)); ) {
+    m = m.lighter?.((pen) => tagPens.has(pen)) ?? null;
+    if (!m) break;
+    // Tags left without a room are filled again together, so tags in one open space share it.
+    const open = out.filter((r) => !r.points);
+    const pool: FoundRoom[] = open.length ? [{ labels: open.flatMap((r) => r.labels), points: null, reason: open[0].reason, area: 0 }] : [];
+    const next: FoundRoom[] = [];
+    for (const r of [...out.filter((o) => o.points), ...pool]) {
+      if (!unsettled(r, labels)) {
+        next.push(r);
+        continue;
+      }
+      yield;
+      const parts = retryLighter(r, source.get(r) ?? model, m, labels, sheetW, sheetH);
+      if (!parts) {
+        next.push(r);
+        continue;
+      }
+      for (const p of parts) source.set(p, p.points ? m : (source.get(r) ?? model));
+      next.push(...parts);
+    }
+    out = next;
+  }
+  adoptStrays(out);
+  // Tags still without a room, one entry per room number.
+  const settled = out.flatMap((r) =>
+    r.points ? [r] : [...new Set(r.labels.map((l) => l.number))].map((n): FoundRoom => ({ ...r, labels: r.labels.filter((l) => l.number === n) })),
+  );
+  return splitLeaks(settled);
+}
+
 /** Fills each labelled room. Tags that land in one space share its outline. */
 export function fillRooms(model: WallModel, labels: RoomLabel[], sheetW: number, sheetH: number): FoundRoom[] {
   const rooms: FoundRoom[] = [];
   for (const label of labels) place(rooms, label, () => fillOne(model, label, sheetW, sheetH));
   adoptStrays(rooms);
-  return splitLeaks(rooms);
+  const steps = settle(splitLeaks(rooms), model, labels, sheetW, sheetH);
+  for (;;) {
+    const r = steps.next();
+    if (r.done) return r.value;
+  }
 }
 
 /** Like fillRooms, but yields between rooms so the page stays responsive, reporting progress. */
@@ -339,7 +538,12 @@ export async function fillRoomsAsync(
   }
   adoptStrays(rooms);
   onProgress(labels.length, labels.length);
-  return splitLeaks(rooms);
+  const steps = settle(splitLeaks(rooms), model, labels, sheetW, sheetH);
+  for (;;) {
+    const r = steps.next();
+    if (r.done) return r.value;
+    await new Promise((res) => setTimeout(res, 0));
+  }
 }
 
 function pointInRing([x, y]: Pt, ring: Pt[]): boolean {
