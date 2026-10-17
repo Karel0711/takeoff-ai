@@ -75,7 +75,8 @@ export function measurementVars(m: Measurement, type: TakeoffType, sheet: Sheet,
 
 /**
  * What a room counts toward a finish type: an area type takes the room's area (and
- * perimeter), a linear type its perimeter as length, so A = perimeter × the type's height.
+ * perimeter), a linear type its perimeter as length, so A = perimeter × the type's height
+ * (or the room's own ceiling height, when its finish schedule gives one).
  */
 export function finishVars(room: Measurement, type: TakeoffType, sheet: Sheet, units: Units): Vars | null {
   if (type.kind === 'count') return { L: 0, H: type.height, A: 0, P: 0, N: 1, I: 0 };
@@ -87,8 +88,10 @@ export function finishVars(room: Measurement, type: TakeoffType, sheet: Sheet, u
   const perim = toLength((ringLength(room.points) + room.holes.reduce((sum, h) => sum + ringLength(h), 0)) * mpp, units);
   const doors = Math.min(toLength((room.openings ?? 0) * mpp, units), perim);
   const L = perim - doors;
-  const A = perim * type.height - doors * Math.min(type.height, doorHeight(units));
-  return { L, H: type.height, A, P: 0, N: 1, I: 0 };
+  // Wall finishes run up to the room's ceiling when the schedule gave its height.
+  const H = room.ceilingHeight && room.ceilingHeight > 0 ? room.ceilingHeight : type.height;
+  const A = perim * H - doors * Math.min(H, doorHeight(units));
+  return { L, H, A, P: 0, N: 1, I: 0 };
 }
 
 /** One measurement's share of one type: drawn as that type, or a room finished with it. */

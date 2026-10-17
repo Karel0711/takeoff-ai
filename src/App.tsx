@@ -3354,12 +3354,16 @@ export function App() {
           project={project}
           palette={PALETTE}
           getPage={async (s) => (await pdfs.get(s.docId)?.getPage(s.page)) ?? null}
-          onApply={({ types, finishes }) =>
+          onApply={({ types, finishes, ceilingHeights }) =>
             commit(
               (p) => ({
                 ...p,
                 types: [...p.types, ...types],
-                measurements: p.measurements.map((m) => (finishes.has(m.id) ? { ...m, finishes: finishes.get(m.id) } : m)),
+                measurements: p.measurements.map((m) =>
+                  finishes.has(m.id) || ceilingHeights.has(m.id)
+                    ? { ...m, ...(finishes.has(m.id) ? { finishes: finishes.get(m.id) } : {}), ...(ceilingHeights.has(m.id) ? { ceilingHeight: ceilingHeights.get(m.id) } : {}) }
+                    : m,
+                ),
               }),
               'Room finishes',
             )

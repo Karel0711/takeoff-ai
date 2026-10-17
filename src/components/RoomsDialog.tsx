@@ -32,7 +32,7 @@ const roomNumber = (r: FoundRoom) => r.labels.map((l) => l.number).join(' / ');
 const roomName = (r: FoundRoom) => [...new Set(r.labels.map((l) => l.name).filter(Boolean))].join(' / ');
 
 /**
- * Room takeoff: finds every room tag on the sheet (number in a box, name above it),
+ * Room takeoff: finds every room tag on the sheet (number in a box, name above or below it),
  * fills each room to the inside face of its walls, and adds the ones picked as
  * named area takeoffs.
  */
@@ -175,11 +175,11 @@ export function RoomsDialog({ page, sheet, units, types, earlier, palette, maxOp
         {state.phase === 'done' && (
           <>
             <p className="muted">
-              Every room tag on the sheet (a number in a box with the name above), filled to the inside face of its walls. Tags in one open
-              space share it.
+              Every room tag on the sheet (a number such as 101, 101a or B23 in a small box, with the name above or below it), filled to the
+              inside face of its walls. Tags in one open space share it.
             </p>
             {state.rooms.length === 0 ? (
-              <p className="warn">No room tags found on this sheet. A room tag is a room number, in a box or on its own, under the room name.</p>
+              <p className="warn">No room tags found on this sheet. A room tag is a room number in a small box with the room name above or below it, or a bare number under the name.</p>
             ) : (
               <table className="wall-table rooms-table">
                 <thead>

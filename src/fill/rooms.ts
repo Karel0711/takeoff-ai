@@ -27,48 +27,102 @@ export interface FoundRoom {
   openings?: number;
 }
 
-const ROOM_NUMBER = /^[A-Z]?\d{2,4}[A-Z]?$/;
-/** Type tags and other short codes (W2, CB1, EW3A, S114A) that sit near room names but are not part of them. */
-const TAG_LIKE = /^[A-Z]{1,3}\d{1,4}[A-Z]?$/;
+/**
+ * A room number: a short code of digits with an optional letter prefix and suffix, or a
+ * dotted level number (101, 101a, B23, M01, B24S, 2.14).
+ */
+export const ROOM_NUMBER = /^(?:[A-Z]{1,2})?\d{1,4}(?:\.\d{1,3})?[A-Za-z]?$/;
+/** Type tags and other short codes (W2, CB1, EW3A, S114A, fx2, px7) that sit near room names but are not part of them. */
+const TAG_LIKE = /^[A-Za-z]{1,4}-?\d{1,4}[A-Za-z]?$/;
+/** Words that are notes or device marks round a tag, not a room's name: x, sim, UP, DN, a dimension. */
+const NOT_NAME = /^([A-Za-z]|sim\.?|typ\.?|UP|DN|\d.*['"].*|[\d.,/\s-]+|\d+(\.\d+)?\s*(hr|hour|min)\b.*)$/i;
+
+type Box = { x0: number; y0: number; x1: number; y1: number };
+
+/** The rectangle closed round a text (drawn once or doubled), if any. */
+function boxAround(t: PageText, index: SegmentIndex, lines: Segment[]): Box | null {
+  const r = Math.max(t.w, t.h) * 0.5 + 14;
+  const local = dedupe(index.query(t.cx - r, t.cy - r, t.cx + r, t.cy + r).map((i) => lines[i]));
+  const inside = (x: number, y: number) => Math.hypot(x - t.cx, y - t.cy) <= r;
+  const candidates = local.filter((s) => inside(s.x1, s.y1) && inside(s.x2, s.y2));
+  for (const pen of new Set(candidates.map((s) => s.width))) {
+    const loop = symbolLoop(
+      candidates.filter((s) => s.width === pen),
+      t.cx,
+      t.cy,
+    );
+    // A box, or a box drawn double (one inside the other).
+    if (loop.length !== 4 && loop.length !== 8) continue;
+    const axisAligned = loop.every((s) => Math.abs(s.x1 - s.x2) < 0.2 || Math.abs(s.y1 - s.y2) < 0.2);
+    if (!axisAligned) continue;
+    const xs = loop.flatMap((s) => [s.x1, s.x2]);
+    const ys = loop.flatMap((s) => [s.y1, s.y2]);
+    return { x0: Math.min(...xs), y0: Math.min(...ys), x1: Math.max(...xs), y1: Math.max(...ys) };
+  }
+  return null;
+}
 
 /**
- * Finds room tags: a room number inside a rectangle, with the room name on the
- * lines just above it. Door and window numbers sit in ovals or hexagons, so
- * only rectangular boxes count.
+ * A legend line rather than a tag: the boxed sample code with its explanation written
+ * beside it ("07  Room Numbers, see Room Finish Schedule").
+ */
+function legendLine(texts: PageText[], t: PageText, box: Box): boolean {
+  const h = box.y1 - box.y0;
+  return texts.some(
+    (o) =>
+      o !== t &&
+      o.cx - o.w / 2 > box.x1 - 1 &&
+      o.cx - o.w / 2 < box.x1 + Math.max(4 * h, 20) &&
+      Math.abs(o.cy - (box.y0 + box.y1) / 2) < h &&
+      /[A-Za-z]{3,}\s+[A-Za-z]{2,}/.test(o.str),
+  );
+}
+
+/**
+ * Finds room tags: a room number (101, 101a, B23, M01, 2.14) inside a small rectangle,
+ * with the room name on the lines just above or just below the box. The sheet's own
+ * habit decides which side a name is read from when there is text on both. Door and
+ * window numbers sit in ovals or hexagons, so only rectangular boxes count; a boxed code
+ * explained beside it is a legend, not a room.
  */
 export function findRoomLabels(texts: PageText[], segs: Segment[]): RoomLabel[] {
   const lines = segs.filter((s) => !s.filled && Math.hypot(s.x2 - s.x1, s.y2 - s.y1) > 0.2);
   const index = new SegmentIndex(lines, 16);
-  const out: RoomLabel[] = [];
+  const boxed: { t: PageText; box: Box; above: string; below: string; lettered: boolean }[] = [];
   for (const t of texts) {
-    // A corridor can be lettered (A, C) rather than numbered: boxed, with its name above.
+    // A corridor can be lettered (A, C) rather than numbered: boxed, with its name by it.
     const lettered = /^[A-Z]$/.test(t.str);
     if (!ROOM_NUMBER.test(t.str) && !lettered) continue;
-    const r = Math.max(t.w, t.h) * 0.5 + 14;
-    const local = dedupe(index.query(t.cx - r, t.cy - r, t.cx + r, t.cy + r).map((i) => lines[i]));
-    const inside = (x: number, y: number) => Math.hypot(x - t.cx, y - t.cy) <= r;
-    const candidates = local.filter((s) => inside(s.x1, s.y1) && inside(s.x2, s.y2));
-    let box: { x0: number; y0: number; x1: number; y1: number } | null = null;
-    for (const pen of new Set(candidates.map((s) => s.width))) {
-      const loop = symbolLoop(
-        candidates.filter((s) => s.width === pen),
-        t.cx,
-        t.cy,
-      );
-      // A box, or a box drawn double (one inside the other).
-      if (loop.length !== 4 && loop.length !== 8) continue;
-      const axisAligned = loop.every((s) => Math.abs(s.x1 - s.x2) < 0.2 || Math.abs(s.y1 - s.y2) < 0.2);
-      if (!axisAligned) continue;
-      const xs = loop.flatMap((s) => [s.x1, s.x2]);
-      const ys = loop.flatMap((s) => [s.y1, s.y2]);
-      box = { x0: Math.min(...xs), y0: Math.min(...ys), x1: Math.max(...xs), y1: Math.max(...ys) };
-      break;
-    }
+    // Without a letter prefix a code needs two digits (07, 101, 2.14): one digit (1, 1.1) is a keynote or equipment mark.
+    if (!lettered && !/^[A-Z]/.test(t.str) && !/\d{2}/.test(t.str)) continue;
+    const box = boxAround(t, index, lines);
     if (!box) continue;
     const cx = (box.x0 + box.x1) / 2;
-    const name = nameAbove(texts, t, cx, box.y0, box.x1 - box.x0);
-    if (lettered && !name) continue;
-    out.push({ number: t.str, name, at: [cx, (box.y0 + box.y1) / 2], box: [box.x0, box.y0, box.x1, box.y1] });
+    const above = nameNear(texts, t, cx, box.y0, box.x1 - box.x0, -1);
+    const below = nameNear(texts, t, cx, box.y1, box.x1 - box.x0, 1);
+    if (!above && !below && legendLine(texts, t, box)) continue;
+    boxed.push({ t, box, above, below, lettered });
+  }
+  // Which side this sheet writes names on: where most tags have one.
+  const nAbove = boxed.filter((b) => b.above).length;
+  const nBelow = boxed.filter((b) => b.below).length;
+  const first = nBelow > nAbove ? 'below' : 'above';
+  const second = first === 'below' ? 'above' : 'below';
+  // A room plan has a run of tags. A lone boxed code (a keynote, a sheet number in the title
+  // block) or a boxed letter on a sheet without numbered rooms (a symbol) is not one; nor is
+  // a box under a title-block caption (Dwg. No.).
+  const caption = (name: string) => /^(dwg|drawing|sheet|project|job|plot|file)\.?\s*(no\.?|number|#)?:?$/i.test(name.trim());
+  const keep = boxed.filter((b) => !caption(b[first] || b[second]));
+  const numbered = keep.filter((b) => !b.lettered);
+  const named = numbered.filter((b) => b.above || b.below).length;
+  const roomTags = named >= 3 || numbered.length >= 5 ? numbered.length : named;
+  const out: RoomLabel[] = [];
+  for (const b of keep) {
+    const name = b[first] || b[second];
+    if (b.lettered && (!name || roomTags < 3)) continue;
+    if (!name && named < 3 && numbered.length < 5) continue;
+    const { box } = b;
+    out.push({ number: b.t.str, name, at: [(box.x0 + box.x1) / 2, (box.y0 + box.y1) / 2], box: [box.x0, box.y0, box.x1, box.y1] });
   }
   if (out.length) return out;
 
@@ -76,18 +130,19 @@ export function findRoomLabels(texts: PageText[], segs: Segment[]): RoomLabel[] 
   // name. Take numbers with a name directly above them that are not in any symbol
   // (door and window numbers sit in ovals and hexagons).
   for (const t of texts) {
-    if (!/^[A-Z]?\d{3,4}[A-Z]?$/.test(t.str)) continue;
-    const name = nameAbove(texts, t, t.cx, t.cy - t.h / 2, t.w);
+    if (!/^[A-Z]?\d{3,4}[A-Za-z]?$/.test(t.str)) continue;
+    const name = nameNear(texts, t, t.cx, t.cy - t.h / 2, t.w, -1);
     if (!name) continue;
     const r = Math.max(t.w, t.h) * 0.5 + 14;
     // Only lines wholly near the number: a small room's own walls are not a symbol round it.
     const near = (x: number, y: number) => Math.hypot(x - t.cx, y - t.cy) <= r;
     const local = dedupe(index.query(t.cx - r, t.cy - r, t.cx + r, t.cy + r).map((i) => lines[i])).filter((s) => near(s.x1, s.y1) && near(s.x2, s.y2));
     const enclosed = [...new Set(local.map((s) => s.width))].some((pen) => symbolLoop(local.filter((s) => s.width === pen), t.cx, t.cy).length > 0);
-    if (enclosed) continue;
+    if (enclosed || caption(name)) continue;
     out.push({ number: t.str, name, at: [t.cx, t.cy] });
   }
-  return out;
+  // A plan has a run of them: one alone is a title block's drawing number or a note.
+  return out.length >= 2 ? out : [];
 }
 
 /** A door tag: the door's number in an oval, circle or hexagon on a plan. */
@@ -129,21 +184,49 @@ export function findDoorTags(texts: PageText[], segs: Segment[]): DoorTag[] {
   return out;
 }
 
-/** The room name: text lines stacked just above `top`, centred over `cx`, with no gap between them. */
-function nameAbove(texts: PageText[], t: PageText, cx: number, top: number, width: number): string {
-  const above = texts
-    .filter((o) => o !== t && !ROOM_NUMBER.test(o.str) && !TAG_LIKE.test(o.str) && /[A-Za-z]/.test(o.str))
-    .filter((o) => o.cy < top && o.cy > top - 4 * Math.max(o.h, 5) && Math.abs(o.cx - cx) < Math.max(o.w / 2, width) + 4)
-    .sort((a, b) => a.cy - b.cy);
-  // Keep only the block of lines that runs down to the number without a gap.
-  const block: PageText[] = [];
-  let bottom = top;
-  for (const o of [...above].reverse()) {
-    if (bottom - o.cy > 2.4 * Math.max(o.h, 5)) break;
-    block.unshift(o);
-    bottom = o.cy;
+/**
+ * The room name: text lines stacked just above `edge` (side -1) or just below it (side 1),
+ * centred on the box (or flush with its left side), each line close under the one before.
+ * Notes and device marks round a tag (CR, SD) sit off to one side and are left out.
+ */
+function nameNear(texts: PageText[], t: PageText, cx: number, edge: number, width: number, side: -1 | 1, left = cx - width / 2): string {
+  const words = texts.filter(
+    (o) =>
+      o !== t &&
+      Math.abs((o.angle ?? 0) - (t.angle ?? 0)) < 0.1 &&
+      // Lettering of the tag's own size: a big symbol letter (CJ) is not a name.
+      o.h < 2 * t.h &&
+      o.h > 0.5 * t.h &&
+      side * (o.cy - edge) > 0 &&
+      side * (o.cy - edge) < 6 * Math.max(o.h, 5) &&
+      Math.abs(o.cx - cx) < o.w / 2 + width + 20 &&
+      /[A-Za-z]{2}/.test(o.str) &&
+      !ROOM_NUMBER.test(o.str) &&
+      !TAG_LIKE.test(o.str) &&
+      !NOT_NAME.test(o.str),
+  );
+  // Text lines: runs level with each other and close together, read left to right.
+  const rows: { cy: number; h: number; x0: number; x1: number; str: string }[] = [];
+  for (const o of [...words].sort((a, b) => a.cx - b.cx)) {
+    const row = rows.find((r) => Math.abs(r.cy - o.cy) < 0.5 * Math.max(o.h, 3) && o.cx - o.w / 2 - r.x1 < 1.5 * Math.max(o.h, 3));
+    if (row) {
+      row.x1 = o.cx + o.w / 2;
+      row.str += ` ${o.str}`;
+    } else rows.push({ cy: o.cy, h: Math.max(o.h, 5), x0: o.cx - o.w / 2, x1: o.cx + o.w / 2, str: o.str });
   }
-  return block.map((o) => o.str).join(' ');
+  const tol = Math.max(4, 0.25 * width);
+  // A name is a few words; a sentence of notes is not one.
+  const aligned = (r: (typeof rows)[number]) =>
+    r.str.length <= 32 && (Math.abs((r.x0 + r.x1) / 2 - cx) <= tol || Math.abs(r.x0 - left) <= 3);
+  const block: string[] = [];
+  let last = edge;
+  for (const r of rows.filter(aligned).sort((a, b) => side * (a.cy - b.cy))) {
+    // The first line close to the box, each next close under the one before.
+    if (side * (r.cy - last) > (block.length ? 1.9 : 2.6) * r.h) break;
+    block.push(r.str);
+    last = r.cy;
+  }
+  return (side < 0 ? block.reverse() : block).join(' ');
 }
 
 /** Fills one tag's room, within a window around the tag. */
@@ -217,12 +300,27 @@ function adoptStrays(rooms: FoundRoom[]) {
   }
 }
 
+/**
+ * An outline holding many rooms' tags has leaked through walls the model missed (walls
+ * drawn in another pen, an opening too wide): it is not any one of those rooms. Its tags
+ * are left unclosed, to fill again with other settings or draw by hand. One open space
+ * named by two or three tags (a corridor and the lobby it opens into) is kept.
+ */
+const MAX_SHARED = 3;
+function splitLeaks(rooms: FoundRoom[]): FoundRoom[] {
+  return rooms.flatMap((r) =>
+    r.points && new Set(r.labels.map((l) => l.number)).size > MAX_SHARED
+      ? r.labels.map((l): FoundRoom => ({ labels: [l], points: null, reason: 'not-closed', area: 0 }))
+      : [r],
+  );
+}
+
 /** Fills each labelled room. Tags that land in one space share its outline. */
 export function fillRooms(model: WallModel, labels: RoomLabel[], sheetW: number, sheetH: number): FoundRoom[] {
   const rooms: FoundRoom[] = [];
   for (const label of labels) place(rooms, label, () => fillOne(model, label, sheetW, sheetH));
   adoptStrays(rooms);
-  return rooms;
+  return splitLeaks(rooms);
 }
 
 /** Like fillRooms, but yields between rooms so the page stays responsive, reporting progress. */
@@ -241,7 +339,7 @@ export async function fillRoomsAsync(
   }
   adoptStrays(rooms);
   onProgress(labels.length, labels.length);
-  return rooms;
+  return splitLeaks(rooms);
 }
 
 function pointInRing([x, y]: Pt, ring: Pt[]): boolean {

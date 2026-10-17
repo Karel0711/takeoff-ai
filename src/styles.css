@@ -2270,6 +2270,11 @@ progress.progress {
   max-width: 190px;
   font-size: 12px;
 }
+.finishes-table input.cell-input {
+  width: 64px;
+  font-size: 12px;
+  text-align: right;
+}
 .finishes-table .room-label {
   font-weight: 500;
   min-width: 160px;
