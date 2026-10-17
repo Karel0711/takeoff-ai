@@ -3,7 +3,7 @@ import { buildTakeoffType } from '../assemblyBuilder';
 import { newId, type Measurement, type Project, type Pt, type Sheet, type TakeoffType, type Units } from '../model';
 import type { PDFDocumentProxy, PDFPageProxy } from '../pdf';
 import { runsToLines, type TypeLines } from '../walls/runsToLines';
-import type { SetTypes } from '../walls/setTypes';
+import { mergeSetTypes, type SetTypes } from '../walls/setTypes';
 import { setTypesOf, sheetWallTakeoff, type KnownWalls } from '../walls/sheetWallTakeoff';
 import { tagKind, type WallTakeoffResult } from '../walls/wallTakeoff';
 import type { Automation } from './result';
@@ -58,14 +58,29 @@ export interface WallRead {
   setTypes?: SetTypes;
 }
 
-/** Reads the walls of a plan with a scale, by tagged type. */
+/**
+ * What the whole drawing set says its type codes are: this drawing file's type sheets and
+ * legends first, then the project's other files' (an addendum re-issuing the exterior wall
+ * types leaves the interior ones on the original set's types sheet).
+ */
+export async function projectSetTypes(doc: PDFDocumentProxy | undefined, others: PDFDocumentProxy[] = []): Promise<SetTypes | undefined> {
+  const files = [...(doc ? [doc] : []), ...others.filter((d) => d !== doc)];
+  const parts = (await Promise.all(files.map((d) => setTypesOf(d).catch(() => undefined)))).filter((x): x is SetTypes => !!x);
+  if (!parts.length) return undefined;
+  if (parts.length === 1) return parts[0];
+  // This file's kinds win: another building's code may be another kind of wall.
+  const merged = mergeSetTypes(parts);
+  return { ...merged, kinds: Object.assign({}, ...[...parts].reverse().map((q) => q.kinds)) };
+}
+
+/** Reads the walls of a plan with a scale, by tagged type. `others`: the project's other drawing files. */
 export async function readWalls(
   page: PDFPageProxy,
   doc: PDFDocumentProxy | undefined,
   sheet: Sheet,
-  opts: { maxOpening: number; throughDoors: boolean; stopAt: string[]; known: { codes: string[]; exterior: string[] } },
+  opts: { maxOpening: number; throughDoors: boolean; stopAt: string[]; known: { codes: string[]; exterior: string[] }; others?: PDFDocumentProxy[] },
 ): Promise<WallRead> {
-  const setTypes = doc ? await setTypesOf(doc).catch(() => undefined) : undefined;
+  const setTypes = await projectSetTypes(doc, opts.others);
   const known: KnownWalls = { ...opts.known, set: setTypes };
   const result = await sheetWallTakeoff(page, sheet, opts.maxOpening, opts.throughDoors, opts.stopAt, known);
   return { result, lines: runsToLines(result.runs), setTypes };
@@ -141,15 +156,24 @@ export const applyWalls =
   });
 
 /** Wall takeoff on one plan as the dialog starts (through doors, every wall code to its default type), replacing an earlier run. */
-export async function automateWalls(p: Project, page: PDFPageProxy, doc: PDFDocumentProxy | undefined, sheet: Sheet, maxOpening: number): Promise<Automation & { read?: WallRead }> {
+export async function automateWalls(
+  p: Project,
+  page: PDFPageProxy,
+  doc: PDFDocumentProxy | undefined,
+  sheet: Sheet,
+  maxOpening: number,
+  others: PDFDocumentProxy[] = [],
+  /** Codes already taken off on the overall plans: an enlarged plan of the same walls adds only the others. */
+  skip?: Set<string>,
+): Promise<Automation & { read?: WallRead }> {
   if (!sheet.metersPerPoint) return { message: 'Set the sheet scale first.' };
   const legend = wallLegendFor(p, sheet);
   const fromLegend = wallsFromLegend(legend);
   const known = knownWallsOf(fromLegend, p.types);
   const stopAt = stopsAtDoorsOf(legend, p.types);
-  const read = await readWalls(page, doc, sheet, { maxOpening, throughDoors: true, stopAt: [...stopAt], known });
+  const read = await readWalls(page, doc, sheet, { maxOpening, throughDoors: true, stopAt: [...stopAt], known, others });
   if (!read.lines.length) return { message: 'No tagged walls found.', read };
-  const choice = new Map(read.lines.map((l) => [l.code, wallChoiceFor(l.code, sheet, p.types, known, read.setTypes)]));
+  const choice = new Map(read.lines.map((l) => [l.code, skip?.has(l.code) ? SKIP : wallChoiceFor(l.code, sheet, p.types, known, read.setTypes)]));
   const made = wallTakeoffOf(read.lines, { choice: (c) => choice.get(c) ?? SKIP, sheet, types: p.types, units: p.units, fromLegend, exterior: known.exterior, setTypes: read.setTypes, stopAt });
   const codes = read.lines.filter((l) => choice.get(l.code) !== SKIP).map((l) => l.code);
   return { message: `${codes.length} wall types: ${codes.join(', ')}`, read, apply: applyWalls(sheet.id, { ...made, replaceEarlier: true }) };

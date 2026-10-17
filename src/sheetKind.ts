@@ -4,7 +4,7 @@ import type { Sheet } from './model';
 export type SheetClass = 'floor plan' | 'RCP' | 'finish plan' | 'schedule' | 'legend' | 'assembly' | 'other';
 
 /** Which plan of the building a floor plan is: a level's, the foundation's or the roof's (walls are taken off all three, rooms only off levels). */
-export type PlanLevel = 'level' | 'foundation' | 'roof';
+export type PlanLevel = 'level' | 'foundation' | 'roof' | 'enlarged';
 
 export interface SheetKind {
   kind: SheetClass;
@@ -78,6 +78,9 @@ export function classifySheet(sheet: Pick<Sheet, 'name' | 'title'>): SheetKind {
   if (demo) return { kind: 'other', why: 'demolition / existing plan' };
   // A bare "plan" beside other drawings ("Plan and section details") is one of them: the whole title says which.
   const p = /^PLANS?$/.test(named.join(' ')) && parts.length > 1 ? t : named.join(' ');
+  // An enlarged plan shows walls of the floor plan at a larger scale, often tagging the types the overall plan leaves to it.
+  if (plan && /ENLARGED\b[^&]*\bPLANS?\b/.test(p) && !/SITE|KEY PLAN|LIFE SAFETY|FURNITURE|SIGNAGE|ACCESSOR|MILLWORK|CASEWORK|EQUIPMENT|LANDSCAPE/.test(p))
+    return { kind: 'floor plan', why: 'enlarged plan (walls only, types the overall plans leave out)', level: 'enlarged' };
   if (plan && NOT_A_FLOOR_PLAN.test(p)) return { kind: 'other', why: 'site, enlarged, life-safety or other special plan' };
   const both = floorToo ? { ceilings: true } : {};
   if (/ROOF/.test(p) && plan) return { kind: 'floor plan', why: 'roof plan (walls only)', level: 'roof', ...both };

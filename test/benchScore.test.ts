@@ -115,7 +115,12 @@ describe('benchmark scoring', () => {
     expect(k('RCP GROUND FLOOR PLAN')).toBe('RCP');
     expect(k('PHASE 1 - FINISHES + FURNITURE PLAN')).toBe('finish plan');
     expect(k('GROUND FLOOR - LIFE SAFETY PLAN')).toBe('other');
-    expect(k('ENLARGED GROUND FLOOR PLAN - ADDITION & RENOVATION AREAS')).toBe('other');
+    // Enlarged plans: walls only, the types the overall plans leave to them.
+    expect(classifySheet({ name: 'A2.4', title: 'ENLARGED GROUND FLOOR PLAN - ADDITION & RENOVATION AREAS' })).toMatchObject({ kind: 'floor plan', level: 'enlarged' });
+    expect(k('ENLARGED PLAN - W/R ACCESSORIES')).toBe('other');
+    // A plan sharing its sheet with a schedule is a plan.
+    expect(classifySheet({ name: 'A200', title: 'GROUND FLOOR PLAN & FINISHES SCHEDULE' })).toMatchObject({ kind: 'floor plan', level: 'level' });
+    expect(k('ROOM FINISH PLAN AND SCHEDULE')).toBe('finish plan');
     expect(k('MILLWORK & PLUMBING FIXTURE PLAN')).toBe('other');
     expect(k('SITE PLAN')).toBe('other');
     expect(k('Construction Sequencing Plan')).toBe('other');

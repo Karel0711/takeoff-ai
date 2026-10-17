@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Segment } from '../src/fill/vectors';
 import type { PageText } from '../src/pageText';
 import { tagTextsFrom } from '../src/walls/sheetWallTakeoff';
-import { classifyCode, emptySetTypes, readTagLegend, readTypeSheet, type SetTypes } from '../src/walls/setTypes';
+import { classifyCode, emptySetTypes, headingKind, readTagLegend, readTypeSheet, type SetTypes } from '../src/walls/setTypes';
 import { resolveTags, WALL_TAG, type TagText } from '../src/walls/tags';
 import { lengthsByType, tagKind, wallTakeoff } from '../src/walls/wallTakeoff';
 
@@ -91,6 +91,82 @@ describe('what the set says its codes are', () => {
     const texts = [pageText('WALL ASSEMBLIES', 2059, 80, 8.4, 110), pageText('VS1', 1743, 159), pageText('VS1', 1300, 1100), ...Array.from({ length: 9 }, (_, i) => pageText('note', 900, 300 + i * 9))];
     const tags = tagTextsFrom(texts, [], undefined, [2835, 2004]);
     expect(tags.map((t) => [t.code, Math.round(t.cx)])).toEqual([['VS1', 1300]]);
+  });
+
+  it('reads a wide table under one title, its type columns side by side, beside another table', () => {
+    // An "Interior Wall Types" title centred over three TYPE columns; "Floor Types" over the next table.
+    const col = (x: number, codes: string[]) => codes.map((c, i) => pageText(c, x, 230 + i * 210, 6, 14));
+    const texts = [
+      pageText('INTERIOR WALL TYPES', 852, 94, 9.8, 165),
+      ...col(135, ['W1', 'W1A', 'W2', 'W3']),
+      ...col(618, ['W6A', 'W6B', 'W7A']),
+      ...col(1099, ['FR1', 'CB1', 'CB2']),
+      pageText('FLOOR TYPES', 1844, 94, 9.8, 100),
+      ...col(1581, ['F1', 'F2']),
+      ...Array.from({ length: 30 }, (_, i) => pageText('16mm gypsum board', 400, 300 + i * 30, 5.6, 80)),
+    ];
+    const read = readTypeSheet(texts, 2592, 1728)!;
+    expect(read.wall.sort()).toEqual(['CB1', 'CB2', 'FR1', 'W1', 'W1A', 'W2', 'W3', 'W6A', 'W6B', 'W7A']);
+    expect(read.other.sort()).toEqual(['F1', 'F2']);
+    // Furring keeps its own kind even listed among the interior walls.
+    expect(tagKind('FR1', undefined, read.kinds)).toBe('furring');
+    expect(read.kinds.W1).toBe('partition');
+  });
+
+  it('reads a construction legend of walls, floors and roofs, apart from the schedule beside it', () => {
+    const notes = Array.from({ length: 30 }, (_, i) => pageText('note', 300, 100 + i * 40, 5.6, 40));
+    const legend = ['EW1', 'EW2', 'W1', 'W2', 'F1', 'F2', 'R1'].map((c, i) => pageText(c, 1844, 120 + i * 90, 6.7, 6.7 * c.length * 0.6));
+    const schedule = Array.from({ length: 8 }, (_, i) => pageText(`10${i}`, 1100, 90 + i * 11, 5.6, 14));
+    const texts = [pageText('ROOM SCHEDULE', 1434, 63, 8.4, 70), ...schedule, pageText('CONSTRUCTION LEGEND', 2069, 78, 6.7, 119), ...legend, ...notes];
+    const read = readTypeSheet(texts, 2592, 1728)!;
+    expect(read.wall.sort()).toEqual(['EW1', 'EW2', 'W1', 'W2']);
+    expect(read.other.sort()).toEqual(['F1', 'F2', 'R1']);
+  });
+
+  it('ends a list at the next heading in its column', () => {
+    const notes = Array.from({ length: 20 }, (_, i) => pageText('note', 300, 100 + i * 40, 5.6, 40));
+    const texts = [
+      pageText('WALL TYPES', 1526, 55, 9, 80),
+      ...['WP1', 'WP2a', 'WE1'].map((c, i) => pageText(c, 1306, 161 + i * 160, 6, 18)),
+      pageText('CEILING TYPES', 1516, 764, 9, 100),
+      ...['CA1', 'CA2'].map((c, i) => pageText(c, 1306, 864 + i * 160, 6, 18)),
+      ...notes,
+    ];
+    const read = readTypeSheet(texts, 2592, 1728)!;
+    expect(read.wall).toEqual(['WP1', 'WP2a', 'WE1']);
+    expect(read.other).toEqual(['CA1', 'CA2']);
+  });
+
+  it('reads the codes of an assembly types sheet whose headings are not text, and codes written with spaces', () => {
+    const notes = Array.from({ length: 20 }, (_, i) => pageText('note', 700, 100 + i * 40, 5.5, 40));
+    const texts = [
+      ...['EW1', 'EW2', 'EW3'].map((c, i) => pageText(c, 133, 160 + i * 163, 6.9, 20)),
+      ...['CB1', 'CB2', 'CB3'].map((c, i) => pageText(c, 515, 160 + i * 163, 6.9, 19)),
+      pageText('ASSEMBLY TYPES MATRIX', 238, 962, 8.8, 163),
+      ...notes,
+    ];
+    expect(readTypeSheet(texts, 2592, 1728)!.wall.sort()).toEqual(['CB1', 'CB2', 'CB3', 'EW1', 'EW2', 'EW3']);
+    const spaced = [pageText('EXTERIOR WALL TYPE LEGEND', 256, 1488, 7, 152), pageText('EX 1', 165, 1582, 5.7, 18), pageText('EX 2', 165, 1697, 5.7, 18), ...notes];
+    const read = readTypeSheet(spaced, 2592, 1728)!;
+    expect(read.wall).toEqual(['EX1', 'EX2']);
+    expect(read.kinds.EX1).toBe('exterior');
+  });
+
+  it('names what a list heading lists by its last word', () => {
+    expect(headingKind('WALL PLATE')).toBe('other');
+    expect(headingKind('BLOCK LINTEL')).toBe('other');
+    expect(headingKind('MASONRY WALL')).toBe('partition');
+    expect(headingKind('FOUNDATION TYPE')).toBe('foundation');
+    expect(headingKind('WALL / FOUNDATION / FLOOR / ROOF TYPE')).toBeNull();
+    expect(headingKind('FLOOR PLAN')).toBeNull();
+    expect(headingKind('CONSTRUCTION')).toBeNull();
+  });
+
+  it('takes a code lettered like the listed wall types as a guessed wall type', () => {
+    const set: SetTypes = { ...emptySetTypes(), wall: ['P1a', 'P1b', 'P2a', 'EX1'] };
+    const fallback = (c: string) => WALL_TAG.test(c);
+    expect(classifyCode('P2b', set, [], fallback)).toEqual({ wall: true, confirmed: false });
+    expect(classifyCode('D12', set, [], fallback)).toBeNull();
   });
 
   it('sorts lowercase and existing-work codes into kinds', () => {

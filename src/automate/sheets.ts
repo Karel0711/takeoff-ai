@@ -68,10 +68,13 @@ const levelOf = (title: string) =>
  * such plan of the file is at; left unscaled when they differ.
  */
 export function scalesFromSet(sheets: Sheet[]): Sheet[] {
-  const kind = new Map(sheets.map((s) => [s.id, classifySheet(s).kind]));
+  const classes = new Map(sheets.map((s) => [s.id, classifySheet(s)]));
+  const kind = new Map([...classes].map(([id, c]) => [id, c.kind]));
+  // An enlarged plan is at its own, larger scale: never a peer to scale another plan by.
+  const enlarged = (id: string) => classes.get(id)!.level === 'enlarged';
   return sheets.map((s) => {
     if (s.metersPerPoint || s.scaleHints.length || !PLAN_KINDS.has(kind.get(s.id)!)) return s;
-    const peers = sheets.filter((o) => o !== s && o.docId === s.docId && o.metersPerPoint && o.scaleLabel && PLAN_KINDS.has(kind.get(o.id)!) && Math.abs(o.width - s.width) < 1 && Math.abs(o.height - s.height) < 1);
+    const peers = sheets.filter((o) => o !== s && o.docId === s.docId && o.metersPerPoint && o.scaleLabel && !enlarged(o.id) && PLAN_KINDS.has(kind.get(o.id)!) && Math.abs(o.width - s.width) < 1 && Math.abs(o.height - s.height) < 1);
     const level = levelOf(s.title ?? '');
     const same = level ? peers.filter((o) => levelOf(o.title ?? '') === level) : [];
     const from = same.length ? same : peers.length >= 2 ? peers : [];
