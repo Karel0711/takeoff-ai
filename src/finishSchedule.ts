@@ -613,6 +613,8 @@ export function readFinishTags(
   labels: { number: string; box?: [number, number, number, number] }[],
   legend?: Map<string, LegendEntry>,
   only?: FinishRole,
+  /** A finish plan: codes the legend does not list are still finishes, read by their place under the tag. */
+  finishPlan = false,
 ): ScheduleRow[] {
   // Only a legend's finishes count: its room names or millwork are not.
   const listed = [...(legend?.values() ?? [])].filter((e) => e.role);
@@ -661,10 +663,13 @@ export function readFinishTags(
     const order: FinishRole[] = ['floor', 'base', 'walls'];
     const finishes: ScheduleRow['finishes'] = {};
     codes.forEach((c, i) => {
-      const role = ordered ? (roles[i] === 'base' ? 'base' : (order[i] ?? null)) : roles[i];
+      const listedHere = !!entry(c);
+      const role = ordered || (finishPlan && !listedHere) ? (roles[i] === 'base' ? 'base' : (order[i] ?? null)) : roles[i];
       if (!role || finishes[role] || EXISTING_CODE.test(c)) return;
-      // With a legend, a code it does not list is not a finish (a wall type tagged near the room).
-      if (listed.length && !entry(c)) return;
+      // A code the legend lists as something other than a room finish (an accessory, millwork).
+      if (!listedHere && [...(legend?.values() ?? [])].some((e) => sameCode(e.code, c))) return;
+      // Off a finish plan, with a legend, a code it does not list is not a finish (a wall type tagged near the room).
+      if (listed.length && !listedHere && !finishPlan) return;
       finishes[role] = c;
     });
     if (Object.keys(finishes).length) rows.push({ number: l.number, name: '', finishes });

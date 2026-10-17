@@ -57,9 +57,10 @@ class Legends {
     for (const [d, m] of this.byDoc) if (d !== docId) for (const [k, e] of m) if (!out.has(k)) out.set(k, e);
     return out;
   }
-  describe(docId: string | undefined, code: string): string | undefined {
-    const all = docId ? this.of(docId) : this.of('');
-    return [...all.values()].find((e) => sameCode(e.code, code))?.description;
+  /** What a legend says a code is: an entry for that finish first, then any finish's (not a door hardware list's PT). */
+  describe(docId: string | undefined, code: string, role?: FinishRole): string | undefined {
+    const all = [...this.of(docId ?? '').values()].filter((e) => e.role && sameCode(e.code, code));
+    return (all.find((e) => e.role === role) ?? all[0])?.description;
   }
 }
 
@@ -121,14 +122,14 @@ export async function readFinishes(project: Project, rooms: Measurement[], acces
     const docId = sheets.get(rooms.find((m) => m.id === id)!.sheetId)?.docId;
     const f: Finishes = {};
     for (const [role, code] of Object.entries(row.finishes) as [FinishRole, string][]) {
-      const t = finishTypeFor(project, role, code, pool, fresh, docId, palette, legends.describe(docId, code));
+      const t = finishTypeFor(project, role, code, pool, fresh, docId, palette, legends.describe(docId, code, role));
       if (t !== roomType.get(id)) f[role] = t;
     }
     picks.set(id, f);
     if (row.wallShares && f.walls) {
       const shares: Record<string, number> = {};
       for (const [code, share] of Object.entries(row.wallShares)) {
-        const t = finishTypeFor(project, 'walls', code, pool, fresh, docId, palette, legends.describe(docId, code));
+        const t = finishTypeFor(project, 'walls', code, pool, fresh, docId, palette, legends.describe(docId, code, 'walls'));
         shares[t] = (shares[t] ?? 0) + share;
       }
       if (Object.keys(shares).length > 1) wallShares.set(id, shares);
@@ -199,7 +200,7 @@ export async function readFinishTagsIn(project: Project, rooms: Measurement[], a
         if (finishPlan || (listed && (kind === 'floor plan' || kind === 'RCP'))) {
           const segs = await access.segments(sheet);
           if (!segs) return;
-          const rows = readFinishTags(texts, findRoomLabels(texts, segs), listed ? legend : undefined, kind === 'RCP' ? 'ceiling' : undefined);
+          const rows = readFinishTags(texts, findRoomLabels(texts, segs), listed ? legend : undefined, kind === 'RCP' ? 'ceiling' : undefined, finishPlan);
           const matched = rows.filter((r) => own.has(r.number)).length;
           if (matched) tagged.push({ sheet, rows, matched, finishPlan });
         }
@@ -232,7 +233,7 @@ export async function readFinishTagsIn(project: Project, rooms: Measurement[], a
       for (const id of own.get(row.number) ?? []) {
         for (const [role, code] of Object.entries(row.finishes) as [FinishRole, string][]) {
           if (picks.get(id)?.[role]) continue;
-          const t = finishTypeFor(project, role, code, pool, fresh, f.sheet.docId, palette, legends.describe(f.sheet.docId, code));
+          const t = finishTypeFor(project, role, code, pool, fresh, f.sheet.docId, palette, legends.describe(f.sheet.docId, code, role));
           if (t === roomType.get(id)) continue;
           picks.set(id, { ...picks.get(id), [role]: t });
           used.set(f.sheet, (used.get(f.sheet) ?? 0) + 1);
@@ -243,7 +244,7 @@ export async function readFinishTagsIn(project: Project, rooms: Measurement[], a
   for (const [docId, c] of ceilings) {
     for (const [id, code] of c.codes) {
       if (picks.get(id)?.ceiling) continue;
-      const t = finishTypeFor(project, 'ceiling', code, pool, fresh, docId, palette, legends.describe(docId, code));
+      const t = finishTypeFor(project, 'ceiling', code, pool, fresh, docId, palette, legends.describe(docId, code, 'ceiling'));
       if (t !== roomType.get(id)) picks.set(id, { ...picks.get(id), ceiling: t });
     }
   }
