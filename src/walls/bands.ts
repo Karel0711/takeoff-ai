@@ -35,10 +35,21 @@ export class SegmentIndex {
   query(x0: number, y0: number, x1: number, y1: number): number[] {
     const [cx0, cy0] = this.cell(Math.min(x0, x1), Math.min(y0, y1));
     const [cx1, cy1] = this.cell(Math.max(x0, x1), Math.max(y0, y1));
-    const out = new Set<number>();
-    for (let x = cx0; x <= cx1; x++) for (let y = cy0; y <= cy1; y++) for (const i of this.cells.get(`${x},${y}`) ?? []) out.add(i);
-    return [...out];
+    // Each once, in the order first met (a stamp per query rather than a Set: this runs per wall line).
+    const seen = (this.seen ??= new Uint32Array(this.segs.length));
+    const stamp = ++this.queries;
+    const out: number[] = [];
+    for (let x = cx0; x <= cx1; x++)
+      for (let y = cy0; y <= cy1; y++)
+        for (const i of this.cells.get(`${x},${y}`) ?? [])
+          if (seen[i] !== stamp) {
+            seen[i] = stamp;
+            out.push(i);
+          }
+    return out;
   }
+  private queries = 0;
+  private seen: Uint32Array | null = null;
 }
 
 interface Piece {
