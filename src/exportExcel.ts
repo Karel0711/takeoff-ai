@@ -300,9 +300,9 @@ export async function buildWorkbook(project: Project, activity: ActivityEvent[] 
   // Per building, each division's types and their materials.
   const buildings = buildingsOf(project);
   if (buildings.length > 1) {
-    const byBuilding = wb.addWorksheet(sheetName('By Building', used));
+    const byBuilding = wb.addWorksheet(sheetName('By File', used));
     byBuilding.columns = [
-      { header: 'Building', key: 'building', width: 16 },
+      { header: 'File', key: 'building', width: 24 },
       { header: 'Division', key: 'division', width: 28 },
       { header: 'Takeoff type', key: 'type', width: 50 },
       { header: 'Item', key: 'item', width: 44 },
@@ -328,7 +328,7 @@ export async function buildWorkbook(project: Project, activity: ActivityEvent[] 
   // Every measurement, for checking.
   const detail = wb.addWorksheet(sheetName('Measurements', used));
   detail.columns = [
-    { header: 'Building', key: 'building', width: 14 },
+    { header: 'File', key: 'building', width: 24 },
     { header: 'Sheet', key: 'sheet', width: 10 },
     { header: 'Takeoff type', key: 'type', width: 50 },
     { header: 'Name', key: 'label', width: 34 },

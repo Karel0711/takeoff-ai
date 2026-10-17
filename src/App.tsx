@@ -31,14 +31,14 @@ import type { Segment } from './fill/vectors';
 import { matchSymbol, sampleSymbol, type SymbolSample } from './fill/symbols';
 import { linesLike, traceLine } from './fill/trace';
 import { readSprinklerSheet, runsOf, sizeValue, type FittingKind, type HeadShape } from './fill/sprinkler';
-import { findGridHatch } from './fill/hatchRegions';
+import { ceilingLabel, ceilingPlanKind, ceilingTypeFor, mergeDefs, readCeilingDefs, readCeilingSheet, type CeilingDef, type CeilingSheetRead } from './fill/ceilings';
 import { checkScale, type ScaleCheck } from './scaleCheck';
 import { sheetImage } from './sheetImage';
 import { compareSheets } from './compareSheets';
 import { pageTexts, type PageText } from './pageText';
 import { readTitleBlock, titleBlockBox } from './titleBlock';
 import { middleOf, roomLocator } from './locate';
-import { buildingOfDoc, buildingsOf, guessBuilding, onBuilding, quantitySections, type QtyGrouping } from './buildings';
+import { buildingOfDoc, buildingsOf, fileLabel, onBuilding, quantitySections, type QtyGrouping } from './buildings';
 import { isHosted, saveFile } from './host';
 import { defaultTypes, newId, newProject, type Kind, type Measurement, type Project, type Pt, type Sheet, type TakeoffType, type Units } from './model';
 import { inspectPage, openPdf, type PDFDocumentProxy, type PDFPageProxy } from './pdf';
@@ -860,6 +860,35 @@ export function App() {
     if (dir) await desktopApi.revealProject(dir);
   }
 
+  /**
+   * Switches a project between metric and imperial at any point. Takeoffs are kept in sheet
+   * points, so every quantity converts by itself; type heights and sizes are converted here.
+   * Numbers typed into material formulas (a stud spacing of 0.61) are left for the user to check.
+   */
+  async function switchUnits(units: Units) {
+    const p = projectRef.current;
+    if (!p || p.units === units) return;
+    const hasFormulaNumbers = p.types.some((t) => t.items.some((i) => /\d*\.\d+|\b\d{2,}\b/.test(i.formula)));
+    if (p.types.length || p.measurements.length) {
+      const ok = await askConfirm(
+        `Switch this project to ${units === 'metric' ? 'metric (m, m²)' : 'imperial (ft, SF)'}? Quantities and type heights convert automatically.${hasFormulaNumbers ? ' Numbers typed into material formulas (like a stud spacing) stay as they are, so check those.' : ''}`,
+        { confirmLabel: 'Switch units' },
+      );
+      if (!ok) return;
+    }
+    const f = units === 'imperial' ? 1 / 0.3048 : 0.3048;
+    const conv = (v: number | undefined) => (v === undefined ? v : Math.round(v * f * 1000) / 1000);
+    commit(
+      (q) => ({
+        ...q,
+        units,
+        types: q.types.map((t) => ({ ...t, height: conv(t.height) ?? 0, width: conv(t.width), depth: conv(t.depth), thickness: conv(t.thickness) })),
+      }),
+      'Units',
+    );
+    setToast({ text: `Project now in ${units}`, undo: true });
+  }
+
   async function startNewProject(units: Units) {
     const name = await askText('New project', {
       initial: '',
@@ -1511,10 +1540,12 @@ export function App() {
   }
 
   /**
-   * Ceilings, with nothing marked: on every reflected ceiling plan, the areas the ceiling grid is
-   * drawn over. A demolition plan's are existing ceiling to take down, an existing plan's (no new
-   * ceiling shown) existing ceiling to take down and put back for the work above it, and any
-   * other plan's new ceiling. A re-run replaces what the last run made.
+   * Ceilings, with nothing marked: on every reflected ceiling plan, each ceiling area by its
+   * ceiling type (the type tag in it, else the legend swatch its pattern matches, else what is
+   * drawn in it), one takeoff type per code named from the ceiling types table. A plan with no
+   * type tags takes the areas its grid covers: a demolition plan's are existing ceiling to take
+   * down, an existing plan's existing ceiling to take down and put back, any other's new T-bar.
+   * A re-run replaces what the last run made.
    */
   async function automateCeilings() {
     const p = projectRef.current!;
@@ -1528,10 +1559,12 @@ export function App() {
       setToast({ text: unscaled.length ? 'Set the ceiling plans’ scale first.' : 'No reflected ceiling plans found.', undo: false });
       return;
     }
-    type Kind = 'new' | 'demo' | 'reinstate';
-    const kindOf = (x: Sheet): Kind => (/DEMO/i.test(title(x)) ? 'demo' : /EXISTING/i.test(title(x)) ? 'reinstate' : 'new');
-    const found: { sheet: Sheet; kind: Kind; regions: Pt[][] }[] = [];
+    const found: { sheet: Sheet; read: CeilingSheetRead }[] = [];
+    let defs: CeilingDef[] = [];
     try {
+      // Ceiling types described on an assembly or legend sheet, for naming the codes.
+      for (const x of p.sheets.filter((x) => !x.superseded && !targets.includes(x) && /ASSEMBL|CEILING|TYPES/i.test(title(x))))
+        defs = mergeDefs([...defs, ...readCeilingDefs(await sheetTexts(x)).defs]);
       for (const [i, x] of targets.entries()) {
         setBusy(`Ceilings: reading ${x.name} (${i + 1} of ${targets.length})…`);
         await new Promise((r) => setTimeout(r, 0));
@@ -1539,8 +1572,9 @@ export function App() {
         if (!pg) continue;
         const [segs, texts] = await Promise.all([segmentsOnce(pg), sheetTexts(x)]);
         const block = titleBlockBox(texts, x.width, x.height);
-        const grid = findGridHatch(segs, x.metersPerPoint, block ? [block] : []);
-        if (grid?.regions.length) found.push({ sheet: x, kind: kindOf(x), regions: grid.regions.map((r) => r.points) });
+        const read = readCeilingSheet(segs, texts, x, { defs, avoid: block ? [block] : [] });
+        defs = mergeDefs([...defs, ...read.defs]);
+        if (read.areas.length) found.push({ sheet: x, read });
       }
     } catch (e) {
       setToast({ text: `Something went wrong: ${e instanceof Error ? e.message : String(e)}`, undo: false });
@@ -1549,66 +1583,39 @@ export function App() {
       setBusy(null);
     }
     if (!found.length) {
-      setToast({ text: 'No ceiling grid found on the ceiling plans.', undo: false });
+      setToast({ text: 'No ceilings found on the ceiling plans.', undo: false });
       return;
     }
-    const area = metric ? 'm²' : 'SF';
-    const len = metric ? 'm' : 'ft';
-    const tile = metric ? 0.72 : 8;
-    const TYPES: Record<Kind, { name: string; division: string; pkg: string; items: { name: string; unit: string; formula: string }[] }> = {
-      new: {
-        name: metric ? 'Ceiling – new suspended T-bar, 600×1200' : 'Ceiling – new suspended T-bar, 2×4',
-        division: '09 Finishes',
-        pkg: 'Drywall & ceilings',
-        items: [
-          { name: 'Ceiling area', unit: area, formula: 'A' },
-          { name: metric ? 'Tiles 600×1200 + 5%' : 'Tiles 2×4 + 5%', unit: 'ea', formula: `ceil(A / ${tile} * 1.05)` },
-          { name: metric ? 'Main tees @ 1200, 3.66 m long' : "Main tees @ 4', 12' long", unit: 'ea', formula: metric ? 'ceil(A / 1.2 / 3.66)' : 'ceil(A / 4 / 12)' },
-          { name: metric ? '1200 cross tees @ 600' : "4' cross tees @ 2'", unit: 'ea', formula: `ceil(A / ${tile})` },
-          { name: 'Wall angle', unit: len, formula: 'P' },
-          { name: metric ? 'Hanger wires @ 1200×1200' : "Hanger wires @ 4'×4'", unit: 'ea', formula: metric ? 'ceil(A / 1.44)' : 'ceil(A / 16)' },
-        ],
-      },
-      demo: {
-        name: 'Ceiling – demolish existing',
-        division: '02 Existing Conditions',
-        pkg: 'Demolition & abatement',
-        items: [{ name: 'Existing ceiling to demolish', unit: area, formula: 'A' }],
-      },
-      reinstate: {
-        name: 'Ceiling – remove & reinstate existing tiles',
-        division: '09 Finishes',
-        pkg: 'Drywall & ceilings',
-        items: [{ name: 'Existing ceiling to remove and reinstate', unit: area, formula: 'A' }],
-      },
-    };
     const types: TakeoffType[] = [...p.types];
     const made: TakeoffType[] = [];
-    const typeFor = (k: Kind) => {
-      const def = TYPES[k];
-      const got = types.find((t) => t.name === def.name && t.kind === 'area');
+    const typeFor = (spec: ReturnType<typeof ceilingTypeFor>) => {
+      const got = types.find((t) => t.name === spec.name && t.kind === 'area');
       if (got) return got.id;
-      const t: TakeoffType = { id: newId(), name: def.name, color: PALETTE[types.length % PALETTE.length], kind: 'area', height: 0, division: def.division, package: def.pkg, items: def.items.map((it) => ({ id: newId(), ...it })) };
+      const t: TakeoffType = { id: newId(), name: spec.name, color: PALETTE[types.length % PALETTE.length], kind: 'area', height: 0, division: spec.division, package: spec.package, description: spec.description, items: spec.items.map((it) => ({ id: newId(), ...it })) };
       types.push(t);
       made.push(t);
       return t.id;
     };
     const added: Project['measurements'] = [];
     let total = 0;
-    for (const f of found)
-      for (const points of f.regions) {
-        added.push({ id: newId(), sheetId: f.sheet.id, typeId: typeFor(f.kind), points, holes: [], source: 'ceilings' });
-        total += ringArea(points) * f.sheet.metersPerPoint! ** 2;
+    const codes = new Set<string>();
+    for (const { sheet: x, read } of found) {
+      const plan = ceilingPlanKind(title(x));
+      for (const a of read.areas) {
+        const typeId = typeFor(ceilingTypeFor(a, { tagged: read.tagged, defs }, plan, metric));
+        codes.add(typeId);
+        added.push({ id: newId(), sheetId: x.id, typeId, points: a.points, holes: a.holes, source: 'ceilings', label: ceilingLabel(a) });
+        total += a.area * x.metersPerPoint! ** 2;
       }
+    }
     const sheets = new Set(found.map((f) => f.sheet.id));
     commit(
       (q) => ({ ...q, types: [...q.types, ...made], measurements: [...q.measurements.filter((m) => !(m.source === 'ceilings' && sheets.has(m.sheetId))), ...added] }),
       'Ceilings',
     );
-    const byKind = (['new', 'demo', 'reinstate'] as Kind[]).map((k) => [k, found.filter((f) => f.kind === k).length] as const).filter(([, n]) => n);
-    const words: Record<Kind, string> = { new: 'new', demo: 'demolition', reinstate: 'remove & reinstate' };
+    const tagged = found.reduce((n, f) => n + f.read.areas.filter((a) => a.source === 'tag').length, 0);
     setToast({
-      text: `Ceilings on ${found.length} plan${found.length === 1 ? '' : 's'} (${byKind.map(([k, n]) => `${n} ${words[k]}`).join(', ')}): ${formatQty(metric ? total : total * 10.7639)} ${area}${unscaled.length ? ` · ${unscaled.length} without a scale skipped` : ''}`,
+      text: `Ceilings on ${found.length} plan${found.length === 1 ? '' : 's'}: ${added.length} areas in ${codes.size} type${codes.size === 1 ? '' : 's'}${tagged ? ` (${tagged} by type tag)` : ''}, ${formatQty(metric ? total : total * 10.7639)} ${metric ? 'm²' : 'SF'}${unscaled.length ? ` · ${unscaled.length} without a scale skipped` : ''}`,
       undo: true,
     });
   }
@@ -1656,10 +1663,10 @@ export function App() {
   async function setDocBuilding(docId: string) {
     const d = projectRef.current!.docs.find((x) => x.id === docId);
     if (!d) return;
-    const name = await askText('Building', { initial: buildingOfDoc(d), hint: `Quantities can be grouped by building. Read from the file name: ${guessBuilding(d.name)}` });
+    const name = await askText('Label for this file', { initial: buildingOfDoc(d), hint: 'Quantities can be grouped by file. Leave it blank to use the file name.' });
     if (name === null) return;
-    const building = name.trim() && name.trim() !== guessBuilding(d.name) ? name.trim() : undefined;
-    commit((p) => ({ ...p, docs: p.docs.map((x) => (x.id === docId ? { ...x, building } : x)) }), 'Set building');
+    const building = name.trim() && name.trim() !== fileLabel(d.name) ? name.trim() : undefined;
+    commit((p) => ({ ...p, docs: p.docs.map((x) => (x.id === docId ? { ...x, building } : x)) }), 'Label file');
   }
 
   /** Names every sheet from its title block: its sheet number, with the drawing title beside it. */
@@ -2420,12 +2427,12 @@ export function App() {
                             <Icon name="chevron" size={12} />
                           </span>
                           <span className="doc-name">{d.name.replace(/\.pdf$/i, '')}</span>
-                          <span className="doc-building" title="Building these sheets are for">
+                          <span className="doc-building" title="Label these sheets are grouped under">
                             {buildingOfDoc(d)}
                           </span>
                           <span className="doc-count">{done ? `${done}/${all.length}` : all.length}</span>
                         </button>
-                        <button className="icon-button small doc-building-edit" title="Set the building these sheets are for" aria-label={`Set building for ${d.name}`} onClick={() => void setDocBuilding(d.id)}>
+                        <button className="icon-button small doc-building-edit" title="Rename the label this file is grouped under" aria-label={`Label ${d.name}`} onClick={() => void setDocBuilding(d.id)}>
                           <Icon name="edit" size={13} />
                         </button>
                         <button className="icon-button small danger doc-remove" title={`Remove ${d.name} and its takeoffs`} aria-label={`Remove ${d.name}`} onClick={() => void removeDrawings(d.id)}>
@@ -2471,11 +2478,11 @@ export function App() {
                 typeView === 'folders'
                   ? 'Showing your groups · click to show by estimate division'
                   : typeView === 'division'
-                    ? 'Showing by division · click to show by building, then division'
-                    : 'Showing by building, then division · click to show your groups'
+                    ? 'Showing by division · click to show by file, then division'
+                    : 'Showing by file, then division · click to show your groups'
               }
             >
-              {typeView === 'folders' ? 'By group' : typeView === 'division' ? 'By division' : 'By building'}
+              {typeView === 'folders' ? 'By group' : typeView === 'division' ? 'By division' : 'By file'}
             </button>
           </div>
           <ul className="source-list">
@@ -2709,6 +2716,9 @@ export function App() {
           onAdd={addMeasurement}
           onReplacePoints={(id, points, source = 'Fill room', openings) =>
             commit((p) => ({ ...p, measurements: p.measurements.map((m) => (m.id === id ? { ...m, points, openings } : m)) }), source)
+          }
+          onMoveTakeoff={(id, points, holes) =>
+            commit((p) => ({ ...p, measurements: p.measurements.map((m) => (m.id === id ? { ...m, points, holes } : m)) }), 'Move takeoff')
           }
           getWallModel={() => (page && sheet ? wallModelFor(page, sheet, maxOpening) : null)}
           onAddHole={(id, ring) =>
@@ -2971,9 +2981,10 @@ export function App() {
               setPopover(null);
               void switchProject(id);
             }}
-            onNew={(units) => {
+            onNew={() => {
               setPopover(null);
-              void startNewProject(units);
+              // Same units as the project open now; they can be switched any time (More menu).
+              void startNewProject(project.units);
             }}
             onDelete={(id) => void removeProject(id)}
             onDuplicate={() => {
@@ -3177,6 +3188,11 @@ export function App() {
                 : []),
               ...(canUseServiceWorker() && !isInstalled() ? [{ label: 'Install as an app…', onSelect: () => void installApp() }] : []),
               ...(isHosted ? [] : [{ label: 'AI settings…', onSelect: () => setAiDialog('settings') }]),
+              {
+                label: project.units === 'metric' ? 'Switch to imperial (ft, SF)…' : 'Switch to metric (m, m²)…',
+                hint: `Now ${project.units}`,
+                onSelect: () => void switchUnits(project.units === 'metric' ? 'imperial' : 'metric'),
+              },
               ...(desktopApi
                 ? syncFolder
                   ? [
@@ -3226,6 +3242,7 @@ export function App() {
       {aiDialog === 'walls' && page && sheet && (
         <WallTakeoffDialog
           page={page}
+          doc={pdfs.get(sheet.docId)}
           sheet={sheet}
           units={project.units}
           types={project.types}
@@ -3319,12 +3336,16 @@ export function App() {
           project={project}
           palette={PALETTE}
           getPage={async (s) => (await pdfs.get(s.docId)?.getPage(s.page)) ?? null}
-          onApply={({ types, finishes }) =>
+          onApply={({ types, finishes, ceilingHeights }) =>
             commit(
               (p) => ({
                 ...p,
                 types: [...p.types, ...types],
-                measurements: p.measurements.map((m) => (finishes.has(m.id) ? { ...m, finishes: finishes.get(m.id) } : m)),
+                measurements: p.measurements.map((m) =>
+                  finishes.has(m.id) || ceilingHeights.has(m.id)
+                    ? { ...m, ...(finishes.has(m.id) ? { finishes: finishes.get(m.id) } : {}), ...(ceilingHeights.has(m.id) ? { ceilingHeight: ceilingHeights.get(m.id) } : {}) }
+                    : m,
+                ),
               }),
               'Room finishes',
             )

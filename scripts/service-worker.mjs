@@ -27,6 +27,11 @@ self.addEventListener('message', (event) => {
   if (event.data === 'update-now') self.skipWaiting();
 });
 
+async function unredirect(response) {
+  if (!response.redirected) return response;
+  return new Response(await response.blob(), { status: response.status, statusText: response.statusText, headers: response.headers });
+}
+
 self.addEventListener('fetch', (event) => {
   const request = event.request;
   const url = new URL(request.url);
@@ -34,7 +39,15 @@ self.addEventListener('fetch', (event) => {
   if (request.method !== 'GET' || url.origin !== self.location.origin || url.pathname.includes('/api/')) return;
   if (request.mode === 'navigate') {
     // The app shell from this build's cache, so the page and its assets always match.
-    event.respondWith(caches.match('./index.html').then((hit) => hit || fetch(request)));
+    // Hosts like Cloudflare Pages redirect /index.html to /, and a browser refuses a
+    // redirected response for a page load, so the cached copy is served as a fresh one.
+    event.respondWith(
+      caches
+        .match('./')
+        .then((hit) => hit || caches.match('./index.html'))
+        .then((hit) => (hit ? unredirect(hit) : fetch(request)))
+        .catch(() => fetch(request)),
+    );
     return;
   }
   event.respondWith(caches.match(request).then((hit) => hit || fetch(request)));
@@ -51,7 +64,7 @@ export function serviceWorker() {
     },
     closeBundle() {
       const assets = readdirSync(join(outDir, 'assets')).filter((f) => !f.endsWith('.map'));
-      const files = ['./', './index.html', './manifest.webmanifest', './icon.svg', ...assets.map((f) => `./assets/${f}`)];
+      const files = ['./', './manifest.webmanifest', './icon.svg', ...assets.map((f) => `./assets/${f}`)];
       writeFileSync(join(outDir, 'sw.js'), worker(Date.now().toString(36), files));
     },
   };

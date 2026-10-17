@@ -103,3 +103,74 @@ describe('rooms drawn without lineweights', () => {
     for (const r of rooms) expect(r.area / 20000).toBeGreaterThan(0.9);
   });
 });
+
+describe('room tags of any set', () => {
+  // Tags drawn as on 84 Frederick: alphanumeric numbers in small boxes, the name below.
+  const box = (x: number, y: number, w = 24, h = 11) => {
+    const s = (x1: number, y1: number, x2: number, y2: number): Segment => ({ x1, y1, x2, y2, width: 0.3, filled: false });
+    return [s(x - w / 2, y - h / 2, x + w / 2, y - h / 2), s(x + w / 2, y - h / 2, x + w / 2, y + h / 2), s(x + w / 2, y + h / 2, x - w / 2, y + h / 2), s(x - w / 2, y + h / 2, x - w / 2, y - h / 2)];
+  };
+  const t = (str: string, cx: number, cy: number): PageText => ({ str, cx, cy, w: str.length * 3.6, h: 6 });
+  const segs = [...box(100, 100), ...box(300, 100), ...box(500, 100), ...box(700, 100), ...box(900, 100), ...box(1500, 100, 16)];
+  const texts = [
+    t('101a', 100, 100),
+    t('Program Room', 100, 116),
+    t('B24S', 300, 100),
+    t('Corridor', 300, 116),
+    // A note beside the name is not part of it.
+    t('CR', 330, 118),
+    t('M01', 500, 100),
+    t('Shelter', 500, 116),
+    t('Intake', 500, 125),
+    t('2.14', 700, 100),
+    t('WC', 700, 116),
+    // A type tag and a dimension under a tag are not its name.
+    t('118a', 900, 100),
+    t('Kitchen', 900, 116),
+    t('fx2', 900, 125),
+    t(`8'-6"`, 900, 134),
+    // The legend's sample tag, explained beside it.
+    t('07', 1500, 100),
+    t('Room Numbers', 1545, 100),
+    t('See Room Finish Schedule(s)', 1570, 110),
+  ];
+
+  it('reads numbers with letters (101a, B24S, M01, 2.14) and the name below the box, not legend samples', () => {
+    expect(findRoomLabels(texts, segs).map((l) => [l.number, l.name])).toEqual([
+      ['101a', 'Program Room'],
+      ['B24S', 'Corridor'],
+      ['M01', 'Shelter Intake'],
+      ['2.14', 'WC'],
+      ['118a', 'Kitchen'],
+    ]);
+  });
+
+  it('reads the name on the side most of the sheet uses when there is text on both', () => {
+    // A note above one tag: the sheet writes names below.
+    const labels = findRoomLabels([...texts, t('Mirror', 100, 84)], segs);
+    expect(labels.find((l) => l.number === '101a')?.name).toBe('Program Room');
+  });
+
+  it('takes no lone boxed code or symbol letter for a room', () => {
+    // A sheet with one boxed number (a keynote) and a boxed letter: no room plan.
+    const lone = [...box(100, 100), ...box(300, 100)];
+    expect(findRoomLabels([t('13', 100, 100), t('D', 300, 100), t('LF', 300, 116)], lone)).toEqual([]);
+    // A title block's drawing number under its caption.
+    expect(findRoomLabels([t('A912', 100, 100), t('Dwg. No.', 100, 84)], box(100, 100))).toEqual([]);
+  });
+});
+
+describe('leaks', () => {
+  it('leaves tags unclosed when one outline swallows more than three rooms', () => {
+    // One big box (no partitions) holding five rooms' tags.
+    const s = (x1: number, y1: number, x2: number, y2: number): Segment => ({ x1, y1, x2, y2, width: 0.57, filled: false });
+    const walls = [s(0, 0, 600, 0), s(600, 0, 600, 300), s(600, 300, 0, 300), s(0, 300, 0, 0)];
+    const m: WallModel = { lines: walls, pens: ['0.57'], stats: [], bridges: 0, openings: [] };
+    const labels = [100, 200, 300, 400, 500].map((x, i) => ({ number: `10${i}`, name: 'Office', at: [x, 150] as [number, number] }));
+    const rooms = fillRooms(m, labels, 1000, 1000);
+    expect(rooms.every((r) => r.points === null && r.reason === 'not-closed')).toBe(true);
+    expect(rooms).toHaveLength(5);
+    // Two tags in one open space still share it.
+    expect(fillRooms(m, labels.slice(0, 2), 1000, 1000).map((r) => r.labels.length)).toEqual([2]);
+  });
+});

@@ -15,8 +15,11 @@ export function guessBuilding(name: string): string {
   return code ?? stem;
 }
 
-/** A drawing set's building: as set by the estimator, or read from its name. */
-export const buildingOfDoc = (doc: Doc | undefined): string => (doc ? doc.building?.trim() || guessBuilding(doc.name) : 'Unassigned');
+/** The file a takeoff's sheets came from, for grouping quantities: a label the estimator set, or the file name. */
+export const buildingOfDoc = (doc: Doc | undefined): string => (doc ? doc.building?.trim() || fileLabel(doc.name) : 'Unassigned');
+
+/** A drawing file's name without its extension. */
+export const fileLabel = (name: string): string => name.replace(/\.pdf$/i, '').trim();
 
 /** The building a sheet belongs to. */
 export function buildingOf(project: Project, sheet: Sheet): string {

@@ -148,6 +148,11 @@ export interface Measurement {
    * outline counts toward each: floor and ceiling as area, base and walls as its perimeter.
    */
   finishes?: Partial<Record<FinishRole, string>>;
+  /**
+   * A room's ceiling height above its floor, in project length units, as the room finish
+   * schedule gives it. Its wall finishes run up to it (instead of the wall type's height).
+   */
+  ceilingHeight?: number;
 }
 
 export type FinishRole = 'floor' | 'base' | 'walls' | 'ceiling';

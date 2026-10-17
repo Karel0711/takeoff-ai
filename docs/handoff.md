@@ -26,6 +26,22 @@ Where the project stands, for picking it up in a new session.
   them (windows); flood fill at up to 2 px/pt (3 gave the same areas to 0.01 m² at twice the time), hole filling, boundary trace,
   then edges snapped to the drawn lines. First click reads the sheet's operator
   list (~3–6 s), then 0.1–2 s per room.
+- **Wall tag labelling (generalized, tested on 84 Frederick A212/A213):** which codes are
+  wall tags comes from the set itself (`src/walls/setTypes.ts`, read once per drawing file
+  by `setTypesOf`): codes listed under wall/partition/furring/foundation headings on an
+  assembly types sheet ("Partition (p) Types:") are walls with that kind, codes under
+  floor/ceiling/soffit/window headings are not, and a plan legend's placeholders ("w#  Wall
+  Type", "Wxx  Window Type") give prefixes, case-sensitively. A set that lists its wall
+  types rejects every other code; without one, `WALL_TAG` (any case, "x" existing marker)
+  and leader-only generic codes as before, but a guessed code in a different symbol than
+  the confirmed tags (hexagon window, triangle keynote) is dropped. Symbols can be filled
+  shapes; leaders can be in a finer pen; a tag with no leader labels the nearest wall
+  within 1.5x its symbol size. Partition and exterior/foundation types compete (nearest
+  tag wins, one never carries through the other); types do not carry into or out of the
+  thin leaves lining a thick (>= 250 mm) wall, and an exterior tag landing on such a leaf
+  goes to the thick wall. Bands a fraction of a degree off square on a square sheet are
+  dropped (two unrelated lines). Reading the set's text takes ~8-11 s for 40 sheets the
+  first time a drawing file is used.
 - **Wall takeoff:** `src/walls/`. Latest score across A2.0–A2.3 against the
   workbook: 10.7% total difference (A2.0 2%, A2.1 8%, A2.2 15%, A2.3 22%); 8.2% with W2 set to stop at doors (`CUT=W2 score4.sh`), which is how the estimator measures W2 but not W1;
   re-score with the per-sheet keys after any change to the carry rules (each

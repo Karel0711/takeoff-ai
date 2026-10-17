@@ -14,6 +14,8 @@ export interface Mark {
   line?: [number, number, number, number];
   /** A filled outline the size of lettering: text drawn as shapes, never a hatch. */
   glyph: boolean;
+  /** The subpath it was drawn as (Segment.sub). */
+  sub?: number;
 }
 
 /** Groups segments into their shapes, with a class that hatch marks of one kind share. */
@@ -26,7 +28,7 @@ export function marksOf(segs: Segment[]): Mark[] {
     else bySub.set(s.sub, [s]);
   }
   const out: Mark[] = [];
-  for (const list of bySub.values()) {
+  for (const [sub, list] of bySub) {
     let x0 = Infinity;
     let y0 = Infinity;
     let x1 = -Infinity;
@@ -59,6 +61,7 @@ export function marksOf(segs: Segment[]): Mark[] {
       key: `${first.filled ? 'F' : 'S'}${first.width.toFixed(2)} ${shape}`,
       line,
       glyph: first.filled && size >= 1.2 && size <= 12,
+      sub,
     });
   }
   return out;

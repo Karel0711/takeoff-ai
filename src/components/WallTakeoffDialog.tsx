@@ -4,17 +4,20 @@ import { buildTakeoffType } from '../assemblyBuilder';
 import { polylineLength } from '../geometry';
 import type { Measurement, Pt, Sheet, TakeoffType, Units } from '../model';
 import { newId } from '../model';
-import type { PDFPageProxy } from '../pdf';
+import type { PDFDocumentProxy, PDFPageProxy } from '../pdf';
 import { readWallKey, scoreWalls, type WallKeyEntry } from '../eval/wallKey';
 import { formatQty, lengthUnit, toLength } from '../units';
 import { runsToLines, type TypeLines } from '../walls/runsToLines';
-import { sheetWallTakeoff } from '../walls/sheetWallTakeoff';
+import { setTypesOf, sheetWallTakeoff } from '../walls/sheetWallTakeoff';
+import type { SetTypes } from '../walls/setTypes';
 import { scoringOn } from '../scoring';
 import { useEscape } from './Dialogs';
 import { tagKind, type WallTakeoffResult } from '../walls/wallTakeoff';
 
 interface Props {
   page: PDFPageProxy;
+  /** The drawing file the sheet is in: its assembly types sheets and legends say which codes are walls. */
+  doc?: PDFDocumentProxy;
   sheet: Sheet;
   units: Units;
   types: TakeoffType[];
@@ -39,9 +42,10 @@ let wallKey: { name: string; entries: WallKeyEntry[] } | null = null;
 
 type State = { phase: 'running' } | { phase: 'done'; result: WallTakeoffResult; lines: TypeLines[]; ms: number } | { phase: 'error'; message: string };
 
-export function WallTakeoffDialog({ page, sheet, units, types, earlier, palette, legend, maxOpening, onApply, onClose }: Props) {
+export function WallTakeoffDialog({ page, doc, sheet, units, types, earlier, palette, legend, maxOpening, onApply, onClose }: Props) {
   const [state, setState] = useState<State>({ phase: 'running' });
   const [choice, setChoice] = useState<Map<string, string>>(new Map());
+  const [set, setSet] = useState<SetTypes | undefined>(undefined);
   const [replaceEarlier, setReplaceEarlier] = useState(true);
   const [key, setKey] = useState(wallKey);
   const [keyError, setKeyError] = useState<string | null>(null);
@@ -82,8 +86,12 @@ export function WallTakeoffDialog({ page, sheet, units, types, earlier, palette,
     let live = true;
     setState({ phase: 'running' });
     const started = performance.now();
-    sheetWallTakeoff(page, sheet, maxOpening, throughDoors, [...stopAt], known)
-      .then((result) => {
+    (doc ? setTypesOf(doc).catch(() => undefined) : Promise.resolve(undefined))
+      .then((setTypes) => {
+        if (live) setSet(setTypes);
+        return sheetWallTakeoff(page, sheet, maxOpening, throughDoors, [...stopAt], { ...known, set: setTypes }).then((result) => ({ result, setTypes }));
+      })
+      .then(({ result, setTypes }) => {
         if (!live) return;
         const lines = runsToLines(result.runs);
         const linear = types.filter((t) => t.kind === 'linear');
@@ -92,7 +100,7 @@ export function WallTakeoffDialog({ page, sheet, units, types, earlier, palette,
           linear.find((t) => codeOf(t.name) === code && t.fromDoc === sheet.docId) ?? linear.find((t) => codeOf(t.name) === code && !t.fromDoc) ?? linear.find((t) => codeOf(t.name) === code);
         // A code that is none of the project's wall types (a door tag whose leader touches a
         // wall) is left out unless picked.
-        const unknown = (code: string) => known.codes.length > 0 && !known.codes.includes(code);
+        const unknown = (code: string) => known.codes.length > 0 && !known.codes.includes(code) && !setTypes?.wall.includes(code);
         setChoice((prev) => new Map(lines.map((l) => [l.code, prev.get(l.code) ?? typeFor(l.code)?.id ?? (unknown(l.code) ? SKIP : NEW)])));
         setState({ phase: 'done', result, lines, ms: Math.round(performance.now() - started) });
       })
@@ -154,7 +162,7 @@ export function WallTakeoffDialog({ page, sheet, units, types, earlier, palette,
         newTypes.push(t);
         typeId = t.id;
       }
-      if (tagKind(l.code, known.exterior) === 'partition') stopsAtDoors.set(typeId, stopAt.has(l.code));
+      if (tagKind(l.code, known.exterior, set?.kinds) === 'partition') stopsAtDoors.set(typeId, stopAt.has(l.code));
       for (const points of l.lines) {
         measurements.push({ id: newId(), sheetId: sheet.id, typeId, points: points.map((p) => [...p] as Pt), holes: [], source: 'walls' });
       }
@@ -221,7 +229,7 @@ export function WallTakeoffDialog({ page, sheet, units, types, earlier, palette,
                         {l.light ? ` · ${l.light} in light lines, check` : ''}
                       </td>
                       <td>
-                        {tagKind(l.code, known.exterior) === 'partition' && (
+                        {tagKind(l.code, known.exterior, set?.kinds) === 'partition' && (
                           <input
                             type="checkbox"
                             aria-label={`${l.code} stops at doors`}

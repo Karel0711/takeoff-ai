@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from 'react';
-import { codesInside, readFinishSchedule, readFinishTags, roomNumbersOf, sameCode, type ScheduleRow } from '../finishSchedule';
+import { codesInside, heightMeters, matchSchedules, readFinishSchedule, readFinishTags, roomNumbersOf, sameCode, type ScheduleRow, type ScheduleSheet } from '../finishSchedule';
 import { findRoomLabels } from '../fill/rooms';
 import { segmentsOnce } from '../fill/sheetWalls';
 import { pointInRing } from '../fill/similar';
@@ -7,7 +7,7 @@ import { FINISH_ROLES, finishType, type FinishRole, type Measurement, type Proje
 import { pageTexts } from '../pageText';
 import type { PDFPageProxy } from '../pdf';
 import { measurementVars } from '../quantities';
-import { areaUnit, formatQty } from '../units';
+import { areaUnit, formatQty, lengthUnit, toLength } from '../units';
 import { askText, useEscape } from './Dialogs';
 
 type Finishes = Partial<Record<FinishRole, string>>;
@@ -17,7 +17,8 @@ interface Props {
   palette: string[];
   /** The page of a sheet, for reading a finish schedule. */
   getPage: (sheet: Sheet) => Promise<PDFPageProxy | null>;
-  onApply: (result: { types: TakeoffType[]; finishes: Map<string, Finishes> }) => void;
+  /** `ceilingHeights`: rooms whose ceiling height changed (undefined clears it), in project length units. */
+  onApply: (result: { types: TakeoffType[]; finishes: Map<string, Finishes>; ceilingHeights: Map<string, number | undefined> }) => void;
   /** Runs Rooms on the open sheet, when it can (a plan with a scale). */
   onFindRooms?: () => void;
   onClose: () => void;
@@ -53,6 +54,9 @@ export function RoomFinishesDialog({ project, palette, getPage, onApply, onFindR
   const [bulkType, setBulkType] = useState(NONE);
   const [reading, setReading] = useState<string | null>(null);
   const [readNote, setReadNote] = useState<string | null>(null);
+  /** After reading the schedules: their lines no room matched, and rooms no line matched. */
+  const [unmatched, setUnmatched] = useState<{ rows: string[]; rooms: string[] } | null>(null);
+  const [heights, setHeights] = useState<Map<string, number | undefined>>(() => new Map(rooms.map((m) => [m.id, m.ceilingHeight])));
   const types = [...project.types, ...added];
   const sheets = new Map(project.sheets.map((s) => [s.id, s]));
 
@@ -100,42 +104,54 @@ export function RoomFinishesDialog({ project, palette, getPage, onApply, onFindR
     set(ids, role, id);
   }
 
+  /**
+   * Reads every room finish schedule in the set (often one sheet per floor, apart from the
+   * plans) and gives each room takeoff the finishes and ceiling height of the line with its
+   * number. Lines and rooms that did not match are listed.
+   */
   async function readSchedule() {
     setReadNote(null);
-    let best: { sheet: Sheet; rows: ScheduleRow[]; matched: number } | null = null;
-    const numbers = new Map<string, string[]>();
-    for (const m of rooms) for (const n of roomNumbersOf(m.label)) numbers.set(n, [...(numbers.get(n) ?? []), m.id]);
+    setUnmatched(null);
+    const found: (ScheduleSheet & { sheet: Sheet })[] = [];
+    const targets = project.sheets.filter((x) => !x.superseded);
     try {
-      for (const [i, sheet] of project.sheets.entries()) {
-        setReading(`Looking for a finish schedule… sheet ${i + 1} of ${project.sheets.length}`);
+      for (const [i, sheet] of targets.entries()) {
+        setReading(`Looking for finish schedules… sheet ${i + 1} of ${targets.length}`);
         const page = await getPage(sheet);
         if (!page) continue;
-        const found = readFinishSchedule(await pageTexts(page));
-        if (!found) continue;
-        const matched = found.rows.filter((r) => numbers.has(r.number)).length;
-        if (!best || matched > best.matched || (matched === best.matched && found.rows.length > best.rows.length)) best = { sheet, rows: found.rows, matched };
+        const texts = await pageTexts(page);
+        if (!readFinishSchedule(texts)) continue;
+        // Read again along the table's rules, so each cell lands in its own column.
+        const schedule = readFinishSchedule(texts, await segmentsOnce(page));
+        if (schedule?.rows.length) found.push({ sheet, sheetName: sheet.name, docId: sheet.docId, rows: schedule.rows });
       }
     } finally {
       setReading(null);
     }
-    if (!best) {
+    if (!found.length) {
       await readTags();
       return;
     }
+    const match = matchSchedules(
+      rooms.map((m) => ({ id: m.id, label: m.label, docId: sheets.get(m.sheetId)?.docId })),
+      found,
+    );
     // Applied to the latest picks and types: the dialog stays usable while the sheets are read.
     const fresh: TakeoffType[] = [];
     const pool = [...project.types, ...addedRef.current];
     const roomType = new Map(rooms.map((m) => [m.id, m.typeId]));
     const picks = new Map<string, Finishes>();
-    for (const row of best.rows) {
-      for (const id of numbers.get(row.number) ?? []) {
-        const f: Finishes = { ...picks.get(id) };
-        for (const [role, code] of Object.entries(row.finishes) as [FinishRole, string][]) {
-          const t = typeFor(role, code, pool, fresh);
-          if (t !== roomType.get(id)) f[role] = t;
-        }
-        picks.set(id, f);
+    const lifts = new Map<string, number>();
+    for (const [id, { row }] of match.rows) {
+      const docId = sheets.get(rooms.find((m) => m.id === id)!.sheetId)?.docId;
+      const f: Finishes = {};
+      for (const [role, code] of Object.entries(row.finishes) as [FinishRole, string][]) {
+        const t = typeFor(role, code, pool, fresh, docId);
+        if (t !== roomType.get(id)) f[role] = t;
       }
+      picks.set(id, f);
+      const h = row.ceilingHeight ? heightMeters(row.ceilingHeight) : null;
+      if (h) lifts.set(id, +toLength(h, project.units).toFixed(3));
     }
     addedRef.current = [...addedRef.current, ...fresh];
     setAdded(addedRef.current);
@@ -144,8 +160,17 @@ export function RoomFinishesDialog({ project, palette, getPage, onApply, onFindR
       for (const [id, f] of picks) next.set(id, { ...next.get(id), ...f });
       return next;
     });
+    setHeights((hs) => new Map([...hs, ...lifts]));
+    const rowsRead = found.reduce((n, f) => n + f.rows.length, 0);
+    const label = (id: string) => rooms.find((m) => m.id === id)?.label ?? 'Unnamed area';
+    setUnmatched(
+      match.unmatched.length || match.missing.length
+        ? { rows: match.unmatched.map((u) => `${u.row.number}${u.row.name ? ` ${u.row.name}` : ''} (${u.sheetName})`), rooms: match.missing.map(label) }
+        : null,
+    );
     setReadNote(
-      `Read the schedule on ${best.sheet.name}: ${best.rows.length} room${best.rows.length === 1 ? '' : 's'}, ${best.matched} matched to your room takeoffs` +
+      `Read ${found.length} finish schedule${found.length === 1 ? '' : 's'} (${found.map((f) => f.sheetName).join(', ')}): ${rowsRead} room${rowsRead === 1 ? '' : 's'}, ` +
+        `${match.rows.size} of your ${rooms.length} room takeoffs matched` +
         (fresh.length ? `, ${fresh.length} new finish type${fresh.length === 1 ? '' : 's'}.` : '.'),
     );
   }
@@ -237,16 +262,19 @@ export function RoomFinishesDialog({ project, palette, getPage, onApply, onFindR
     setReadNote(`No finish schedule; read the ${parts.join('; ')}${fresh.length ? `; ${fresh.length} new finish type${fresh.length === 1 ? '' : 's'}` : ''}. Check the rooms left blank.`);
   }
 
-  const changed = rooms.filter((m) => JSON.stringify(m.finishes ?? {}) !== JSON.stringify(draft.get(m.id) ?? {})).length;
+  const heightChanged = (m: Measurement) => (heights.get(m.id) ?? undefined) !== (m.ceilingHeight ?? undefined);
+  const changed = rooms.filter((m) => JSON.stringify(m.finishes ?? {}) !== JSON.stringify(draft.get(m.id) ?? {}) || heightChanged(m)).length;
   const usedAdded = added.filter((t) => [...draft.values()].some((f) => Object.values(f).includes(t.id)));
 
   function save() {
     const finishes = new Map<string, Finishes>();
+    const ceilingHeights = new Map<string, number | undefined>();
     for (const m of rooms) {
       const f = draft.get(m.id) ?? {};
       if (JSON.stringify(m.finishes ?? {}) !== JSON.stringify(f)) finishes.set(m.id, f);
+      if (heightChanged(m)) ceilingHeights.set(m.id, heights.get(m.id));
     }
-    onApply({ types: usedAdded, finishes });
+    onApply({ types: usedAdded, finishes, ceilingHeights });
     onClose();
   }
 
@@ -300,6 +328,16 @@ export function RoomFinishesDialog({ project, palette, getPage, onApply, onFindR
               )}
               {readNote && <span className="muted">{readNote}</span>}
             </div>
+            {unmatched && (
+              <details className="muted">
+                <summary>
+                  Not matched: {unmatched.rows.length} schedule line{unmatched.rows.length === 1 ? '' : 's'}, {unmatched.rooms.length} room
+                  {unmatched.rooms.length === 1 ? '' : 's'}
+                </summary>
+                {unmatched.rows.length > 0 && <p>On the schedules but not in your room takeoffs: {unmatched.rows.join(', ')}</p>}
+                {unmatched.rooms.length > 0 && <p>Room takeoffs with no schedule line: {unmatched.rooms.join(', ')}</p>}
+              </details>
+            )}
 
             {picked.size > 0 && (
               <div className="row-actions bulk-bar">
@@ -352,6 +390,7 @@ export function RoomFinishesDialog({ project, palette, getPage, onApply, onFindR
                     {FINISH_ROLES.map((r) => (
                       <th key={r.role}>{r.label}</th>
                     ))}
+                    <th className="num">Ceiling ht ({lengthUnit(project.units)})</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -395,6 +434,20 @@ export function RoomFinishesDialog({ project, palette, getPage, onApply, onFindR
                             </select>
                           </td>
                         ))}
+                        <td className="num">
+                          <input
+                            className="cell-input num"
+                            type="number"
+                            min={0}
+                            step="any"
+                            aria-label={`Ceiling height of ${m.label ?? 'room'}`}
+                            value={heights.get(m.id) ?? ''}
+                            onChange={(e) => {
+                              const v = e.target.value === '' ? undefined : Number(e.target.value);
+                              setHeights((hs) => new Map(hs).set(m.id, v !== undefined && Number.isFinite(v) && v > 0 ? v : undefined));
+                            }}
+                          />
+                        </td>
                       </tr>
                     );
                   })}
