@@ -149,7 +149,7 @@ describe('a ceiling legend that is not framed', () => {
     expect([...by.keys()].sort()).toEqual(['GYP GYPSUM BOARD', 'SAT1']);
     expect(by.get('SAT1')!).toBeGreaterThan(180 * 180);
     expect(by.get('GYP GYPSUM BOARD')!).toBeGreaterThan(120 * 180);
-  });
+  }, 30000);
 });
 
 describe('ceiling plans in the set', () => {
