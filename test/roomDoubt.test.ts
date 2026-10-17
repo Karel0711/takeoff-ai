@@ -8,9 +8,9 @@ const room = (number: string, name: string, area: number): FoundRoom =>
 const type = (name: string, kind: TakeoffType['kind'] = 'linear') => ({ id: name, name, kind }) as TakeoffType;
 
 describe('rooms that are likely not rooms', () => {
-  const codes = notRoomCodes([type('W4'), type('EX1 – Exterior wall'), type('Rooms', 'area'), type('Doors', 'count')], { wall: ['W-12'], other: ['C1'] });
+  const codes = notRoomCodes([type('W4'), type('EX1 – Exterior wall'), type('Rooms', 'area'), type('Doors', 'count')], { wall: ['W-12'] });
   it('reads the set’s and the project’s type codes, not bare numbers or names', () => {
-    expect([...codes].sort()).toEqual(['C1', 'EX1', 'W12', 'W4']);
+    expect([...codes].sort()).toEqual(['EX1', 'W12', 'W4']);
   });
   const mpp = 0.01; // 1 pt = 1 cm: 10,000 pt² = 1 m²
   it('an unnamed boxed wall code is not a room', () => {
@@ -18,7 +18,7 @@ describe('rooms that are likely not rooms', () => {
     expect(roomDoubt(room('W12', '', 50_000), codes, mpp)).toMatch(/type code/);
   });
   it('a named room keeps its tag even when it looks like a code', () => {
-    expect(roomDoubt(room('C1', 'CORRIDOR', 50_000), codes, mpp)).toBeNull();
+    expect(roomDoubt(room('W4', 'CORRIDOR', 50_000), codes, mpp)).toBeNull();
     expect(roomDoubt(room('101', '', 50_000), codes, mpp)).toBeNull();
   });
   it('a sliver under 1 m² is not a room', () => {

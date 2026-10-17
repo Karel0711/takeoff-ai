@@ -1,22 +1,14 @@
-import { useEffect, useState } from "react";
-import { roomPoint, type FoundRoom } from "../fill/rooms";
-import { fillRoom } from "../fill/roomFill";
-import { ringArea } from "../geometry";
-import { wallModelFor } from "../fill/sheetWalls";
-import type { Measurement, Sheet, TakeoffType, Units } from "../model";
-import {
-  findRooms,
-  notRoomCodes,
-  roomDoubt,
-  roomName,
-  roomNumber,
-  roomsTypeOf,
-  roomTakeoff,
-} from "../automate/rooms";
-import { projectSetTypes } from "../automate/walls";
-import type { PDFDocumentProxy, PDFPageProxy } from "../pdf";
-import { useEscape } from "./Dialogs";
-import { areaUnit, formatQty, toArea } from "../units";
+import { useEffect, useState } from 'react';
+import { roomPoint, type FoundRoom } from '../fill/rooms';
+import { fillRoom } from '../fill/roomFill';
+import { ringArea } from '../geometry';
+import { wallModelFor } from '../fill/sheetWalls';
+import type { Measurement, Sheet, TakeoffType, Units } from '../model';
+import { findRooms, notRoomCodes, roomDoubt, roomName, roomNumber, roomsTypeOf, roomTakeoff } from '../automate/rooms';
+import { projectSetTypes } from '../automate/walls';
+import type { PDFDocumentProxy, PDFPageProxy } from '../pdf';
+import { useEscape } from './Dialogs';
+import { areaUnit, formatQty, toArea } from '../units';
 
 interface Props {
   page: PDFPageProxy;
@@ -30,42 +22,24 @@ interface Props {
   earlier: number;
   palette: string[];
   maxOpening: number;
-  onApply: (result: {
-    types: TakeoffType[];
-    measurements: Measurement[];
-    replaceEarlier: boolean;
-  }) => void;
+  onApply: (result: { types: TakeoffType[]; measurements: Measurement[]; replaceEarlier: boolean }) => void;
   onClose: () => void;
 }
 
 type State =
-  | { phase: "running"; step: string; done: number; total: number }
-  | { phase: "done"; rooms: FoundRoom[]; ms: number }
-  | { phase: "error"; message: string };
+  { phase: 'running'; step: string; done: number; total: number } | { phase: 'done'; rooms: FoundRoom[]; ms: number } | { phase: 'error'; message: string };
 
-const NEW = "__new__";
+const NEW = '__new__';
 
 /**
  * Room takeoff: finds every room tag on the sheet (number in a box, name above or below it),
  * fills each room to the inside face of its walls, and adds the ones picked as
  * named area takeoffs.
  */
-export function RoomsDialog({
-  page,
-  doc,
-  others,
-  sheet,
-  units,
-  types,
-  earlier,
-  palette,
-  maxOpening,
-  onApply,
-  onClose,
-}: Props) {
+export function RoomsDialog({ page, doc, others, sheet, units, types, earlier, palette, maxOpening, onApply, onClose }: Props) {
   const [state, setState] = useState<State>({
-    phase: "running",
-    step: "Reading the sheet…",
+    phase: 'running',
+    step: 'Reading the sheet…',
     done: 0,
     total: 0,
   });
@@ -73,7 +47,7 @@ export function RoomsDialog({
   const [names, setNames] = useState<Map<number, string>>(new Map());
   /** Rooms likely not rooms (a wall tag in a box, a sliver), left unpicked, with why. */
   const [doubts, setDoubts] = useState<Map<number, string>>(new Map());
-  const areaTypes = types.filter((t) => t.kind === "area");
+  const areaTypes = types.filter((t) => t.kind === 'area');
   // Rooms go under their own type; their floor, ceiling and other finishes are set in Room finishes.
   const [typeId, setTypeId] = useState(() => roomsTypeOf(types) ?? NEW);
   const [replaceEarlier, setReplaceEarlier] = useState(true);
@@ -88,7 +62,7 @@ export function RoomsDialog({
           findRooms(page, sheet, maxOpening, (done, total) => {
             if (live)
               setState({
-                phase: "running",
+                phase: 'running',
                 step: `Filling room ${Math.min(done + 1, total)} of ${total}…`,
                 done,
                 total,
@@ -106,23 +80,17 @@ export function RoomsDialog({
             }),
           ),
         );
-        setPicked(
-          new Set(
-            rooms.flatMap((r, i) =>
-              r.points && !roomDoubt(r, codes, sheet.metersPerPoint) ? [i] : [],
-            ),
-          ),
-        );
+        setPicked(new Set(rooms.flatMap((r, i) => (r.points && !roomDoubt(r, codes, sheet.metersPerPoint) ? [i] : []))));
         setNames(new Map(rooms.map((r, i) => [i, roomName(r)])));
         setState({
-          phase: "done",
+          phase: 'done',
           rooms,
           ms: Math.round(performance.now() - started),
         });
       } catch (e) {
         if (live)
           setState({
-            phase: "error",
+            phase: 'error',
             message: e instanceof Error ? e.message : String(e),
           });
       }
@@ -142,27 +110,17 @@ export function RoomsDialog({
    * archway). The result is shown for checking before it is added.
    */
   async function retryWider(i: number) {
-    if (state.phase !== "done") return;
+    if (state.phase !== 'done') return;
     setRetrying((s) => new Set(s).add(i));
     try {
-      const model = await wallModelFor(
-        page,
-        sheet,
-        Math.max(8, maxOpening * 2),
-      );
+      const model = await wallModelFor(page, sheet, Math.max(8, maxOpening * 2));
       await new Promise((r) => setTimeout(r, 0));
       const room = state.rooms[i];
-      const res = fillRoom(
-        model,
-        room.labels.map(roomPoint),
-        sheet.width,
-        sheet.height,
-        2,
-      );
+      const res = fillRoom(model, room.labels.map(roomPoint), sheet.width, sheet.height, 2);
       if (res.ok) {
         // From the latest state: another retry may have finished meanwhile.
         setState((cur) =>
-          cur.phase === "done"
+          cur.phase === 'done'
             ? {
                 ...cur,
                 rooms: cur.rooms.map((r, j) =>
@@ -191,11 +149,10 @@ export function RoomsDialog({
     }
   }
 
-  const area = (r: FoundRoom) =>
-    `${formatQty(toArea(r.area * mpp * mpp, units))} ${areaUnit(units)}`;
+  const area = (r: FoundRoom) => `${formatQty(toArea(r.area * mpp * mpp, units))} ${areaUnit(units)}`;
 
   function add() {
-    if (state.phase !== "done") return;
+    if (state.phase !== 'done') return;
     const made = roomTakeoff(state.rooms, {
       sheet,
       typeId: typeId === NEW ? null : typeId,
@@ -209,58 +166,44 @@ export function RoomsDialog({
     onClose();
   }
 
-  const chosen =
-    state.phase === "done"
-      ? state.rooms.filter((r, i) => r.points && picked.has(i))
-      : [];
+  const chosen = state.phase === 'done' ? state.rooms.filter((r, i) => r.points && picked.has(i)) : [];
   const total = chosen.reduce((n, r) => n + r.area, 0);
 
   useEscape(onClose);
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div
-        className="modal wide"
-        role="dialog"
-        aria-label="Room takeoff"
-        onClick={(e) => e.stopPropagation()}
-      >
+      <div className="modal wide" role="dialog" aria-label="Room takeoff" onClick={(e) => e.stopPropagation()}>
         <div className="panel-head">
           <h3>Rooms · {sheet.name}</h3>
           <button onClick={onClose}>Close</button>
         </div>
 
-        {state.phase === "running" && (
+        {state.phase === 'running' && (
           <div className="running">
             <div className="spinner" />
             <div>
               <div>{state.step}</div>
               {state.total > 0 && (
-                <progress
-                  className="progress"
-                  max={state.total}
-                  value={state.done}
-                >
+                <progress className="progress" max={state.total} value={state.done}>
                   {state.done} of {state.total}
                 </progress>
               )}
             </div>
           </div>
         )}
-        {state.phase === "error" && <p className="err-box">{state.message}</p>}
+        {state.phase === 'error' && <p className="err-box">{state.message}</p>}
 
-        {state.phase === "done" && (
+        {state.phase === 'done' && (
           <>
             <p className="muted">
-              Every room tag on the sheet (a number such as 101, 101a or B23 in
-              a small box, with the name above or below it), filled to the
-              inside face of its walls. Tags in one open space share it.
+              Every room tag on the sheet (a number such as 101, 101a or B23 in a small box, with the name above or below it), filled to the inside face of its
+              walls. Tags in one open space share it.
             </p>
             {state.rooms.length === 0 ? (
               <p className="warn">
-                No room tags found on this sheet. A room tag is a room number in
-                a small box with the room name above or below it, or a bare
-                number under the name.
+                No room tags found on this sheet. A room tag is a room number in a small box with the room name above or below it, or a bare number under the
+                name.
               </p>
             ) : (
               <table className="wall-table rooms-table">
@@ -270,20 +213,8 @@ export function RoomsDialog({
                       <input
                         type="checkbox"
                         aria-label="Pick all rooms"
-                        checked={state.rooms.every(
-                          (r, i) => !r.points || picked.has(i),
-                        )}
-                        onChange={(e) =>
-                          setPicked(
-                            new Set(
-                              e.target.checked
-                                ? state.rooms.flatMap((r, i) =>
-                                    r.points ? [i] : [],
-                                  )
-                                : [],
-                            ),
-                          )
-                        }
+                        checked={state.rooms.every((r, i) => !r.points || picked.has(i))}
+                        onChange={(e) => setPicked(new Set(e.target.checked ? state.rooms.flatMap((r, i) => (r.points ? [i] : [])) : []))}
                       />
                     </th>
                     <th>Room</th>
@@ -293,7 +224,7 @@ export function RoomsDialog({
                 </thead>
                 <tbody>
                   {state.rooms.map((r, i) => (
-                    <tr key={i} className={r.points ? "" : "disabled-row"}>
+                    <tr key={i} className={r.points ? '' : 'disabled-row'}>
                       <td>
                         <input
                           type="checkbox"
@@ -315,39 +246,23 @@ export function RoomsDialog({
                         <input
                           id={`room-name-${i}`}
                           className="room-name"
-                          value={names.get(i) ?? ""}
+                          value={names.get(i) ?? ''}
                           aria-label={`Name of room ${roomNumber(r)}`}
-                          onChange={(e) =>
-                            setNames((m) => new Map(m).set(i, e.target.value))
-                          }
+                          onChange={(e) => setNames((m) => new Map(m).set(i, e.target.value))}
                         />
                       </td>
                       <td className="num">
                         {r.points ? (
                           <>
                             {area(r)}
-                            {(r as FoundRoom & { wider?: boolean }).wider && (
-                              <div className="field-hint">
-                                wider openings closed, check it
-                              </div>
-                            )}
-                            {doubts.has(i) && (
-                              <div className="field-hint">{doubts.get(i)}</div>
-                            )}
+                            {(r as FoundRoom & { wider?: boolean }).wider && <div className="field-hint">wider openings closed, check it</div>}
+                            {doubts.has(i) && <div className="field-hint">{doubts.get(i)}</div>}
                           </>
                         ) : stillOpen.has(i) ? (
-                          <span className="muted">
-                            Not closed, draw by hand
-                          </span>
+                          <span className="muted">Not closed, draw by hand</span>
                         ) : (
-                          <button
-                            className="link-button"
-                            disabled={retrying.has(i)}
-                            onClick={() => void retryWider(i)}
-                          >
-                            {retrying.has(i)
-                              ? "Trying…"
-                              : "Not closed · try wider openings"}
+                          <button className="link-button" disabled={retrying.has(i)} onClick={() => void retryWider(i)}>
+                            {retrying.has(i) ? 'Trying…' : 'Not closed · try wider openings'}
                           </button>
                         )}
                       </td>
@@ -360,11 +275,7 @@ export function RoomsDialog({
             <div className="row-actions sticky">
               <label className="inline">
                 Add to
-                <select
-                  id="rooms-type"
-                  value={typeId}
-                  onChange={(e) => setTypeId(e.target.value)}
-                >
+                <select id="rooms-type" value={typeId} onChange={(e) => setTypeId(e.target.value)}>
                   {areaTypes.map((t) => (
                     <option key={t.id} value={t.id}>
                       {t.name}
@@ -375,22 +286,13 @@ export function RoomsDialog({
               </label>
               {earlier > 0 && (
                 <label className="inline">
-                  <input
-                    type="checkbox"
-                    checked={replaceEarlier}
-                    onChange={(e) => setReplaceEarlier(e.target.checked)}
-                  />{" "}
-                  Replace this sheet’s earlier rooms ({earlier})
+                  <input type="checkbox" checked={replaceEarlier} onChange={(e) => setReplaceEarlier(e.target.checked)} /> Replace this sheet’s earlier rooms (
+                  {earlier})
                 </label>
               )}
               <div className="spacer" />
-              <button
-                className="primary"
-                disabled={!chosen.length}
-                onClick={add}
-              >
-                Add {chosen.length} room{chosen.length === 1 ? "" : "s"} ·{" "}
-                {formatQty(toArea(total * mpp * mpp, units))} {areaUnit(units)}
+              <button className="primary" disabled={!chosen.length} onClick={add}>
+                Add {chosen.length} room{chosen.length === 1 ? '' : 's'} · {formatQty(toArea(total * mpp * mpp, units))} {areaUnit(units)}
               </button>
             </div>
           </>
