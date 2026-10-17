@@ -60,6 +60,7 @@ import { automateSprinklers as sprinklerTakeoff } from './automate/sprinklers';
 import { automateCeilings as ceilingTakeoff } from './automate/ceilings';
 import { symbolTakeoff, symbolTallies as tallySymbols } from './automate/symbols';
 import { doorTakeoff, findDoorTagsIn } from './automate/doors';
+import { automateWindows as windowTakeoff } from './automate/windows';
 import { applyRooms } from './automate/rooms';
 import { applyWalls, wallLegendFor } from './automate/walls';
 
@@ -1419,6 +1420,9 @@ export function App() {
   /** Fire sprinklers on every sprinkler plan (see `src/automate/sprinklers.ts`). */
   const automateSprinklers = () => runAutomation('Fire sprinklers', () => sprinklerTakeoff(projectRef.current!, setAccess(), sheet));
 
+  /** Window type tags on every floor plan, or the elevations (see `src/automate/windows.ts`). */
+  const automateWindows = () => runAutomation('Window tags', () => windowTakeoff(projectRef.current!, setAccess()));
+
   /** Ceilings on every reflected ceiling plan (see `src/automate/ceilings.ts`). */
   const automateCeilings = () => runAutomation('Ceilings', () => ceilingTakeoff(projectRef.current!, setAccess(), sheet));
 
@@ -1673,9 +1677,9 @@ export function App() {
   }
 
   /**
-   * Counts door tags, named by their number; prefixed tags (S114A) by prefix. On every
-   * sheet, a door number counts once in the project (enlarged plans repeat tags), on the
-   * first sheet it appears (see `src/automate/doors.ts`).
+   * Counts door tags as Doors, each labelled by its number. On every sheet, a door number
+   * counts once in its drawing file (enlarged plans repeat tags), on the first sheet it
+   * appears (see `src/automate/doors.ts`).
    */
   async function countDoorTags(everywhere = false) {
     if (!page || !sheet) return;
@@ -2826,8 +2830,15 @@ export function App() {
                 id: 'doors' as const,
                 icon: 'door' as const,
                 title: 'Door tags',
-                text: 'On a plan: counts every door tag (a number in an oval or hexagon), named by its number.',
+                text: 'On a plan: counts every door tag (a number in an oval or hexagon) as Doors, each labelled by its number.',
                 ready: !!page,
+              },
+              {
+                id: 'windows' as const,
+                icon: 'door' as const,
+                title: 'Window tags',
+                text: 'Every window, storefront, curtain wall and screen type tag (W1, CW2, SF1) on the floor plans, or on the elevations, counted by type.',
+                ready: true,
               },
               {
                 id: 'legend' as const,
@@ -2874,6 +2885,7 @@ export function App() {
                   setPopover(null);
                   if (a.id === 'doors') void countDoorTags();
                   else if (a.id === 'sprinklers') void automateSprinklers();
+                  else if (a.id === 'windows') void automateWindows();
                   else if (a.id === 'symbols') void automateSymbols();
                   else if (a.id === 'ceilings') void automateCeilings();
                   else if (a.id === 'legend') {

@@ -62,11 +62,18 @@ interface Group {
 }
 
 /** Lines of one category grouped by code (or description, when there is no code), quantities summed in base units. */
+/**
+ * A line's group: its code (or description) and dimension. One code taken off two ways (curtain
+ * wall CW1 counted, 2 EA, and measured, 12.4 m) is two lines, not one of no dimension.
+ */
+const groupKey = (code: string | null, label: string, unit: string) =>
+  `${code ? `c:${normCode(code)}` : `d:${label.toLowerCase().replace(/\s+/g, ' ').trim()}`}|${unitInfo(unit)?.dim ?? '?'}`;
+
 function groupItems(items: { code: string | null; label: string; qty: number; unit: string; sheets?: string[] }[]): Group[] {
   const out = new Map<string, Group>();
   for (const it of items) {
     const u = unitInfo(it.unit);
-    const key = it.code ? `c:${normCode(it.code)}` : `d:${it.label.toLowerCase().replace(/\s+/g, ' ').trim()}`;
+    const key = groupKey(it.code, it.label, it.unit);
     let g = out.get(key);
     if (!g) out.set(key, (g = { key, code: it.code, label: it.label, dim: u?.dim ?? null, qty: 0, sheets: [] }));
     if (u && g.dim && u.dim !== g.dim) g.dim = null;
@@ -138,12 +145,13 @@ function pair(keys: Group[], got: Group[], category: Category, named = true): { 
     used.add(g);
   };
   const codesOf = (g: Group) => (g.code ? g.code.split(/\s*\/\s*/) : []);
-  // Exact code (a tool line covering several rooms "101 / 102" pairs by any of them).
-  for (const k of keys) {
-    if (!k.code) continue;
-    const hit = got.find((g) => !used.has(g) && codesOf(g).some((c) => normCode(c) === normCode(k.code!)));
-    if (hit) take(k, hit, 'code');
-  }
+  // Exact code (a tool line covering several rooms "101 / 102" pairs by any of them), taken off the same way first.
+  for (const sameDim of [true, false])
+    for (const k of keys) {
+      if (!k.code || out.has(k)) continue;
+      const hit = got.find((g) => !used.has(g) && (!sameDim || g.dim === k.dim) && codesOf(g).some((c) => normCode(c) === normCode(k.code!)));
+      if (hit) take(k, hit, 'code');
+    }
   // The existing marker anywhere (px1 = p1x = P-X1), then ignoring it.
   for (const loose of [false, true]) {
     for (const k of keys) {
@@ -200,7 +208,7 @@ export function scoreJob(job: string, items: ResultItem[], key: KeyItem[] | null
     const keyGroups = groupItems(keyLines.map((k) => ({ code: k.code, label: k.description, qty: k.qty, unit: k.unit, sheets: k.sheets })));
     const tools = [...new Set(items.filter((i) => i.category === category).map((i) => i.tool))];
     if (!keyGroups.length && !tools.length) continue;
-    const keyUnit = (g: Group) => keyLines.find((k) => (k.code ? `c:${normCode(k.code)}` : `d:${k.description.toLowerCase().replace(/\s+/g, ' ').trim()}`) === g.key)!.unit;
+    const keyUnit = (g: Group) => keyLines.find((k) => groupKey(k.code, k.description, k.unit) === g.key)!.unit;
     const byTool = tools.map((tool) => {
       const mine = items.filter((i) => i.category === category && i.tool === tool);
       const got = groupItems(mine.map((i) => ({ code: i.code, label: i.name, qty: i.qty, unit: i.unit, sheets: i.sheets })));

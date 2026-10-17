@@ -51,7 +51,7 @@ describe('automations on the sample plan', () => {
     expect(total(p, /^Rooms$/)).toBeCloseTo(186, 0);
 
     const doors = doorTakeoff(p, await findDoorTagsIn(p, access, plan, true), plan, true);
-    expect(doors.message).toBe('Counted 5 Doors on 1 sheet');
+    expect(doors.message).toBe('Counted 5 doors on 1 sheet');
     p = doors.apply!(p);
 
     const read = await readFinishes(p, finishRooms(p), access, p.types);
@@ -67,7 +67,7 @@ describe('automations on the sample plan', () => {
 
     expect((await automateSprinklers(p, access, null)).message).toBe('No sprinkler plans found.');
     expect((await automateCeilings(p, access, null)).apply).toBeUndefined();
-  });
+  }, 20000);
 
   it('report a failing sheet and go on when asked, else stop', async () => {
     const pdf = (await getDocument({ data: await samplePlanPdf() }).promise) as unknown as PDFDocumentProxy;

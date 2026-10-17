@@ -5,6 +5,8 @@ import { checkScale } from '../scaleCheck';
 import { titleBlockBox } from '../titleBlock';
 import type { Automation } from './result';
 import { pause, PALETTE, type SetAccess } from './set';
+import type { TagCount } from './tagCounts';
+import { itemCounts, tagTypeName } from './windows';
 
 /** A symbol counted across the set, to add as a count type under `name`. */
 export interface SymbolChoice {
@@ -60,7 +62,20 @@ export async function symbolTallies(p: Project, access: SetAccess, picked?: { sh
     },
     symbol && home ? { symbol, home } : undefined,
   );
-  return tallies.length ? { tallies } : { tallies, message: 'No symbol legend found. Click a symbol on the sheet to count it on every sheet.' };
+  // Items the set's schedules and legends list by code (EQ-1, TA-3), counted where the plans write the code.
+  const tagged = picked ? [] : (await itemCounts(p, access)).map(tagTally);
+  const all = [...tallies, ...tagged];
+  return all.length ? { tallies: all } : { tallies, message: 'No symbol legend found. Click a symbol on the sheet to count it on every sheet.' };
+}
+
+/** A listed item's count as a symbol tally: no drawing to match, its code instead. */
+function tagTally(c: TagCount): SymbolTally {
+  return {
+    symbol: { key: `tag:${c.code.toLowerCase()}`, label: tagTypeName(c, 'Item'), legend: 'schedules', sample: { lines: [], span: 0 } },
+    home: c.places[0]?.sheetId ?? '',
+    places: c.places,
+    total: c.total,
+  };
 }
 
 /** The choices the count dialog starts with: every symbol found at least once, under its legend name. */

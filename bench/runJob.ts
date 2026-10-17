@@ -8,6 +8,7 @@ import { automateRooms } from '../src/automate/rooms';
 import { automateSprinklers } from '../src/automate/sprinklers';
 import { defaultSymbolChoices, symbolTakeoff, symbolTallies } from '../src/automate/symbols';
 import { automateWalls } from '../src/automate/walls';
+import { automateWindows } from '../src/automate/windows';
 import { newProject, type Project, type Sheet, type Units } from '../src/model';
 import { classifySheet, issueOrder, reissued, viewTitle, type PlanLevel, type SheetClass } from './classify';
 import { resultItems, type ResultItem } from './items';
@@ -214,6 +215,13 @@ export async function runJob(dir: string, log: (s: string) => void = () => {}, o
     for (const f of found) note(sheets.find((s) => s.id === f.sheetId)!, `doors: ${f.tags.length} tags`);
     const r = doorTakeoff(project, found, home, true);
     apply('doors', r);
+    return r.message;
+  });
+
+  // Window tags: every window type tag on the floor plans (or elevations), counted across the set.
+  await run('windows', async () => {
+    const r = await automateWindows(project, set);
+    apply('windows', r);
     return r.message;
   });
 
