@@ -26,6 +26,22 @@ Where the project stands, for picking it up in a new session.
   them (windows); flood fill at up to 2 px/pt (3 gave the same areas to 0.01 m² at twice the time), hole filling, boundary trace,
   then edges snapped to the drawn lines. First click reads the sheet's operator
   list (~3–6 s), then 0.1–2 s per room.
+- **Room fill wall linework (generalized, tested on 84 Frederick A211-A214):** the sheet's
+  wall pens are still picked once (`detectWallPens`), but rooms that do not close, or whose
+  outline holds another room's tag, are filled again with the next lighter pen that also
+  draws in wall-like pairs (`WallModel.lighter`, `settle` in `src/fill/rooms.ts`; the room
+  tags' own box pen is skipped). A result is kept only if it holds its own tags and no
+  other's, spans its tag box and name, and at least 60% of its outline runs along a wall
+  face (a line with another a wall thickness outside it, or a closed opening:
+  `wallFaceShare`); a space that had closed as one with several tags is split only when the
+  parts cover 80% of it (the rest share what is left). This is the Kelso A2.2 retry that was
+  dropped before, now with those guards (219/220 merging and the door-swing triangle are
+  what they reject); Kelso itself was not available to re-check. Room tags placed outside a
+  small room with a leader ending in a dot or arrow (WCs, closets) fill from the leader's
+  end (`RoomLabel.seed`). Small closed slanted symbols in the wall pen (keynote triangles,
+  diamonds) are left out of the fill's walls (`symbolShapes`); the wall takeoff still gets
+  them (`WallModel.symbols`). A211: 13 of 53 tags filled before, 46 rooms (49 tags) now;
+  A212-A214 every tag fills with no merges (were 44/47, 38/45, 32/36 with 2, 7, 3 merges).
 - **Wall tag labelling (generalized, tested on 84 Frederick A212/A213):** which codes are
   wall tags comes from the set itself (`src/walls/setTypes.ts`, read once per drawing file
   by `setTypesOf`): codes listed under wall/partition/furring/foundation headings on an

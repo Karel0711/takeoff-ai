@@ -363,3 +363,35 @@ export function bridgeGaps(walls: Segment[], maxGap: number, glazing?: GlazingRu
   }
   return bridges;
 }
+
+
+/**
+ * Small closed symbols drawn as one shape with slanted sides: keynote triangles, tag
+ * diamonds and hexagons. They may share the wall pen, but they are no walls; left in, a
+ * row of keynote triangles reads as a wall line (their bases line up) and a triangle on a
+ * room's edge bites into it. Rectangles stay (columns are walls).
+ */
+export function symbolShapes(segs: Segment[], maxSize: number): Set<Segment> {
+  const bySub = new Map<number, Segment[]>();
+  for (const s of segs) {
+    if (s.filled || s.curve || s.sub === undefined || len(s) < 0.05) continue;
+    const list = bySub.get(s.sub);
+    if (list) list.push(s);
+    else bySub.set(s.sub, [s]);
+  }
+  const out = new Set<Segment>();
+  for (const list of bySub.values()) {
+    if (list.length < 3 || list.length > 8) continue;
+    const first = list[0];
+    const last = list[list.length - 1];
+    if (Math.hypot(first.x1 - last.x2, first.y1 - last.y2) > 0.3) continue;
+    // A chain: each side starts where the one before ends.
+    if (list.some((s, i) => i > 0 && Math.hypot(s.x1 - list[i - 1].x2, s.y1 - list[i - 1].y2) > 0.3)) continue;
+    const xs = list.flatMap((s) => [s.x1, s.x2]);
+    const ys = list.flatMap((s) => [s.y1, s.y2]);
+    if (Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) > maxSize) continue;
+    const slanted = list.some((s) => Math.min(Math.abs(s.x2 - s.x1), Math.abs(s.y2 - s.y1)) > 0.1 * len(s));
+    if (slanted) for (const s of list) out.add(s);
+  }
+  return out;
+}
