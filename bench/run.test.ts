@@ -6,6 +6,9 @@
  *   Every job: npx vitest run -c bench/vitest.config.ts bench/run.test.ts
  *   Score only (no re-run): npx vitest run -c bench/vitest.config.ts bench/score.test.ts
  *
+ * TOOLS=walls,rooms,doors,finishes,ceilings,symbols,sprinklers runs only those (Count symbols
+ * is the slow one: minutes on a big set).
+ *
  * A job is a folder of drawing PDFs with an optional key.json, in BENCH (default
  * /home/claude/bench). Each run writes <job>/result.json, then BENCH/SCORECARD.md and
  * BENCH/scorecard.json over every job with a result. JOB can also be a folder elsewhere: its
@@ -33,7 +36,7 @@ it('benchmark', async () => {
   for (const dir of dirs) {
     const t = Date.now();
     try {
-      const r = await runJobTo(dir, dir, log);
+      const r = await runJobTo(dir, dir, log, process.env.TOOLS?.split(',').map((t) => t.trim()).filter(Boolean));
       log(`${r.job}: ${r.items.length} items, ${r.errors.length} errors, ${((Date.now() - t) / 1000).toFixed(0)} s`);
     } catch (e) {
       // One job failing does not stop the others: it is scored with nothing produced.

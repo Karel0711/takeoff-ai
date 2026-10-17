@@ -90,6 +90,13 @@ describe('benchmark scoring', () => {
     expect(splitRoomLabel('B23')).toEqual({ code: 'B23', name: '' });
   });
 
+  it('reads a sheet title from its biggest drawing title when the title block gives none', async () => {
+    const { viewTitle } = await import('../bench/classify');
+    const t = (str: string, h: number) => ({ str, h });
+    expect(viewTitle([t('KEY PLAN:', 14), t('GROUND FLOOR PLAN', 11.2), t('SEE DETAIL 3', 11.2), t('GROUND FLOOR PLAN', 8.4)])).toBe('GROUND FLOOR PLAN');
+    expect(viewTitle([t('NOTES', 12)])).toBeNull();
+  });
+
   it('sorts sheets by their titles', () => {
     const k = (title: string) => classifySheet({ name: 'A1', title }).kind;
     expect(k('Ground Floor Plan')).toBe('floor plan');
@@ -101,7 +108,17 @@ describe('benchmark scoring', () => {
     expect(k('Ground Floor Room Finishes Schedule')).toBe('schedule');
     expect(k('Assembly Types')).toBe('assembly');
     expect(k('FIRE ALARM LAYOUT - LEVEL 1')).toBe('other');
-    expect(k('Roof Plan')).toBe('other');
+    expect(classifySheet({ name: 'A2.3', title: 'Roof Plan' })).toMatchObject({ kind: 'floor plan', level: 'roof' });
+    expect(classifySheet({ name: 'A2.0', title: 'FOUNDATION PLAN' })).toMatchObject({ kind: 'floor plan', level: 'foundation' });
+    expect(k('PHASE 1 - CONSTRUCTION PLAN')).toBe('floor plan');
+    expect(k('PROPOSED FLOOR PLAN')).toBe('floor plan');
+    expect(k('RCP GROUND FLOOR PLAN')).toBe('RCP');
+    expect(k('PHASE 1 - FINISHES + FURNITURE PLAN')).toBe('finish plan');
+    expect(k('GROUND FLOOR - LIFE SAFETY PLAN')).toBe('other');
+    expect(k('ENLARGED GROUND FLOOR PLAN - ADDITION & RENOVATION AREAS')).toBe('other');
+    expect(k('MILLWORK & PLUMBING FIXTURE PLAN')).toBe('other');
+    expect(k('SITE PLAN')).toBe('other');
+    expect(k('Construction Sequencing Plan')).toBe('other');
     expect(k('RISER DIAGRAM, NOTES AND LEGEND')).toBe('legend');
   });
 });

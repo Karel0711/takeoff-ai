@@ -9,7 +9,7 @@ import { automateSprinklers } from '../src/automate/sprinklers';
 import { defaultSymbolChoices, symbolTakeoff, symbolTallies } from '../src/automate/symbols';
 import { automateWalls } from '../src/automate/walls';
 import { newProject, type Project, type Sheet, type Units } from '../src/model';
-import { classifySheet, issueOrder, reissued, type SheetClass } from './classify';
+import { classifySheet, issueOrder, reissued, viewTitle, type PlanLevel, type SheetClass } from './classify';
 import { resultItems, type ResultItem } from './items';
 import { makeSheets, NodeSet, openDoc, unitsOf, type OpenDoc } from './nodeSet';
 
@@ -21,7 +21,10 @@ export interface SheetReport {
   page: number;
   name: string;
   title: string | null;
+  /** With no title in the title block, the drawing title it was classed by. */
+  viewTitle?: string;
   class: SheetClass;
+  level?: PlanLevel;
   classWhy: string;
   scale: string | null;
   scaleHints: string[];
@@ -75,7 +78,7 @@ export function jobPdfs(dir: string): string[] {
  * schedules (or tags) onto the rooms, and the whole-set Ceilings, Count symbols (every symbol
  * found) and Fire sprinklers. A failing tool or sheet is recorded and the rest goes on.
  */
-export async function runJob(dir: string, log: (s: string) => void = () => {}): Promise<JobResult> {
+export async function runJob(dir: string, log: (s: string) => void = () => {}, only?: string[]): Promise<JobResult> {
   const started = Date.now();
   const keyPath = join(statSync(dir).isFile() ? '' : dir, 'key.json');
   const keyJson = existsSync(keyPath) ? (JSON.parse(readFileSync(keyPath, 'utf8')) as { units?: Units; drawings?: string[] }) : {};
@@ -106,15 +109,26 @@ export async function runJob(dir: string, log: (s: string) => void = () => {}): 
   let project: Project = { ...newProject(units), name: basename(dir), docs: docs.map((d) => ({ id: d.id, name: d.file })), sheets };
   const set = new NodeSet(new Map(docs.map((d) => [d.id, d])), sheets);
   const fileOf = new Map(docs.map((d) => [d.id, d.file]));
-  const reports = new Map<string, SheetReport>(
-    sheets.map((s) => {
-      const c = classifySheet(s);
-      return [
-        s.id,
-        { file: fileOf.get(s.docId)!, page: s.page, name: s.name, title: s.title ?? null, class: c.kind, classWhy: c.why, scale: s.scaleLabel, scaleHints: s.scaleHints, ms: {}, notes: [] },
-      ];
-    }),
-  );
+  const reports = new Map<string, SheetReport>();
+  for (const s of sheets) {
+    // No title in the title block: the sheet's biggest drawing title instead.
+    const view = s.title ? null : viewTitle(await set.texts(s).catch(() => []));
+    const c = classifySheet({ name: s.name, title: s.title ?? view ?? undefined });
+    reports.set(s.id, {
+      file: fileOf.get(s.docId)!,
+      page: s.page,
+      name: s.name,
+      title: s.title ?? null,
+      ...(view ? { viewTitle: view } : {}),
+      class: c.kind,
+      ...(c.level ? { level: c.level } : {}),
+      classWhy: c.why,
+      scale: s.scaleLabel,
+      scaleHints: s.scaleHints,
+      ms: {},
+      notes: [],
+    });
+  }
   const note = (s: Sheet, text: string) => reports.get(s.id)!.notes.push(text);
   for (const s of sheets) {
     const by = newer.get(s.id);
@@ -130,6 +144,10 @@ export async function runJob(dir: string, log: (s: string) => void = () => {}): 
   };
   /** Runs one tool, timed, its error recorded. */
   const run = async (tool: string, body: () => Promise<string>) => {
+    if (only?.length && !only.includes(tool)) {
+      tools.push({ tool, ms: 0, message: 'skipped (TOOLS)', items: 0 });
+      return;
+    }
     set.tool = tool;
     const t = Date.now();
     let message = '';
@@ -151,12 +169,14 @@ export async function runJob(dir: string, log: (s: string) => void = () => {}): 
     tools.push({ tool, ms, message: error ? 'failed' : message, ...(error ? { error } : {}), items: 0 });
   };
   const plans = sheets.filter((s) => !s.superseded && reports.get(s.id)!.class === 'floor plan');
+  // Rooms are on the plans of the building's levels, not its foundation or roof.
+  const levels = plans.filter((s) => reports.get(s.id)!.level === 'level');
 
   // Per plan: walls, then rooms (each sheet on its own: one failing does not stop the others).
   for (const kind of ['walls', 'rooms'] as const) {
     await run(kind, async () => {
       const done: string[] = [];
-      for (const s of plans) {
+      for (const s of kind === 'walls' ? plans : levels) {
         if (!s.metersPerPoint) {
           note(s, `${kind}: not run (no scale)`);
           continue;
@@ -181,13 +201,14 @@ export async function runJob(dir: string, log: (s: string) => void = () => {}): 
         set.addTime(s.id, kind, Date.now() - t);
         log(`    ${kind} ${s.name}: ${Date.now() - t} ms`);
       }
-      return plans.length ? `${done.length} of ${plans.length} floor plans` : 'no floor plans in the set';
+      const of = kind === 'walls' ? plans : levels;
+      return of.length ? `${done.length} of ${of.length} plans` : 'no floor plans in the set';
     });
   }
 
   // Door tags: from the first floor plan, then "Count on all sheets".
   await run('doors', async () => {
-    const home = plans[0];
+    const home = levels[0] ?? plans[0];
     if (!home) return 'not run: no floor plan to start from';
     const found = await findDoorTagsIn(project, set, home, true);
     for (const f of found) note(sheets.find((s) => s.id === f.sheetId)!, `doors: ${f.tags.length} tags`);
@@ -259,8 +280,8 @@ export async function runJob(dir: string, log: (s: string) => void = () => {}): 
 }
 
 /** Runs a job and writes its result.json into `outDir` (the job folder by default). */
-export async function runJobTo(dir: string, outDir: string, log?: (s: string) => void): Promise<JobResult> {
-  const result = await runJob(dir, log);
+export async function runJobTo(dir: string, outDir: string, log?: (s: string) => void, only?: string[]): Promise<JobResult> {
+  const result = await runJob(dir, log, only);
   writeFileSync(join(outDir, 'result.json'), JSON.stringify(result, null, 1));
   return result;
 }
