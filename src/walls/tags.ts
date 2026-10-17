@@ -16,6 +16,21 @@ export interface TagText {
    * is never reported as unmatched (a stair or equipment tag isn't a missed wall).
    */
   generic?: boolean;
+  /** The set itself says this code is a wall type (its assembly types sheet, its legend, the project's types). */
+  confirmed?: boolean;
+}
+
+/** The closed symbol drawn round a tag's text. */
+export interface TagSymbol {
+  /**
+   * Its outline(s), smallest first, joined with "+": triangle, box, diamond, polygon
+   * (hexagon and the like), round. A diamond in a square is "box+diamond".
+   */
+  shape: string;
+  /** Across its outermost outline, in sheet points. */
+  size: number;
+  /** Drawn as a filled shape (a black diamond with white text). */
+  filled: boolean;
 }
 
 export interface WallTag extends TagText {
@@ -34,16 +49,18 @@ export interface WallTag extends TagText {
    * is the first one it crosses, not where it happens to end.
    */
   tick?: boolean;
+  /** The symbol round the text, when it has one. */
+  symbol?: TagSymbol;
 }
 
-/** Wall type tags (W1, EW3A, FR2, CB1, …). */
 /**
- * Wall type tags as drawing sets write them: EW3A, W1, FR2, CB1, and with a dash or
- * other common prefixes (W-1, EW-2A, WT1, IP2, EXT1, INT4).
+ * Wall type tags as drawing sets write them, in either case: EW3A, W1, FR2, CB1, with a
+ * dash or other common prefixes (W-1, EW-2A, WT1, IP2, EXT1, INT4), and with an "x"
+ * marking existing work (wx1, FRX2). Used only when the set itself says nothing.
  */
-export const WALL_TAG = /^(?:EW|IW|W|FR|FW|CB|PW|SW|WT|IP|EP|EXT|INT)-?\d{1,2}[A-Z]?$/;
-/** Any type code: letters then a number (VS1, CW-2, SH3A, WP2a). */
-export const TYPE_TAG = /^[A-Z]{1,4}-?\d{1,3}[A-Za-z]?$/;
+export const WALL_TAG = /^(?:EW|IW|W|FR|FW|CB|PW|SW|WT|IP|EP|EXT|INT)X?-?\d{1,2}[A-Z]?$/i;
+/** Any type code: one to four letters then a number (VS1, CW-2, SH3A, WP2a, px7, fwx2). */
+export const TYPE_TAG = /^[A-Za-z]{1,4}-?\d{1,3}[A-Za-z]?$/;
 
 const near = (ax: number, ay: number, bx: number, by: number, tol: number) => Math.abs(ax - bx) <= tol && Math.abs(ay - by) <= tol;
 
@@ -56,29 +73,38 @@ const near = (ax: number, ay: number, bx: number, by: number, tol: number) => Ma
 export function resolveTags(texts: TagText[], segs: Segment[]): WallTag[] {
   const lines = segs.filter((s) => !s.filled && Math.hypot(s.x2 - s.x1, s.y2 - s.y1) > 0.2);
   const index = new SegmentIndex(lines, 16);
+  // Symbols can be filled shapes too (a black diamond with the code in white).
+  const fills = segs.filter((s) => s.filled && Math.hypot(s.x2 - s.x1, s.y2 - s.y1) > 0.2);
+  const fillIndex = new SegmentIndex(fills, 16);
   return texts.map((t) => {
     const r = Math.max(t.w, t.h) * 0.5 + 18; // reach of the symbol around the text
     const local = dedupe(index.query(t.cx - r, t.cy - r, t.cx + r, t.cy + r).map((i) => lines[i]));
     const inside = (x: number, y: number) => Math.hypot(x - t.cx, y - t.cy) <= r;
-    const candidates = local.filter(
-      (s) => inside(s.x1, s.y1) && inside(s.x2, s.y2) && distToSeg(t.cx, t.cy, s) >= Math.min(t.w, t.h) * 0.4,
-    );
+    const clear = (s: Segment) => inside(s.x1, s.y1) && inside(s.x2, s.y2) && distToSeg(t.cx, t.cy, s) >= Math.min(t.w, t.h) * 0.4;
+    const candidates = local.filter(clear);
     // Tags and their leaders are drawn with one pen. Furniture or hatching can sit under
     // a tag, so each pen is tried and the smallest loop with a leader wins.
     let best: { paths: Pt[][]; size: number; tick?: boolean } | null = null;
     const loops: Segment[][] = [];
+    const outlines: Segment[][] = [];
     for (const pen of new Set(candidates.map((s) => s.width))) {
-      const symbol = symbolLoop(
+      const groups = symbolLoops(
         candidates.filter((s) => s.width === pen),
         t.cx,
         t.cy,
       );
+      const symbol = groups.flat();
       if (symbol.length < 3) continue;
+      outlines.push(...groups);
       loops.push(symbol);
       if (best && symbol.length >= best.size) continue;
       const paths = leadersFrom(symbol, local.filter((s) => s.width === pen), t, index, lines);
       if (paths.length) best = { paths, size: symbol.length };
     }
+    // Filled outlines round the text (a solid diamond): part of the symbol, never a leader.
+    const filled = dedupe(fillIndex.query(t.cx - r, t.cy - r, t.cx + r, t.cy + r).map((i) => fills[i])).filter(clear);
+    const filledGroups = symbolLoops(filled, t.cx, t.cy);
+    outlines.push(...filledGroups);
     // A box set beside its wall with a short tick from the middle of its edge onto the wall,
     // often in a heavier pen than the box.
     if (!best) {
@@ -90,9 +116,61 @@ export function resolveTags(texts: TagText[], segs: Segment[]): WallTag[] {
         }
       }
     }
-    if (!best) return { ...t, target: [t.cx, t.cy] as Pt, paths: [], leader: false };
-    return { ...t, target: best.paths[0][1], paths: best.paths, leader: true, ...(best.tick ? { tick: true } : {}) };
+    // A leader in another pen than its symbol (a fine line from a bolder symbol).
+    if (!best) {
+      const own = new Set(outlines.flat());
+      const others = local.filter((s) => !own.has(s));
+      for (const symbol of [...loops].sort((a, b) => a.length - b.length)) {
+        const paths = leadersFrom(symbol, others, t, index, lines, false, true);
+        if (paths.length) {
+          best = { paths, size: symbol.length };
+          break;
+        }
+      }
+    }
+    const symbol = describeSymbol(outlines, filledGroups.some((g) => g.some((s) => s.color && s.color !== '#ffffff')));
+    const extra = symbol ? { symbol } : {};
+    if (!best) return { ...t, target: [t.cx, t.cy] as Pt, paths: [], leader: false, ...extra };
+    return { ...t, target: best.paths[0][1], paths: best.paths, leader: true, ...(best.tick ? { tick: true } : {}), ...extra };
   });
+}
+
+/** Names the outlines round a tag's text (see `TagSymbol`). */
+export function describeSymbol(outlines: Segment[][], filled: boolean): TagSymbol | undefined {
+  const found: { shape: string; size: number }[] = [];
+  for (const g of outlines) {
+    const xs = g.flatMap((s) => [s.x1, s.x2]);
+    const ys = g.flatMap((s) => [s.y1, s.y2]);
+    const size = Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys));
+    found.push({ shape: outlineShape(g), size });
+  }
+  if (!found.length) return undefined;
+  found.sort((a, b) => a.size - b.size);
+  const shapes = [...new Set(found.map((f) => f.shape))];
+  return { shape: shapes.join('+'), size: found[found.length - 1].size, filled };
+}
+
+/** The shape of one closed outline, by how many straight sides it has. */
+export function outlineShape(loop: Segment[]): string {
+  if (loop.some((s) => s.curve)) return 'round';
+  const sides: { a: number; off: number }[] = [];
+  for (const s of loop) {
+    const L = Math.hypot(s.x2 - s.x1, s.y2 - s.y1);
+    if (L < 0.3) continue;
+    let a = Math.atan2(s.y2 - s.y1, s.x2 - s.x1);
+    if (a < 0) a += Math.PI;
+    if (a >= Math.PI - 0.035) a -= Math.PI;
+    const off = -Math.sin(a) * s.x1 + Math.cos(a) * s.y1;
+    if (!sides.some((q) => Math.abs(q.a - a) < 0.07 && Math.abs(q.off - off) < 1)) sides.push({ a, off });
+  }
+  const n = sides.length;
+  if (n === 3) return 'triangle';
+  if (n === 4) {
+    const square = sides.every((q) => Math.min(Math.abs(q.a), Math.abs(q.a - Math.PI / 2)) < 0.09);
+    return square ? 'box' : 'diamond';
+  }
+  if (n >= 5 && n <= 8) return 'polygon';
+  return 'round';
 }
 
 /** Drops repeated segments (some CAD exports draw lines twice, sometimes reversed). */
@@ -114,6 +192,11 @@ export function dedupe(segs: Segment[]): Segment[] {
  * text counts.
  */
 export function symbolLoop(segs: Segment[], x: number, y: number): Segment[] {
+  return symbolLoops(segs, x, y).flat();
+}
+
+/** Each closed loop round the text on its own (a diamond inside a square is two). */
+export function symbolLoops(segs: Segment[], x: number, y: number): Segment[][] {
   let symbol = segs;
   for (let pass = 0; pass < 20; pass++) {
     const joined = (px: number, py: number, self: Segment) =>
@@ -126,7 +209,7 @@ export function symbolLoop(segs: Segment[], x: number, y: number): Segment[] {
 }
 
 /** Lines leading off the symbol's corners, each followed through its bends. */
-function leadersFrom(symbol: Segment[], pen: Segment[], t: TagText, index: SegmentIndex, lines: Segment[], fromEdge = false): Pt[][] {
+function leadersFrom(symbol: Segment[], pen: Segment[], t: TagText, index: SegmentIndex, lines: Segment[], fromEdge = false, outward = false): Pt[][] {
   const corners: Pt[] = [];
   for (const e of symbol) {
     for (const [x, y] of [
@@ -153,7 +236,13 @@ function leadersFrom(symbol: Segment[], pen: Segment[], t: TagText, index: Segme
       [s.x1, s.y1, s.x2, s.y2],
       [s.x2, s.y2, s.x1, s.y1],
     ]) {
-      if (!(atCorner(ax, ay) || (fromEdge && midSide(ax, ay))) || onSymbol(bx, by)) continue;
+      if (!(atCorner(ax, ay) || (fromEdge && midSide(ax, ay)) || (outward && onSymbol(ax, ay))) || onSymbol(bx, by)) continue;
+      // In another pen than the symbol: a line leading straight out from it, not one crossing past.
+      if (outward) {
+        const L = Math.hypot(bx - ax, by - ay);
+        const R = Math.hypot(ax - t.cx, ay - t.cy);
+        if (L < 2 || !R || ((bx - ax) * (ax - t.cx) + (by - ay) * (ay - t.cy)) / (L * R) < 0.7) continue;
+      }
       const width = s.width;
       if (Math.hypot(bx - t.cx, by - t.cy) <= Math.hypot(ax - t.cx, ay - t.cy)) continue;
       let end: Pt = [bx, by];
@@ -177,8 +266,8 @@ function leadersFrom(symbol: Segment[], pen: Segment[], t: TagText, index: Segme
   return paths;
 }
 
-/** The connected loops among `segs` that enclose (x, y). */
-function surrounding(segs: Segment[], x: number, y: number): Segment[] {
+/** The connected loops among `segs` that enclose (x, y), each on its own. */
+function surrounding(segs: Segment[], x: number, y: number): Segment[][] {
   const groups: Segment[][] = [];
   const left = new Set(segs);
   while (left.size) {
@@ -212,9 +301,21 @@ function surrounding(segs: Segment[], x: number, y: number): Segment[] {
       }
       xs.sort((a, b) => a - b);
       const crossings = xs.filter((v, i) => i === 0 || v - xs[i - 1] > 0.3).length;
-      return crossings % 2 === 1;
-    })
-    .flat();
+      if (crossings % 2 === 1) return true;
+      // Two outlines touching at their corners (a diamond in a circle) are one group that a
+      // ray crosses twice: it still closes round the text when rays every way meet it.
+      const hits = (dx: number, dy: number) =>
+        g.some((s) => {
+          const ex = s.x2 - s.x1;
+          const ey = s.y2 - s.y1;
+          const den = dx * ey - dy * ex;
+          if (Math.abs(den) < 1e-9) return false;
+          const t = ((s.x1 - x) * ey - (s.y1 - y) * ex) / den;
+          const u = ((s.x1 - x) * dy - (s.y1 - y) * dx) / den;
+          return t > 0 && u >= 0 && u <= 1;
+        });
+      return hits(1, 0) && hits(-1, 0) && hits(0, 1) && hits(0, -1);
+    });
 }
 
 export function distToSeg(x: number, y: number, s: Segment): number {

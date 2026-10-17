@@ -3261,6 +3261,7 @@ export function App() {
       {aiDialog === 'walls' && page && sheet && (
         <WallTakeoffDialog
           page={page}
+          doc={pdfs.get(sheet.docId)}
           sheet={sheet}
           units={project.units}
           types={project.types}
