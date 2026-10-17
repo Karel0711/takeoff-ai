@@ -118,7 +118,12 @@ export class NodeSet implements SetAccess {
 
   async segments(sheet: Sheet): Promise<Segment[] | null> {
     const pg = await this.page(sheet);
-    return pg ? segmentsOf(pg) : null;
+    if (!pg) return null;
+    const segs = await segmentsOf(pg);
+    // pdf.js keeps every page's operator list until the page is cleaned up: across a whole set
+    // that is gigabytes. The segments read from it stay cached.
+    pg.cleanup();
+    return segs;
   }
 
   sheetError(sheet: Sheet, error: unknown) {

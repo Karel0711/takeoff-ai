@@ -194,6 +194,7 @@ export async function runJob(dir: string, log: (s: string) => void = () => {}, o
             if (open.length) note(s, `rooms: ${open.length} not closed (${open.map((x) => x.labels.map((l) => l.number).join('/')).join(', ')})`);
           }
           if (r.apply) done.push(s.name);
+          page.cleanup();
         } catch (e) {
           errors.push({ sheet: s.name, tool: kind, error: errText(e) });
           note(s, `${kind}: ERROR ${e instanceof Error ? e.message : String(e)}`);
