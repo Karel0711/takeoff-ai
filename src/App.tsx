@@ -59,6 +59,7 @@ import type { Automation } from './automate/result';
 import { automateSprinklers as sprinklerTakeoff } from './automate/sprinklers';
 import { automateCeilings as ceilingTakeoff } from './automate/ceilings';
 import { symbolTakeoff, symbolTallies as tallySymbols } from './automate/symbols';
+import { issueOrder, reissued } from './reissue';
 import { doorTakeoff, findDoorTagsIn } from './automate/doors';
 import { automateWindows as windowTakeoff } from './automate/windows';
 import { applyRooms } from './automate/rooms';
@@ -754,7 +755,9 @@ export function App() {
       if (name === null) return;
       if (name.trim()) commit((p) => ({ ...p, name: name.trim() }), 'Rename project');
     }
-    for (const file of Array.from(files)) {
+    // Originals first, then addenda by number: a re-issued sheet then follows the sheet it replaces.
+    const byName = new Map(Array.from(files).map((f) => [f.name, f]));
+    for (const file of issueOrder([...byName.keys()]).map((n) => byName.get(n)!)) {
       setBusy(`Reading ${file.name}…`);
       const data = await file.arrayBuffer();
       const docId = newId();
@@ -777,6 +780,27 @@ export function App() {
       await offerRevision(sheets);
     }
     setBusy(null);
+    supersedeReissued();
+  }
+
+  /**
+   * Sheets an addendum or revision re-issued (same number, title and size in a later addendum
+   * file) are marked superseded, so the tools take off the latest drawing only, not both. Ones
+   * with takeoffs are left to the offer to move them onto the re-issue.
+   */
+  function supersedeReissued() {
+    const p = projectRef.current!;
+    const order = issueOrder(p.docs.map((d) => d.name));
+    const files = [...p.docs].sort((a, b) => order.indexOf(a.name) - order.indexOf(b.name)).map((d) => ({ id: d.id, file: d.name }));
+    const newer = reissued(
+      p.sheets.filter((x) => !x.superseded),
+      files,
+    );
+    const old = [...newer.keys()].filter((id) => !p.measurements.some((m) => m.sheetId === id));
+    if (!old.length) return;
+    const gone = new Set(old);
+    commit((q) => ({ ...q, sheets: q.sheets.map((x) => (gone.has(x.id) ? { ...x, name: `${x.name} (superseded)`, superseded: true } : x)) }), 'Mark re-issued sheets');
+    setToast({ text: `${old.length} sheet${old.length === 1 ? ' an addendum re-issued is' : 's addenda re-issued are'} marked superseded: the tools take off the latest.`, undo: true });
   }
 
   /**

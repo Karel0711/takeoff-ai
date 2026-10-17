@@ -523,14 +523,41 @@ export function copyLooks(segs: Segment[], sample: readonly SymbolLine[], at: Pt
     }
   }
   const touch = pad;
-  /** The copy's line an end touches, if any. */
-  const onCopy = (x: number, y: number) =>
-    copy.find((l) => {
-      const dx = l.x2 - l.x1;
-      const dy = l.y2 - l.y1;
-      const t = Math.max(0, Math.min(1, ((x - l.x1) * dx + (y - l.y1) * dy) / (dx * dx + dy * dy || 1)));
-      return Math.hypot(x - (l.x1 + t * dx), y - (l.y1 + t * dy)) <= touch;
-    });
+  const near = (l: LookLine, x: number, y: number) => {
+    const dx = l.x2 - l.x1;
+    const dy = l.y2 - l.y1;
+    const t = Math.max(0, Math.min(1, ((x - l.x1) * dx + (y - l.y1) * dy) / (dx * dx + dy * dy || 1)));
+    return Math.hypot(x - (l.x1 + t * dx), y - (l.y1 + t * dy)) <= touch;
+  };
+  /**
+   * The copy's line an end touches, if any: the first in the copy's order, as a scan would find it,
+   * looked up by grid cell (a busy spot has thousands of lines and as many ends to try).
+   */
+  const G = 16;
+  const gx = (box[2] - box[0]) / G || 1;
+  const gy = (box[3] - box[1]) / G || 1;
+  const cellOf = (v: number, o: number, g: number) => Math.max(0, Math.min(G - 1, Math.floor((v - o) / g)));
+  let grid: number[][] = [];
+  let indexed = 0;
+  const index = () => {
+    for (; indexed < copy.length; indexed++) {
+      const l = copy[indexed];
+      const i0 = cellOf(Math.min(l.x1, l.x2) - touch, box[0], gx);
+      const i1 = cellOf(Math.max(l.x1, l.x2) + touch, box[0], gx);
+      const j0 = cellOf(Math.min(l.y1, l.y2) - touch, box[1], gy);
+      const j1 = cellOf(Math.max(l.y1, l.y2) + touch, box[1], gy);
+      for (let i = i0; i <= i1; i++) for (let j = j0; j <= j1; j++) grid[j * G + i].push(indexed);
+    }
+  };
+  const onCopy = (x: number, y: number): LookLine | undefined => {
+    // A few lines: a plain scan is quicker than building the grid.
+    if (!grid.length && copy.length * attached.length < 4096) return copy.find((l) => near(l, x, y));
+    if (!grid.length) grid = Array.from({ length: G * G }, () => []);
+    index();
+    let best = -1;
+    for (const k of grid[cellOf(y, box[1], gy) * G + cellOf(x, box[0], gx)]) if ((best < 0 || k < best) && near(copy[k], x, y)) best = k;
+    return best < 0 ? undefined : copy[best];
+  };
   const span0 = Math.max(x1 - x0, y1 - y0);
   // A shape lying wholly in the margin round the footprint is the neighbour's (the wall's
   // insulation a camera sits against), not part of the symbol.
