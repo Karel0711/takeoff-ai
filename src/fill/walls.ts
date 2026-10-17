@@ -12,6 +12,12 @@ export interface PenStats {
   length: number;
   /** Length of this pen's lines that run parallel to another of its lines a wall-thickness away. */
   paired: number;
+  /**
+   * Length of its lines that are rungs of a ladder: a parallel line the same distance away on
+   * both sides (hatching, stair treads). Not counted in `paired`: a wall's face has its other
+   * face on one side and the room on the other.
+   */
+  ladder?: number;
 }
 
 /** Spatial hash of segment midpoints, for neighbour queries. */
@@ -184,26 +190,36 @@ export function penStats(segs: Segment[], minGap: number, maxGap: number, join =
     }
     const grid = new Grid(list, Math.max(16, maxGap * 2));
     let paired = 0;
+    let ladder = 0;
     for (const a of list) {
       const L = len(a);
       if (L < 2 * minGap) continue;
       const ux = (a.x2 - a.x1) / L;
       const uy = (a.y2 - a.y1) / L;
       let best = 0;
+      // The nearest parallel line each side (pairing, at least twice as long as the gap).
+      let left = Infinity;
+      let right = Infinity;
       for (const b of grid.near((a.x1 + a.x2) / 2, (a.y1 + a.y2) / 2, L / 2 + maxGap)) {
         if (b === a) continue;
         const Lb = len(b);
         const vx = (b.x2 - b.x1) / Lb;
         const vy = (b.y2 - b.y1) / Lb;
         if (Math.abs(ux * vy - uy * vx) > 0.035) continue;
-        const d = Math.abs((b.x1 - a.x1) * -uy + (b.y1 - a.y1) * ux);
+        const sd = (b.x1 - a.x1) * -uy + (b.y1 - a.y1) * ux;
+        const d = Math.abs(sd);
         if (d < minGap || d > maxGap) continue;
         const ov = overlap(a, b, ux, uy);
-        if (ov >= 2 * d) best = Math.max(best, ov);
+        if (ov >= 2 * d) {
+          best = Math.max(best, ov);
+          if (sd > 0) left = Math.min(left, d);
+          else right = Math.min(right, d);
+        }
       }
-      paired += best;
+      if (left < Infinity && right < Infinity && Math.abs(left - right) <= 0.1 * Math.max(left, right)) ladder += L;
+      else paired += best;
     }
-    out.push({ key, segments: list.length, length, paired });
+    out.push({ key, segments: list.length, length, paired, ladder });
   }
   return out.sort((a, b) => b.paired - a.paired);
 }

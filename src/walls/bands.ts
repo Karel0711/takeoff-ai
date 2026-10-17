@@ -70,7 +70,18 @@ interface Piece {
  * and `tmax` away, the two lines are the faces of a wall. Lines across door
  * openings (bridges) carry walls through doors.
  */
-export function findWallRuns(lines: Segment[], tmin: number, tmax: number, step = 1.5): WallRun[] {
+/** Ray-to-line tests the last `findWallRuns` made (for diagnostics). */
+export let wallRunWork = 0;
+
+/**
+ * Most ray-to-line tests a sheet's wall search makes. A plan's walls take a few million;
+ * a pen that is mostly hatching or a pattern (a roof, a site plan) takes thousands of times
+ * more, and is no wall plan: the search gives up rather than run for minutes.
+ */
+export const WALL_RUN_BUDGET = 5e7;
+
+export function findWallRuns(lines: Segment[], tmin: number, tmax: number, step = 1.5, budget = WALL_RUN_BUDGET): WallRun[] {
+  let work = 0;
   const segs = lines.filter((s) => Math.hypot(s.x2 - s.x1, s.y2 - s.y1) >= 0.5);
   const index = new SegmentIndex(segs);
   const pieces: Piece[] = [];
@@ -89,7 +100,12 @@ export function findWallRuns(lines: Segment[], tmin: number, tmax: number, step 
   const rx1 = Int32Array.from(segs, (s) => cellOf(Math.max(s.x1, s.x2)));
   const ry1 = Int32Array.from(segs, (s) => cellOf(Math.max(s.y1, s.y2)));
 
-  segs.forEach((a, ai) => {
+  for (let ai = 0; ai < segs.length; ai++) {
+    const a = segs[ai];
+    if (work > budget) {
+      wallRunWork = work;
+      return [];
+    }
     const La = Math.hypot(a.x2 - a.x1, a.y2 - a.y1);
     const ux = (a.x2 - a.x1) / La;
     const uy = (a.y2 - a.y1) / La;
@@ -119,6 +135,7 @@ export function findWallRuns(lines: Segment[], tmin: number, tmax: number, step 
         // the lines of `near` round the ray's first tmax, in `near`'s order (the first of equal hits wins).
         const [ex, ey] = [px + nx * tmax, py + ny * tmax];
         const along = few ? near : around.query(Math.min(px, ex) - 1, Math.min(py, ey) - 1, Math.max(px, ex) + 1, Math.max(py, ey) + 1);
+        work += along.length;
         // Of equal hits, the one `near` lists first (`along` is not in its order when looked up round the ray).
         const before = (p: number, q: number) => firstX(p) - firstX(q) || firstY(p) - firstY(q) || p - q;
         for (const bi of along) {
@@ -166,7 +183,8 @@ export function findWallRuns(lines: Segment[], tmin: number, tmax: number, step 
         i = j;
       }
     }
-  });
+  }
+  wallRunWork = work;
   return mergePieces(pieces);
 }
 
@@ -187,10 +205,19 @@ function mergePieces(pieces: Piece[]): WallRun[] {
   const groups: Piece[][] = [];
   const sorted = [...pieces].sort((p, q) => p.offset - q.offset);
   for (const p of sorted) {
-    const g = groups.find((g) => {
-      const q = g[0];
-      return Math.abs(p.ux * q.uy - p.uy * q.ux) < 0.0175 && Math.abs(p.offset - q.offset) < Math.min(1, 0.15 * q.thickness) && Math.abs(p.thickness - q.thickness) < 0.8;
-    });
+    // Groups are made in order of their first piece's offset: only those from 1 pt back can take p.
+    let lo = 0;
+    let hi = groups.length;
+    while (lo < hi) {
+      const m = (lo + hi) >> 1;
+      if (groups[m][0].offset <= p.offset - 1) lo = m + 1;
+      else hi = m;
+    }
+    let g: Piece[] | undefined;
+    for (let k = lo; k < groups.length && !g; k++) {
+      const q = groups[k][0];
+      if (Math.abs(p.ux * q.uy - p.uy * q.ux) < 0.0175 && Math.abs(p.offset - q.offset) < Math.min(1, 0.15 * q.thickness) && Math.abs(p.thickness - q.thickness) < 0.8) g = groups[k];
+    }
     if (g) g.push(p);
     else groups.push([p]);
   }

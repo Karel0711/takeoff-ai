@@ -4,7 +4,9 @@ import { segmentsOf, wallModelFor } from '../fill/sheetWalls';
 import { pageTexts, type PageText } from '../pageText';
 import { WALL_TAG, type TagText } from './tags';
 import { CODE, classifyCode, codeOfText, emptySetTypes, listedCodes, mergeSetTypes, readTagLegend, readTypeSheet, type SetTypes } from './setTypes';
-import { wallTakeoff, type WallTakeoffResult } from './wallTakeoff';
+import type { WallTakeoffResult } from './wallTakeoff';
+import { wallTakeoffByTags } from './tagPens';
+import { buildWallModel } from '../fill/roomFill';
 
 /**
  * Wall type tags on the page, with each text's centre and size in sheet points. What
@@ -82,11 +84,8 @@ export async function sheetWallTakeoff(
   if (!sheet.metersPerPoint) throw new Error('Set the sheet scale first.');
   const [model, segments, texts] = await Promise.all([wallModelFor(page, sheet, maxOpening), segmentsOf(page), wallTagTexts(page, known.codes, known.set)]);
   // The wall takeoff reads tags and leaders itself: it takes the wall pens' symbols as drawn.
-  return wallTakeoff([...model.lines, ...(model.symbols ?? [])], segments, texts, sheet.metersPerPoint, {
-    doors: model.openings,
-    throughDoors,
-    stopAtDoors,
-    exterior: known.exterior,
-    kinds: known.set?.kinds,
-  });
+  const mpp = sheet.metersPerPoint;
+  return wallTakeoffByTags(model, segments, texts, mpp, { throughDoors, stopAtDoors, exterior: known.exterior, kinds: known.set?.kinds }, (pens) =>
+    buildWallModel(segments, mpp, { pens, maxOpening, stats: model.stats }),
+  );
 }
