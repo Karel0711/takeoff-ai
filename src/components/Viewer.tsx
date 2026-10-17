@@ -64,6 +64,8 @@ interface Props {
   onTrace: (at: Pt, reach: number) => void;
   /** Count by symbol: the box dragged around one symbol (x0, y0, x1, y1). */
   onFindSymbols: (box: [number, number, number, number]) => void;
+  /** Count by symbol with one click on it (no box), and how near (sheet points) counts as on it. */
+  onPickSymbol?: (at: Pt, reach: number) => void;
 }
 
 /** Longest edge of the low-resolution page bitmap used for instant pan and zoom. */
@@ -511,6 +513,8 @@ export function Viewer(props: Props) {
       suppressClick.current = true;
       // A box a few screen pixels across is a stray click, not a symbol.
       if (Math.abs(b[0] - a[0]) * view.zoom > 4 && Math.abs(b[1] - a[1]) * view.zoom > 4) props.onFindSymbols([a[0], a[1], b[0], b[1]]);
+      // A click, not a drag: the symbol under it.
+      else if (Math.abs(b[0] - a[0]) * view.zoom <= 4 && Math.abs(b[1] - a[1]) * view.zoom <= 4) props.onPickSymbol?.(a, 6 / view.zoom);
       return;
     }
     if (pan.current) {
