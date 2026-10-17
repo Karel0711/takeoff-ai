@@ -118,14 +118,11 @@ export function findWallRuns(lines: Segment[], tmin: number, tmax: number, step 
         // Only a hit up to tmax away counts (a nearer one past it leaves the sample without a face):
         // the lines of `near` round the ray's first tmax, in `near`'s order (the first of equal hits wins).
         const [ex, ey] = [px + nx * tmax, py + ny * tmax];
-        const along = few
-          ? near
-          : around
-              .query(Math.min(px, ex) - 1, Math.min(py, ey) - 1, Math.max(px, ex) + 1, Math.max(py, ey) + 1)
-              .filter(inNear)
-              .sort((p, q) => firstX(p) - firstX(q) || firstY(p) - firstY(q) || p - q);
+        const along = few ? near : around.query(Math.min(px, ex) - 1, Math.min(py, ey) - 1, Math.max(px, ex) + 1, Math.max(py, ey) + 1);
+        // Of equal hits, the one `near` lists first (`along` is not in its order when looked up round the ray).
+        const before = (p: number, q: number) => firstX(p) - firstX(q) || firstY(p) - firstY(q) || p - q;
         for (const bi of along) {
-          if (bi === ai) continue;
+          if (bi === ai || (!few && !inNear(bi))) continue;
           const b = segs[bi];
           const wx = b.x2 - b.x1;
           const wy = b.y2 - b.y1;
@@ -135,7 +132,8 @@ export function findWallRuns(lines: Segment[], tmin: number, tmax: number, step 
           const qy = b.y1 - py;
           const x = (qx * wy - qy * wx) / den;
           const s = (qx * ny - qy * nx) / den;
-          if (x <= 0.2 || x >= best || s < -0.01 || s > 1.01) continue;
+          if (x <= 0.2 || x > best || s < -0.01 || s > 1.01) continue;
+          if (x === best && (few || before(bi, bestIdx) > 0)) continue;
           best = x;
           bestIdx = bi;
         }
