@@ -2521,3 +2521,43 @@ button.link-button:hover {
 .type-item.in-division .source-row {
   padding-left: 14px;
 }
+
+/* Access code screen (web app only, before the app opens) */
+.access-gate {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: var(--window);
+}
+.access-card {
+  width: 100%;
+  max-width: 360px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 28px 24px;
+  background: var(--surface);
+  color: var(--text);
+  border-radius: 12px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.08);
+}
+.access-card h1 {
+  margin: 0;
+  font-size: 22px;
+}
+.access-card p {
+  margin: 0;
+}
+.access-card input {
+  font-size: 16px;
+  padding: 10px 12px;
+}
+.access-card button {
+  padding: 10px;
+  font-size: 15px;
+}
+.access-card .small {
+  font-size: 12px;
+}
