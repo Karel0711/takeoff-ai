@@ -1,4 +1,4 @@
-import { fillRoomsAsync, findRoomLabels, type FoundRoom } from '../fill/rooms';
+import { closeWide, cutIslands, fillRoomsAsync, findRoomLabels, type FoundRoom } from '../fill/rooms';
 import { segmentsOf, wallModelFor } from '../fill/sheetWalls';
 import { newId, type Measurement, type Project, type Pt, type Sheet, type TakeoffType, type Units } from '../model';
 import { pageTexts } from '../pageText';
@@ -17,7 +17,10 @@ export const roomName = (r: FoundRoom) => [...new Set(r.labels.map((l) => l.name
 export async function findRooms(page: PDFPageProxy, sheet: Sheet, maxOpening: number, progress?: (done: number, total: number) => void): Promise<FoundRoom[]> {
   const [segs, texts, model] = await Promise.all([segmentsOf(page), pageTexts(page), wallModelFor(page, sheet, maxOpening)]);
   const labels = findRoomLabels(texts, segs);
-  return fillRoomsAsync(model, labels, sheet.width, sheet.height, progress ?? (() => {}));
+  let rooms = await fillRoomsAsync(model, labels, sheet.width, sheet.height, progress ?? (() => {}));
+  // Rooms that leaked out through a wide doorway (an overhead door): again with doorways twice as wide closed.
+  if (rooms.some((r) => !r.points && r.reason === 'not-closed')) rooms = closeWide(rooms, await wallModelFor(page, sheet, 2 * maxOpening), labels, sheet.width, sheet.height);
+  return cutIslands(rooms);
 }
 
 /** The area type rooms go under to start with: one named Rooms, else null for a new one. */
@@ -55,7 +58,7 @@ export function roomTakeoff(
             sheetId: opts.sheet.id,
             typeId: target,
             points: r.points.map((p) => [...p] as Pt),
-            holes: [],
+            holes: (r.holes ?? []).map((h) => h.map((p) => [...p] as Pt)),
             ...(r.openings ? { openings: r.openings } : {}),
             source: 'rooms' as const,
             label: `${roomNumber(r)} ${opts.names.get(i) ?? ''}`.trim(),

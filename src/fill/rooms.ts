@@ -37,6 +37,8 @@ export interface FoundRoom {
   area: number;
   /** Outline length across door openings, in sheet points. */
   openings?: number;
+  /** Other rooms standing inside this one as islands (a washroom block in an open space), cut out of it. */
+  holes?: Pt[][];
 }
 
 /**
@@ -44,6 +46,8 @@ export interface FoundRoom {
  * dotted level number (101, 101a, B23, M01, B24S, 2.14).
  */
 export const ROOM_NUMBER = /^(?:[A-Z]{1,2})?\d{1,4}(?:\.\d{1,3})?[A-Za-z]?$/;
+/** "RM" or "ROOM" written before a room's number (RM 110). */
+const ROOM_PREFIX = /^(?:RM\.?|ROOM)\s*(?=[A-Z]?\d)/i;
 /** Type tags and other short codes (W2, CB1, EW3A, S114A, fx2, px7) that sit near room names but are not part of them. */
 const TAG_LIKE = /^[A-Za-z]{1,4}-?\d{1,4}[A-Za-z]?$/;
 /** Words that are notes or device marks round a tag, not a room's name: x, sim, UP, DN, a dimension. */
@@ -51,15 +55,22 @@ const NOT_NAME = /^([A-Za-z]|sim\.?|typ\.?|UP|DN|\d.*['"].*|[\d.,/\s-]+|\d+(\.\d
 
 type Box = { x0: number; y0: number; x1: number; y1: number; pen?: string };
 
+/** A line's pen, to a hundredth of a point: a transformed drawing's widths differ in their last digits (0.2399997, 0.2400003). */
+const penOf = (s: Segment) => s.width.toFixed(2);
+
 /** The rectangle closed round a text (drawn once or doubled), if any. */
 function boxAround(t: PageText, index: SegmentIndex, lines: Segment[]): Box | null {
-  const r = Math.max(t.w, t.h) * 0.5 + 14;
+  // A box padded round its number; failing that, a wide one round a short number (a room "2").
+  return boxWithin(t, index, lines, Math.max(t.w, t.h) * 0.5 + 14) ?? (/^\d$/.test(t.str) ? boxWithin(t, index, lines, Math.max(t.w, t.h) * 0.5 + 4.5 * t.h, true) : null);
+}
+
+function boxWithin(t: PageText, index: SegmentIndex, lines: Segment[], r: number, wide = false): Box | null {
   const local = dedupe(index.query(t.cx - r, t.cy - r, t.cx + r, t.cy + r).map((i) => lines[i]));
   const inside = (x: number, y: number) => Math.hypot(x - t.cx, y - t.cy) <= r;
   const candidates = local.filter((s) => inside(s.x1, s.y1) && inside(s.x2, s.y2));
-  for (const pen of new Set(candidates.map((s) => s.width))) {
+  for (const pen of new Set(candidates.map(penOf))) {
     const loop = symbolLoop(
-      candidates.filter((s) => s.width === pen),
+      candidates.filter((s) => penOf(s) === pen),
       t.cx,
       t.cy,
     );
@@ -69,7 +80,10 @@ function boxAround(t: PageText, index: SegmentIndex, lines: Segment[]): Box | nu
     if (!axisAligned) continue;
     const xs = loop.flatMap((s) => [s.x1, s.x2]);
     const ys = loop.flatMap((s) => [s.y1, s.y2]);
-    return { x0: Math.min(...xs), y0: Math.min(...ys), x1: Math.max(...xs), y1: Math.max(...ys), pen: pen.toFixed(2) };
+    const box = { x0: Math.min(...xs), y0: Math.min(...ys), x1: Math.max(...xs), y1: Math.max(...ys), pen };
+    // A tag's box, not a closet's walls round its number.
+    if (wide && (box.y1 - box.y0 > 4 * t.h || box.x1 - box.x0 > Math.max(10 * t.h, 2 * t.w))) continue;
+    return box;
   }
   return null;
 }
@@ -111,7 +125,7 @@ function leaderEnd(box: Box, index: SegmentIndex, lines: Segment[], marks: Map<n
       let prev = first;
       for (let link = 0; link < 4; link++) {
         const next = dedupe(index.query(end[0] - 0.5, end[1] - 0.5, end[0] + 0.5, end[1] + 0.5).map((i) => lines[i])).find(
-          (o) => o !== prev && !o.curve && o.width === first.width && len(o) >= 2 && (Math.hypot(o.x1 - end[0], o.y1 - end[1]) < 0.5 || Math.hypot(o.x2 - end[0], o.y2 - end[1]) < 0.5),
+          (o) => o !== prev && !o.curve && penOf(o) === penOf(first) && len(o) >= 2 && (Math.hypot(o.x1 - end[0], o.y1 - end[1]) < 0.5 || Math.hypot(o.x2 - end[0], o.y2 - end[1]) < 0.5),
         );
         if (!next) break;
         end = Math.hypot(next.x1 - end[0], next.y1 - end[1]) < 0.5 ? [next.x2, next.y2] : [next.x1, next.y1];
@@ -172,20 +186,24 @@ export function findRoomLabels(texts: PageText[], segs: Segment[]): RoomLabel[] 
     } else marks.set(s.sub!, { x0: Math.min(s.x1, s.x2), y0: Math.min(s.y1, s.y2), x1: Math.max(s.x1, s.x2), y1: Math.max(s.y1, s.y2) });
   }
   let markIndex: SegmentIndex | null = null;
-  const boxed: { t: PageText; box: Box; above: string; below: string; lettered: boolean }[] = [];
+  const boxed: { t: PageText; number: string; box: Box; above: string; below: string; lettered: boolean; short: boolean }[] = [];
   for (const t of texts) {
     // A corridor can be lettered (A, C) rather than numbered: boxed, with its name by it.
     const lettered = /^[A-Z]$/.test(t.str);
-    if (!ROOM_NUMBER.test(t.str) && !lettered) continue;
-    // Without a letter prefix a code needs two digits (07, 101, 2.14): one digit (1, 1.1) is a keynote or equipment mark.
-    if (!lettered && !/^[A-Z]/.test(t.str) && !/\d{2}/.test(t.str)) continue;
+    // The number, written with its prefix or not (RM 110).
+    const number = t.str.replace(ROOM_PREFIX, '');
+    if (!ROOM_NUMBER.test(number) && !lettered) continue;
+    // Without a letter prefix a code needs two digits (07, 101, 2.14): one digit (1, 1.1) is a
+    // keynote or equipment mark, unless it is named like a room (a small building's rooms 1 to 9).
+    const short = !lettered && !/^[A-Z]/.test(number) && !/\d{2}/.test(number);
     const box = boxAround(t, index, lines);
     if (!box) continue;
     const cx = (box.x0 + box.x1) / 2;
     const above = nameNear(texts, t, cx, box.y0, box.x1 - box.x0, -1);
     const below = nameNear(texts, t, cx, box.y1, box.x1 - box.x0, 1);
     if (!above && !below && legendLine(texts, t, box)) continue;
-    boxed.push({ t, box, above, below, lettered });
+    if (short && !above && !below) continue;
+    boxed.push({ t, number, box, above, below, lettered, short });
   }
   // Which side this sheet writes names on: where most tags have one.
   const nAbove = boxed.filter((b) => b.above).length;
@@ -196,7 +214,16 @@ export function findRoomLabels(texts: PageText[], segs: Segment[]): RoomLabel[] 
   // block) or a boxed letter on a sheet without numbered rooms (a symbol) is not one; nor is
   // a box under a title-block caption (Dwg. No.).
   const caption = (name: string) => /^(dwg|drawing|sheet|project|job|plot|file)\.?\s*(no\.?|number|#)?:?$/i.test(name.trim());
-  const keep = boxed.filter((b) => !caption(b[first] || b[second]));
+  let keep = boxed.filter((b) => !caption(b[first] || b[second]));
+  // One-digit rooms only where several are named so.
+  if (keep.filter((b) => b.short).length < 3) keep = keep.filter((b) => !b.short);
+  // Room numbers come in families (101, 102; B23, B24; M01): a family none of whose tags is
+  // named, beside families whose tags are, is another kind of tag in a box (wall types W3,
+  // EW1; floor types F1, FA1), not rooms.
+  const family = (b: (typeof keep)[number]) => /^[A-Za-z]*/.exec(b.number)![0].toUpperCase();
+  const namedIn = new Map<string, number>();
+  for (const b of keep) if (!b.lettered) namedIn.set(family(b), (namedIn.get(family(b)) ?? 0) + (b.above || b.below ? 1 : 0));
+  if ([...namedIn.values()].some((n) => n >= 1)) keep = keep.filter((b) => b.lettered || namedIn.get(family(b))! > 0);
   const numbered = keep.filter((b) => !b.lettered);
   const named = numbered.filter((b) => b.above || b.below).length;
   const roomTags = named >= 3 || numbered.length >= 5 ? numbered.length : named;
@@ -212,7 +239,7 @@ export function findRoomLabels(texts: PageText[], segs: Segment[]): RoomLabel[] 
     const h = box.y1 - box.y0;
     const nameAt: Pt | undefined = name ? [(box.x0 + box.x1) / 2, b[first] ? (first === 'below' ? box.y1 + h : box.y0 - h) : second === 'below' ? box.y1 + h : box.y0 - h] : undefined;
     out.push({
-      number: b.t.str,
+      number: b.number,
       name,
       at: [(box.x0 + box.x1) / 2, (box.y0 + box.y1) / 2],
       box: [box.x0, box.y0, box.x1, box.y1],
@@ -227,16 +254,18 @@ export function findRoomLabels(texts: PageText[], segs: Segment[]): RoomLabel[] 
   // name. Take numbers with a name directly above them that are not in any symbol
   // (door and window numbers sit in ovals and hexagons).
   for (const t of texts) {
-    if (!/^[A-Z]?\d{3,4}[A-Za-z]?$/.test(t.str)) continue;
+    // Written with its prefix too: RM 110, ROOM 110.
+    const m = /^(?:(?:RM\.?|ROOM)\s*)?([A-Z]?\d{3,4}[A-Za-z]?)$/.exec(t.str);
+    if (!m) continue;
     const name = nameNear(texts, t, t.cx, t.cy - t.h / 2, t.w, -1);
     if (!name) continue;
     const r = Math.max(t.w, t.h) * 0.5 + 14;
     // Only lines wholly near the number: a small room's own walls are not a symbol round it.
     const near = (x: number, y: number) => Math.hypot(x - t.cx, y - t.cy) <= r;
     const local = dedupe(index.query(t.cx - r, t.cy - r, t.cx + r, t.cy + r).map((i) => lines[i])).filter((s) => near(s.x1, s.y1) && near(s.x2, s.y2));
-    const enclosed = [...new Set(local.map((s) => s.width))].some((pen) => symbolLoop(local.filter((s) => s.width === pen), t.cx, t.cy).length > 0);
+    const enclosed = [...new Set(local.map(penOf))].some((pen) => symbolLoop(local.filter((s) => penOf(s) === pen), t.cx, t.cy).length > 0);
     if (enclosed || caption(name)) continue;
-    out.push({ number: t.str, name, at: [t.cx, t.cy] });
+    out.push({ number: m[1], name, at: [t.cx, t.cy] });
   }
   // A plan has a run of them: one alone is a title block's drawing number or a note.
   return out.length >= 2 ? out : [];
@@ -264,9 +293,9 @@ export function findDoorTags(texts: PageText[], segs: Segment[]): DoorTag[] {
     const local = dedupe(index.query(t.cx - r, t.cy - r, t.cx + r, t.cy + r).map((i) => lines[i]));
     const inside = (x: number, y: number) => Math.hypot(x - t.cx, y - t.cy) <= r;
     const candidates = local.filter((s) => inside(s.x1, s.y1) && inside(s.x2, s.y2));
-    for (const pen of new Set(candidates.map((s) => s.width))) {
+    for (const pen of new Set(candidates.map(penOf))) {
       const loop = symbolLoop(
-        candidates.filter((s) => s.width === pen),
+        candidates.filter((s) => penOf(s) === pen),
         t.cx,
         t.cy,
       );
@@ -441,17 +470,33 @@ function withOutlines(model: WallModel, rooms: FoundRoom[]): WallModel {
  * of it, and the parts must still cover most of it: an open space is not carved up round
  * its furniture.
  */
+/** Whether a room found holds its own tags and no other room's, each with its name. */
+function ownsTags(r: FoundRoom, labels: RoomLabel[]): boolean {
+  if (!r.points) return false;
+  const inside = numbersIn(r, labels);
+  const mine = new Set(r.labels.map((l) => l.number));
+  if (inside.size !== mine.size || [...inside].some((n) => !mine.has(n))) return false;
+  // A tag and its name stand in their room: an outline that cuts between them is no room.
+  return r.labels.every(
+    (l) => l.seed || !l.box || (spans(r.points!, l.box) && !withinBox(r.points!, l.box) && (!l.nameAt || pointInRing(l.nameAt, r.points!))),
+  );
+}
+
+/**
+ * Rooms that leaked out through a doorway wider than the openings closed (an overhead door, a
+ * wide cased opening) filled again with wider openings closed (`wide`). A room found so must
+ * hold its own tag and no other room's and be bounded mostly by wall faces; else it stays open.
+ */
+export function closeWide(rooms: FoundRoom[], wide: WallModel, labels: RoomLabel[], sheetW: number, sheetH: number): FoundRoom[] {
+  return rooms.map((r) => {
+    if (r.points || r.reason !== 'not-closed' || r.labels.length !== 1) return r;
+    const found = fillOne(wide, r.labels[0], sheetW, sheetH);
+    return found.points && ownsTags(found, labels) && wallFaceShare(found.points, wide) >= 0.6 ? found : r;
+  });
+}
+
 function retryLighter(room: FoundRoom, from: WallModel, model: WallModel, labels: RoomLabel[], sheetW: number, sheetH: number): FoundRoom[] | null {
-  const own = (r: FoundRoom) => {
-    if (!r.points) return false;
-    const inside = numbersIn(r, labels);
-    const mine = new Set(r.labels.map((l) => l.number));
-    if (inside.size !== mine.size || [...inside].some((n) => !mine.has(n))) return false;
-    // A tag and its name stand in their room: an outline that cuts between them is no room.
-    return r.labels.every(
-      (l) => l.seed || !l.box || (spans(r.points!, l.box) && !withinBox(r.points!, l.box) && (!l.nameAt || pointInRing(l.nameAt, r.points!))),
-    );
-  };
+  const own = (r: FoundRoom) => ownsTags(r, labels);
   const trial: FoundRoom[] = [];
   for (const label of room.labels) place(trial, label, () => fillOne(model, label, sheetW, sheetH));
   adoptStrays(trial);
@@ -544,6 +589,23 @@ export async function fillRoomsAsync(
     if (r.done) return r.value;
     await new Promise((res) => setTimeout(res, 0));
   }
+}
+
+/**
+ * Cuts each room found standing wholly inside another (a washroom block in an open office, a
+ * closet in a hall) out of the room round it: the room round it does not take its floor.
+ */
+export function cutIslands(rooms: FoundRoom[]): FoundRoom[] {
+  const closed = rooms.filter((r) => r.points);
+  const within = (q: FoundRoom, r: FoundRoom) => q !== r && q.area < r.area && q.points!.every((p) => pointInRing(p, r.points!));
+  return rooms.map((r) => {
+    if (!r.points) return r;
+    const inside = closed.filter((q) => within(q, r));
+    // Only the outermost islands: one inside another island is that island's.
+    const islands = inside.filter((q) => !inside.some((o) => within(q, o)));
+    if (!islands.length) return r;
+    return { ...r, holes: [...(r.holes ?? []), ...islands.map((q) => q.points!)], area: r.area - islands.reduce((a, q) => a + q.area, 0) };
+  });
 }
 
 function pointInRing([x, y]: Pt, ring: Pt[]): boolean {

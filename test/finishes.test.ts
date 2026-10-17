@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { codesInside, heightMeters, matchSchedules, readFinishSchedule, readFinishTags, roomNumbersOf, sameCode } from '../src/finishSchedule';
+import { codesInside, heightMeters, matchSchedules, readFinishLegend, readFinishSchedule, readFinishTags, roomNumbersOf, sameCode } from '../src/finishSchedule';
 import { finishType, newProject, type Measurement, type Sheet, defaultTypes } from '../src/model';
 import type { PageText } from '../src/pageText';
 import { typeTotals } from '../src/quantities';
@@ -45,7 +45,7 @@ describe('room finish schedule', () => {
     const s = readFinishSchedule(texts)!;
     expect(s.columns).toEqual(['floor', 'base', 'walls', 'ceiling']);
     expect(s.rows).toEqual([
-      { number: '101', name: 'LOBBY', finishes: { floor: 'PT-1', base: 'RB-1', walls: 'P1', ceiling: 'ACT-1' }, wallFinishes: ['P1', 'P2'] },
+      { number: '101', name: 'LOBBY', finishes: { floor: 'PT-1', base: 'RB-1', walls: 'P1', ceiling: 'ACT-1' }, wallFinishes: ['P1', 'P2'], wallShares: { P1: 0.75, P2: 0.25 } },
       { number: '102', name: 'RENTAL SHOP', finishes: { floor: 'SC', walls: 'P1', ceiling: 'EXP' } },
       { number: '103', name: 'STORAGE', finishes: { floor: 'SC', base: 'RB-1', walls: 'P1', ceiling: 'GWB' } },
     ]);
@@ -131,7 +131,7 @@ describe('a wide schedule with grouped headings', () => {
     expect(s.columns).toEqual(['floor', 'base', 'walls', 'ceiling']);
     expect(s.rows).toEqual([
       { number: '101a', name: 'Program Room', finishes: { floor: 'SV', base: 'SVC', walls: 'PT', ceiling: 'LAP' }, ceilingHeight: '8’-0”' },
-      { number: '109', name: 'Kitchen', finishes: { floor: 'CT', base: 'CT', walls: 'CT', ceiling: 'LAP' }, wallFinishes: ['CT', 'PT'], ceilingHeight: '8’-0”' },
+      { number: '109', name: 'Kitchen', finishes: { floor: 'CT', base: 'CT', walls: 'CT', ceiling: 'LAP' }, wallFinishes: ['CT', 'PT'], wallShares: { CT: 0.75, PT: 0.25 }, ceilingHeight: '8’-0”' },
       { number: 'M01', name: 'Shelter Intake', finishes: { floor: 'LVT', base: 'VBC', walls: 'PT', ceiling: 'GWB' }, ceilingHeight: '8’-6”' },
     ]);
   });
@@ -249,5 +249,119 @@ describe('finishes tagged on the drawings', () => {
     const inRoom = (x: number, y: number) => x > 0 && x < 100 && y > 0 && y < 100;
     expect(codesInside(texts, inRoom, (c) => ['CA1', 'CA2'].includes(c))).toEqual(['CA1']);
     expect(sameCode('EP1', 'EP-1')).toBe(true);
+  });
+});
+
+describe('schedules laid out other ways', () => {
+  const t = (str: string, cx: number, cy: number, angle = 0, w = str.length * 4): PageText => ({ str, cx, cy, w, h: 5, angle });
+  it('reads headings stacked three deep and turned up the page, rooms written RM 001, existing finishes left out', () => {
+    // ROOM over NO. | NAME, FLOOR over MATERIAL | FINISH, WALLS over NORTH | SOUTH over MATERIAL | FINISH, CEILING.
+    const header = [
+      t('ROOM', 40, 100),
+      t('ROOM', 110, 100),
+      t('FLOOR', 220, 100, 0, 50),
+      t('WALLS', 360, 100, 0, 130),
+      t('CEILING', 485, 100, 0, 40),
+      t('NO.', 40, 112),
+      t('NORTH', 320, 112, 0, 50),
+      t('SOUTH', 400, 112, 0, 50),
+      ...[200, 300, 380, 470].map((x) => t('MATERIAL', x, 140, -Math.PI / 2)),
+      ...[240, 340, 420, 500].map((x) => t('FINISH', x, 146, -Math.PI / 2)),
+    ];
+    const row = (y: number, no: string, name: string, floor: string, n: string, s: string, ceiling: string) => [
+      t(no, 40, y),
+      t(name, 110, y),
+      t('CONC', 200, y),
+      t(floor, 240, y),
+      t('GWB', 300, y),
+      t(n, 340, y),
+      t('BLOCK', 380, y),
+      t(s, 420, y),
+      t(ceiling, 470, y),
+    ];
+    const s = readFinishSchedule([...header, ...row(180, 'RM 001', 'OFFICE', 'T1', 'PT1', 'PT1', 'ACT'), ...row(192, 'RM 002', 'WASHROOM', 'EX', 'T8', 'PT1', 'GWB'), ...row(204, 'RM 003', 'STORAGE', 'T1', 'PT1', 'PT1', 'ACT')])!;
+    expect(s.columns).toEqual(['floor', 'walls', 'ceiling']);
+    expect(s.rows).toEqual([
+      { number: '001', name: 'OFFICE', finishes: { floor: 'T1', walls: 'PT1', ceiling: 'ACT' } },
+      { number: '002', name: 'WASHROOM', finishes: { walls: 'T8', ceiling: 'GWB' }, wallFinishes: ['T8', 'PT1'], wallShares: { T8: 0.5, PT1: 0.5 } },
+      { number: '003', name: 'STORAGE', finishes: { floor: 'T1', walls: 'PT1', ceiling: 'ACT' } },
+    ]);
+  });
+
+  it('reads a heading written over two lines in its cell beside stacked ones', () => {
+    // ROOM and BASE FINISH fill their cells top to bottom; FLOOR over FINISH, EAST WALL over FINISH.
+    const texts = [
+      t('ROOM', 40, 100),
+      t('ROOM NAME', 120, 104),
+      t('FLOOR', 220, 100),
+      t('FINISH', 220, 108),
+      t('BASE FINISH', 290, 104),
+      t('EAST WALL', 370, 100),
+      t('FINISH', 370, 108),
+      ...[130, 142].flatMap((y, i) => [t(`10${i}`, 40, y), t(i ? 'LOBBY' : 'VESTIBULE', 120, y), t(i ? 'SF' : 'PCT', 220, y), t(i ? 'RB' : 'PCT', 290, y), t('PT', 370, y)]),
+    ];
+    expect(readFinishSchedule(texts)!.rows).toEqual([
+      { number: '100', name: 'VESTIBULE', finishes: { floor: 'PCT', base: 'PCT', walls: 'PT' } },
+      { number: '101', name: 'LOBBY', finishes: { floor: 'SF', base: 'RB', walls: 'PT' } },
+    ]);
+  });
+});
+
+describe('finish legends and finish plans', () => {
+  const t = (str: string, cx: number, cy: number, h = 5): PageText => ({ str, cx, cy, w: str.length * 4, h });
+  // A legend in sections, each code with what it is beside it; TILE says nothing of where.
+  const legend = [
+    t('FINISH LEGEND:', 60, 80, 8),
+    t('WALL & CEILING', 60, 100, 7),
+    t('PT1', 30, 112),
+    t('PAINT WHITE', 80, 112),
+    t('EP1', 30, 124),
+    t('EPOXY PAINT', 80, 124),
+    t('PT2', 30, 136),
+    t('PAINT GREY', 80, 136),
+    t('BASE:', 220, 100, 7),
+    t('RB1', 200, 112),
+    t('RUBBER BASE', 250, 112),
+    t('EPB', 200, 124),
+    t('EPOXY COVE BASE', 260, 124),
+    t('TS1', 200, 136),
+    t('TRANSITION STRIP', 260, 136),
+    t('TILE:', 380, 100, 7),
+    t('CT1', 370, 112),
+    t('FLOOR TILE', 420, 112),
+    t('CT2', 370, 124),
+    t('FLOOR TILE - MOSAIC', 430, 124),
+    t('CT3', 370, 136),
+    t('WALL TILE', 420, 136),
+  ];
+
+  it('gives each code the finish its section or its description says', () => {
+    const l = readFinishLegend(legend);
+    expect(Object.fromEntries([...l.values()].map((e) => [e.code, e.role]))).toEqual({
+      PT1: 'walls',
+      EP1: 'walls',
+      PT2: 'walls',
+      RB1: 'base',
+      EPB: 'base',
+      TS1: 'base',
+      CT1: 'floor',
+      CT2: 'floor',
+      CT3: 'walls',
+    });
+    expect(l.get('CT3')!.description).toBe('WALL TILE');
+  });
+
+  it('reads the tags under each room number on a finish plan, in a row as floor, base, walls', () => {
+    const l = readFinishLegend(legend);
+    const plan = [t('121', 600, 300), t('EP1', 585, 315), t('RB1', 600, 315), t('PT1', 615, 315), t('WP1', 630, 315), t('122', 800, 300), t('CT1', 800, 315), t('W-4', 900, 315), t('123', 900, 300)];
+    const rows = readFinishTags(plan, [
+      { number: '121', box: [590, 295, 610, 305] },
+      { number: '122', box: [790, 295, 810, 305] },
+      { number: '123', box: [890, 295, 910, 305] },
+    ], l);
+    expect(rows.map((r) => [r.number, r.finishes])).toEqual([
+      ['121', { floor: 'EP1', base: 'RB1', walls: 'PT1' }],
+      ['122', { floor: 'CT1' }],
+    ]);
   });
 });

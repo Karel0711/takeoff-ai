@@ -16,7 +16,13 @@ interface Props {
   /** The page of a sheet, for reading a finish schedule. */
   getPage: (sheet: Sheet) => Promise<PDFPageProxy | null>;
   /** `ceilingHeights`: rooms whose ceiling height changed (undefined clears it), in project length units. */
-  onApply: (result: { types: TakeoffType[]; finishes: Map<string, Finishes>; ceilingHeights: Map<string, number | undefined> }) => void;
+  onApply: (result: {
+    types: TakeoffType[];
+    finishes: Map<string, Finishes>;
+    ceilingHeights: Map<string, number | undefined>;
+    /** Rooms whose walls the schedule finishes several ways (see `Measurement.wallShares`). */
+    wallShares?: Map<string, Record<string, number>>;
+  }) => void;
   /** Runs Rooms on the open sheet, when it can (a plan with a scale). */
   onFindRooms?: () => void;
   onClose: () => void;
@@ -49,6 +55,8 @@ export function RoomFinishesDialog({ project, palette, getPage, onApply, onFindR
   /** After reading the schedules: their lines no room matched, and rooms no line matched. */
   const [unmatched, setUnmatched] = useState<{ rows: string[]; rooms: string[] } | null>(null);
   const [heights, setHeights] = useState<Map<string, number | undefined>>(() => new Map(rooms.map((m) => [m.id, m.ceilingHeight])));
+  // Wall finish shares read from a per-wall schedule, saved with the walls they go with.
+  const [wallShares, setWallShares] = useState<Map<string, Record<string, number>>>(() => new Map());
   const types = [...project.types, ...added];
   const sheets = new Map(project.sheets.map((s) => [s.id, s]));
 
@@ -121,13 +129,14 @@ export function RoomFinishesDialog({ project, palette, getPage, onApply, onFindR
       return next;
     });
     if (read.heights.size) setHeights((hs) => new Map([...hs, ...read.heights]));
+    if (read.wallShares?.size) setWallShares((ws) => new Map([...ws, ...read.wallShares!]));
     setUnmatched(read.unmatched);
     setReadNote(read.note);
   }
 
   const heightChanged = (m: Measurement) => (heights.get(m.id) ?? undefined) !== (m.ceilingHeight ?? undefined);
   const changed = rooms.filter((m) => JSON.stringify(m.finishes ?? {}) !== JSON.stringify(draft.get(m.id) ?? {}) || heightChanged(m)).length;
-  const usedAdded = added.filter((t) => [...draft.values()].some((f) => Object.values(f).includes(t.id)));
+  const usedAdded = added.filter((t) => [...draft.values()].some((f) => Object.values(f).includes(t.id)) || [...wallShares.values()].some((w) => t.id in w));
 
   function save() {
     const finishes = new Map<string, Finishes>();
@@ -137,7 +146,7 @@ export function RoomFinishesDialog({ project, palette, getPage, onApply, onFindR
       if (JSON.stringify(m.finishes ?? {}) !== JSON.stringify(f)) finishes.set(m.id, f);
       if (heightChanged(m)) ceilingHeights.set(m.id, heights.get(m.id));
     }
-    onApply({ types: usedAdded, finishes, ceilingHeights });
+    onApply({ types: usedAdded, finishes, ceilingHeights, wallShares });
     onClose();
   }
 
