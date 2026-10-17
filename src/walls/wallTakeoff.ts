@@ -45,12 +45,18 @@ export interface WallTakeoffOptions {
   stopAtDoors?: string[];
   /** Codes the project's assembly schedules give as exterior walls (WE1), whatever their prefix. */
   exterior?: string[];
+  /** Kind of each code as the set's assembly types sheet gives it (exterior, partition, furring, foundation). */
+  kinds?: Record<string, string>;
 }
 
 /** Kinds of wall tag. A wall has at most one of each; a tag's type spreads only within its kind. */
-export function tagKind(code: string, exterior?: readonly string[]): string {
+export function tagKind(code: string, exterior?: readonly string[], kinds?: Record<string, string>): string {
   if (exterior?.includes(code)) return 'exterior';
-  const prefix = code.replace(/-?\d.*$/, '');
+  const given = kinds?.[code];
+  if (given) return given;
+  const letters = code.replace(/-?\d.*$/, '').toUpperCase();
+  // An "x" after the prefix marks existing work of the same kind (wx1, FRX2).
+  const prefix = letters.length > 1 && letters.endsWith('X') && letters !== 'EX' ? letters.slice(0, -1) : letters;
   if (prefix === 'EW' || prefix === 'EXT' || prefix === 'EP') return 'exterior';
   if (prefix === 'FR') return 'furring';
   if (prefix === 'FW') return 'foundation';
@@ -73,12 +79,12 @@ export function wallTakeoff(
   metersPerPoint: number,
   options: WallTakeoffOptions = {},
 ): WallTakeoffResult {
-  const { minThickness = 0.05, maxThickness = 0.65, tee = 'centre', carry = 'wall+tees', doors = [], throughDoors = true, stopAtDoors = [], exterior = [] } = options;
+  const { minThickness = 0.05, maxThickness = 0.65, tee = 'centre', carry = 'wall+tees', doors = [], throughDoors = true, stopAtDoors = [], exterior = [], kinds: codeKinds } = options;
   const pt = (m: number) => m / metersPerPoint;
   const found = findWallRuns(wallLines, pt(minThickness), pt(maxThickness)).filter(
     (r) => runLength(r) >= Math.max(pt(0.1), r.thickness * 0.5),
   );
-  const runs: WallRun[] = found.map((r) => ({ ...r, a: [...r.a] as Pt, b: [...r.b] as Pt }));
+  const runs: WallRun[] = offSquare(found).map((r) => ({ ...r, a: [...r.a] as Pt, b: [...r.b] as Pt }));
 
   // Join ends at corners and tees; remember where to split the walls they meet.
   const splits = runs.map(() => [] as Pt[]);
@@ -237,8 +243,40 @@ export function wallTakeoff(
     }
   }
 
+  // A thin band lying against a thick wall along its length (and the bands lying against
+  // it) is a leaf of a built-up wall, the lining inside a masonry or exterior wall: a
+  // different construction from a partition standing on its own.
+  const pieceIndex = new SegmentIndex(pieces.map((p) => ({ x1: p.a[0], y1: p.a[1], x2: p.b[0], y2: p.b[1], width: 0, filled: false })), 32);
+  const reach = pt(maxThickness) / 2 + 2;
+  const beside = pieces.map((p) =>
+    pieceIndex
+      .query(Math.min(p.a[0], p.b[0]) - p.thickness / 2 - reach, Math.min(p.a[1], p.b[1]) - p.thickness / 2 - reach, Math.max(p.a[0], p.b[0]) + p.thickness / 2 + reach, Math.max(p.a[1], p.b[1]) + p.thickness / 2 + reach)
+      .filter((j) => j !== p.id && alongside(p, pieces[j])),
+  );
+  const thick = pieces.map((p) => p.thickness >= pt(0.25));
+  const layered = pieces.map((p, i) => !thick[i] && beside[i].some((j) => thick[j] && pieces[j].thickness >= 2 * p.thickness));
+  for (let k = 0, grow = true; grow && k < 10; k++) {
+    grow = false;
+    pieces.forEach((_, i) => {
+      if (!layered[i] && !thick[i] && beside[i].some((j) => layered[j])) grow = layered[i] = true;
+    });
+  }
+  /** The thick walls a leaf belongs to: reached across the leaves lying against each other. */
+  const bodyOf = (i: number): number[] => {
+    const seen = new Set([i]);
+    const out: number[] = [];
+    for (const q = [i]; q.length; ) {
+      for (const j of beside[q.shift()!]) {
+        if (seen.has(j)) continue;
+        seen.add(j);
+        if (thick[j]) out.push(j);
+        else if (layered[j]) q.push(j);
+      }
+    }
+    return out;
+  };
   // Types from tags: each tag labels the piece of wall it points at.
-  const tags = resolveTags(texts, allSegments);
+  const tags = sameFamily(resolveTags(texts, allSegments));
   const unmatched: WallTag[] = [];
   const tagged = pieces.map(() => new Map<string, { codes: string[]; d: number }>());
   /** Pieces of a furring wrap round a column: the wrap is the whole of that type there. */
@@ -269,7 +307,8 @@ export function wallTakeoff(
           // A tick lands inside the wall's band itself, not in the round end beyond it (a
           // locker or a cabinet drawn square on beside the wall reads as a short thick wall).
           const d = tag.tick ? distInBand(path[k], r) : distToRun(path[k], r);
-          const limit = tag.leader ? r.thickness / 2 + 1.5 : pt(1.0);
+          // A tag with no leader sits on its wall or beside it, within about its own size.
+          const limit = tag.leader ? r.thickness / 2 + 1.5 : tag.symbol ? r.thickness / 2 + tag.symbol.size * 1.5 : pt(1.0);
           if (d <= limit && d - r.thickness / 2 < hitD) {
             hit = ri;
             hitD = d - r.thickness / 2;
@@ -301,7 +340,16 @@ export function wallTakeoff(
       continue;
     }
     // Two tags of one kind on one piece: the one pointing more squarely at it wins.
-    const kind = tagKind(tag.code, exterior);
+    const kind = tagKind(tag.code, exterior, codeKinds);
+    // An exterior or foundation type names the whole built-up wall: a tag landing on a leaf
+    // of it (a face line just beside the wall) goes to the wall's body.
+    if ((kind === 'exterior' || kind === 'foundation') && layered[best.id]) {
+      const here = tag.target;
+      const body = bodyOf(best.id)
+        .filter((j) => distToRun(here, pieces[j]) <= pieces[j].thickness + best!.thickness + 3)
+        .sort((i, j) => distToRun(here, pieces[i]) - distToRun(here, pieces[j]))[0];
+      if (body !== undefined) best = pieces[body];
+    }
     // Exterior and foundation walls can stack (a screen wall over the wall below, both
     // tagged on one line); for partitions the tag pointing more squarely wins.
     const prev = tagged[best.id].get(kind);
@@ -364,57 +412,74 @@ export function wallTakeoff(
     return filled && !inside.length ? 'solid' : (!anyFill && outlined) || lines >= 4 ? 'new' : 'other';
   });
   const apart = (i: number, j: number) => (solid[i] === 'solid' && solid[j] === 'new') || (solid[i] === 'new' && solid[j] === 'solid');
-  const adj = pieces.map(() => [] as { j: number; diff: number; tee: boolean; link: 'straight' | 'corner' | 'tee'; apart: boolean }[]);
+  const adj = pieces.map(() => [] as { j: number; diff: number; tee: boolean; link: 'straight' | 'corner' | 'tee'; apart: boolean; leaf: boolean }[]);
   for (const [i, j, kind] of links) {
     if (carry === 'none') continue;
     const diff = Math.abs(pieces[i].thickness - pieces[j].thickness) / Math.max(pieces[i].thickness, pieces[j].thickness);
     const abs = Math.abs(pieces[i].thickness - pieces[j].thickness);
     const cut = apart(i, j);
-    adj[i].push({ j, diff: abs <= 0.6 ? 0 : diff, tee: kind === 'tee', link: kind, apart: cut });
-    adj[j].push({ j: i, diff: abs <= 0.6 ? 0 : diff, tee: kind === 'tee', link: kind, apart: cut });
+    const leaf = layered[i] !== layered[j];
+    adj[i].push({ j, diff: abs <= 0.6 ? 0 : diff, tee: kind === 'tee', link: kind, apart: cut, leaf });
+    adj[j].push({ j: i, diff: abs <= 0.6 ? 0 : diff, tee: kind === 'tee', link: kind, apart: cut, leaf });
   }
   const followsWall = (kind: string) => kind === 'exterior' || kind === 'foundation';
-  const kinds = new Set(tagged.flatMap((m) => [...m.keys()]));
+  const kinds = [...new Set(tagged.flatMap((m) => [...m.keys()]))];
   const carried = pieces.map(() => new Map<string, string[]>());
+  // All kinds spread at once, nearest tag first: a partition type stops where an exterior or
+  // foundation type got first, and the other way round (furring lines either).
+  const competes = (a: string, b: string) => a !== b && (a === 'partition' || b === 'partition');
+  const best = new Map(kinds.map((k) => [k, pieces.map(() => Infinity)]));
+  const code = new Map(kinds.map((k) => [k, pieces.map((): string[] | null => null)]));
+  const done = new Map(kinds.map((k) => [k, new Set<number>()]));
+  const queue: [string, number][] = [];
   for (const kind of kinds) {
-    const best = pieces.map(() => Infinity);
-    const code: (string[] | null)[] = pieces.map(() => null);
-    const queue: number[] = [];
     pieces.forEach((_, i) => {
       const t = tagged[i].get(kind);
       if (t) {
-        best[i] = 0;
-        code[i] = t.codes;
-        queue.push(i);
+        best.get(kind)![i] = 0;
+        code.get(kind)![i] = t.codes;
+        queue.push([kind, i]);
       }
     });
-    // Dijkstra on piece centres (small graphs: a linear scan for the minimum is fine).
-    const done = new Set<number>();
-    while (queue.length) {
-      let k = 0;
-      for (let q = 1; q < queue.length; q++) if (best[queue[q]] < best[queue[k]]) k = q;
-      const i = queue.splice(k, 1)[0];
-      if (done.has(i)) continue;
-      done.add(i);
-      for (const { j, diff, tee, link, apart: cut } of adj[i]) {
-        // New work stops at existing walls (furring is the exception: it lines them).
-        if (cut && kind !== 'furring') continue;
-        // Furring and finishes belong to a room: they turn its corners but stop where a
-        // wall meets them and the wall carries on into the next room.
-        if (kind === 'furring' && (link === 'straight' || wrapped.has(i))) continue;
-        // Within a fifth of the thickness counts as the same wall for exterior and
-        // foundation walls (cladding and footing changes, pilasters); others must match.
-        if (diff > (followsWall(kind) && !tee ? 0.2 : 0)) continue;
-        const d = best[i] + (runLength(pieces[i]) + runLength(pieces[j])) / 2;
-        if (d < best[j]) {
-          best[j] = d;
-          code[j] = code[i];
-          queue.push(j);
-        }
+  }
+  // Dijkstra on piece centres (small graphs: a linear scan for the minimum is fine).
+  while (queue.length) {
+    let k = 0;
+    for (let q = 1; q < queue.length; q++) if (best.get(queue[q][0])![queue[q][1]] < best.get(queue[k][0])![queue[k][1]]) k = q;
+    const [kind, i] = queue.splice(k, 1)[0];
+    const bestK = best.get(kind)!;
+    const codeK = code.get(kind)!;
+    if (done.get(kind)!.has(i)) continue;
+    done.get(kind)!.add(i);
+    // Another kind got here first: this type goes no further.
+    if (kinds.some((k2) => competes(kind, k2) && done.get(k2)!.has(i) && code.get(k2)![i] && best.get(k2)![i] < bestK[i])) {
+      codeK[i] = null;
+      continue;
+    }
+    for (const { j, diff, tee, link, apart: cut, leaf } of adj[i]) {
+      // New work stops at existing walls (furring is the exception: it lines them).
+      if (cut && kind !== 'furring') continue;
+      // A type does not run on into the lining of a built-up wall, nor out of one (furring
+      // is lining).
+      if (leaf && kind !== 'furring') continue;
+      // Furring and finishes belong to a room: they turn its corners but stop where a
+      // wall meets them and the wall carries on into the next room.
+      if (kind === 'furring' && (link === 'straight' || wrapped.has(i))) continue;
+      // Within a fifth of the thickness counts as the same wall for exterior and
+      // foundation walls (cladding and footing changes, pilasters); others must match.
+      if (diff > (followsWall(kind) && !tee ? 0.2 : 0)) continue;
+      const d = bestK[i] + (runLength(pieces[i]) + runLength(pieces[j])) / 2;
+      if (d < bestK[j]) {
+        bestK[j] = d;
+        codeK[j] = codeK[i];
+        queue.push([kind, j]);
       }
     }
+  }
+  for (const kind of kinds) {
     pieces.forEach((_, i) => {
-      if (code[i] && !tagged[i].has(kind)) carried[i].set(kind, code[i]!);
+      const c = code.get(kind)![i];
+      if (c && !tagged[i].has(kind) && done.get(kind)!.has(i)) carried[i].set(kind, c);
     });
   }
   // The side of a column wrap that lies on a furring line running past the column is
@@ -433,7 +498,7 @@ export function wallTakeoff(
     p.how = own.length ? 'tag' : more.length ? 'carried' : null;
   }
   // An opening another wall passes through is a junction, not a door.
-  const cuts = (p: TypedRun) => isPartition(p.tags, exterior) && (!throughDoors || p.tags.some((t) => stopAtDoors.includes(t)));
+  const cuts = (p: TypedRun) => isPartition(p.tags, exterior, codeKinds) && (!throughDoors || p.tags.some((t) => stopAtDoors.includes(t)));
   const doorways = throughDoors && !stopAtDoors.length
     ? []
     : doors.filter((q) => {
@@ -477,6 +542,50 @@ export function wallTakeoff(
     }
   }
   return { runs: [...measured, ...light], tags, unmatched: stillUnmatched };
+}
+
+/**
+ * Drops bands a hair off square: CAD walls are drawn square to the building (or at a
+ * deliberate angle), so a long "wall" a fraction of a degree off the sheet's main
+ * directions is two unrelated lines that happen to run close (a dimension line beside a
+ * face, a slanted hairline).
+ */
+function offSquare(runs: WallRun[]): WallRun[] {
+  const angle = (r: WallRun) => {
+    const a = Math.atan2(r.b[1] - r.a[1], r.b[0] - r.a[0]);
+    return ((a % (Math.PI / 2)) + Math.PI / 2) % (Math.PI / 2);
+  };
+  // The main direction: the length-weighted angle (mod 90°) most walls share, to 0.1°.
+  const bins = new Map<number, number>();
+  for (const r of runs) {
+    const k = Math.round((angle(r) * 1800) / Math.PI) % 900;
+    bins.set(k, (bins.get(k) ?? 0) + runLength(r));
+  }
+  let main = 0;
+  let most = -1;
+  for (const [k, n] of bins) if (n > most) [main, most] = [k, n];
+  // Only a sheet drawn square to the page is that exact: a building rotated on the sheet
+  // carries rounding in every line.
+  if (main !== 0) return runs;
+  return runs.filter((r) => {
+    const d = Math.min(angle(r), Math.PI / 2 - angle(r));
+    return d < 0.005 || d > 0.035;
+  });
+}
+
+/**
+ * Tags the set confirms as wall types show which symbols wall tags use on this sheet. A
+ * code only guessed to be a wall type (by its prefix, or any code with a leader) in a
+ * different symbol is another kind of tag: a window type in a hexagon, a keynote in a
+ * triangle, a room number in a box.
+ */
+function sameFamily(tags: WallTag[]): WallTag[] {
+  const shapes = new Set(tags.filter((t) => t.confirmed && t.symbol).map((t) => t.symbol!.shape));
+  return tags.filter((t) => {
+    if (t.confirmed || !t.symbol) return true;
+    if (t.symbol.shape === 'triangle') return false;
+    return !shapes.size || shapes.has(t.symbol.shape);
+  });
 }
 
 /**
@@ -537,7 +646,8 @@ function crossingRay(x: number, y: number, dx: number, dy: number, p: WallRun): 
   return u >= -0.02 && u <= 1.02 ? t : null;
 }
 
-const isPartition = (tags: string[], exterior?: readonly string[]) => tags.some((t) => tagKind(t, exterior) === 'partition') && !tags.some((t) => tagKind(t, exterior) === 'exterior');
+const isPartition = (tags: string[], exterior?: readonly string[], kinds?: Record<string, string>) =>
+  tags.some((t) => tagKind(t, exterior, kinds) === 'partition') && !tags.some((t) => tagKind(t, exterior, kinds) === 'exterior');
 
 /** The piece without the door openings along it. */
 function cutAtDoors(p: TypedRun, doors: Pt[][]): TypedRun[] {
@@ -569,6 +679,24 @@ function cutAtDoors(p: TypedRun, doors: Pt[][]): TypedRun[] {
     from = Math.max(from, hi);
   }
   return out;
+}
+
+/**
+ * Whether piece p runs alongside q for most of its length, their faces touching or
+ * overlapping (two leaves of one built-up wall).
+ */
+function alongside(p: WallRun, q: WallRun): boolean {
+  const L = runLength(p);
+  const Lq = runLength(q);
+  if (L < 1 || Lq < 1) return false;
+  const ux = (p.b[0] - p.a[0]) / L;
+  const uy = (p.b[1] - p.a[1]) / L;
+  if (Math.abs(ux * (q.b[1] - q.a[1]) - uy * (q.b[0] - q.a[0])) / Lq > 0.035) return false;
+  const sep = Math.abs((q.a[0] + q.b[0] - p.a[0] - p.b[0]) / 2 * -uy + ((q.a[1] + q.b[1] - p.a[1] - p.b[1]) / 2) * ux);
+  if (sep < 0.5 || sep > (p.thickness + q.thickness) / 2 + 1.5) return false;
+  const t1 = (q.a[0] - p.a[0]) * ux + (q.a[1] - p.a[1]) * uy;
+  const t2 = (q.b[0] - p.a[0]) * ux + (q.b[1] - p.a[1]) * uy;
+  return Math.min(L, Math.max(t1, t2)) - Math.max(0, Math.min(t1, t2)) > 0.5 * L;
 }
 
 /** Two runs along the same line that overlap. */
