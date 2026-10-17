@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react';
-import { findRoomLabels, fillRoomsAsync, roomPoint, type FoundRoom } from '../fill/rooms';
+import { roomPoint, type FoundRoom } from '../fill/rooms';
 import { fillRoom } from '../fill/roomFill';
 import { ringArea } from '../geometry';
-import { segmentsOf, wallModelFor } from '../fill/sheetWalls';
-import { newId, type Measurement, type Pt, type Sheet, type TakeoffType, type Units } from '../model';
-import { pageTexts } from '../pageText';
+import { wallModelFor } from '../fill/sheetWalls';
+import type { Measurement, Sheet, TakeoffType, Units } from '../model';
+import { findRooms, roomName, roomNumber, roomsTypeOf, roomTakeoff } from '../automate/rooms';
 import type { PDFPageProxy } from '../pdf';
 import { useEscape } from './Dialogs';
 import { areaUnit, formatQty, toArea } from '../units';
@@ -28,8 +28,6 @@ type State =
   | { phase: 'error'; message: string };
 
 const NEW = '__new__';
-const roomNumber = (r: FoundRoom) => r.labels.map((l) => l.number).join(' / ');
-const roomName = (r: FoundRoom) => [...new Set(r.labels.map((l) => l.name).filter(Boolean))].join(' / ');
 
 /**
  * Room takeoff: finds every room tag on the sheet (number in a box, name above or below it),
@@ -42,7 +40,7 @@ export function RoomsDialog({ page, sheet, units, types, earlier, palette, maxOp
   const [names, setNames] = useState<Map<number, string>>(new Map());
   const areaTypes = types.filter((t) => t.kind === 'area');
   // Rooms go under their own type; their floor, ceiling and other finishes are set in Room finishes.
-  const [typeId, setTypeId] = useState(() => areaTypes.find((t) => /^rooms?\b/i.test(t.name))?.id ?? NEW);
+  const [typeId, setTypeId] = useState(() => roomsTypeOf(types) ?? NEW);
   const [replaceEarlier, setReplaceEarlier] = useState(true);
   const mpp = sheet.metersPerPoint ?? 0;
 
@@ -51,10 +49,7 @@ export function RoomsDialog({ page, sheet, units, types, earlier, palette, maxOp
     const started = performance.now();
     (async () => {
       try {
-        const [segs, texts, model] = await Promise.all([segmentsOf(page), pageTexts(page), wallModelFor(page, sheet, maxOpening)]);
-        const labels = findRoomLabels(texts, segs);
-        if (!live) return;
-        const rooms = await fillRoomsAsync(model, labels, sheet.width, sheet.height, (done, total) => {
+        const rooms = await findRooms(page, sheet, maxOpening, (done, total) => {
           if (live) setState({ phase: 'running', step: `Filling room ${Math.min(done + 1, total)} of ${total}…`, done, total });
         });
         if (!live) return;
@@ -109,38 +104,8 @@ export function RoomsDialog({ page, sheet, units, types, earlier, palette, maxOp
 
   function add() {
     if (state.phase !== 'done') return;
-    const newTypes: TakeoffType[] = [];
-    let target = typeId;
-    if (typeId === NEW) {
-      const t: TakeoffType = {
-        id: newId(),
-        name: 'Rooms',
-        color: palette[types.length % palette.length],
-        kind: 'area',
-        height: units === 'metric' ? 3 : 10,
-        items: [],
-        division: '09 Finishes',
-      };
-      newTypes.push(t);
-      target = t.id;
-    }
-    const measurements: Measurement[] = state.rooms.flatMap((r, i) =>
-      r.points && picked.has(i)
-        ? [
-            {
-              id: newId(),
-              sheetId: sheet.id,
-              typeId: target,
-              points: r.points.map((p) => [...p] as Pt),
-              holes: [],
-              ...(r.openings ? { openings: r.openings } : {}),
-              source: 'rooms' as const,
-              label: `${roomNumber(r)} ${names.get(i) ?? ''}`.trim(),
-            },
-          ]
-        : [],
-    );
-    onApply({ types: newTypes, measurements, replaceEarlier: earlier > 0 && replaceEarlier });
+    const made = roomTakeoff(state.rooms, { sheet, typeId: typeId === NEW ? null : typeId, picked, names, types, units, palette });
+    onApply({ ...made, replaceEarlier: earlier > 0 && replaceEarlier });
     onClose();
   }
 

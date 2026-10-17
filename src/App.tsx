@@ -26,12 +26,10 @@ import { canAskClaude, readSheetName } from './ai/sheetName';
 import { describeAiError } from './ai/readLegend';
 import { findPatternOn, findSimilar, pointInRing, type Pattern } from './fill/similar';
 import { buildWallModel } from './fill/roomFill';
-import { findDoorTags, findRoomLabels } from './fill/rooms';
+import { findRoomLabels } from './fill/rooms';
 import type { Segment } from './fill/vectors';
 import { matchSymbol, sampleSymbol, type SymbolSample } from './fill/symbols';
 import { linesLike, traceLine } from './fill/trace';
-import { readSprinklerSheet, runsOf, sizeValue, type FittingKind, type HeadShape } from './fill/sprinkler';
-import { ceilingLabel, ceilingPlanKind, ceilingTypeFor, mergeDefs, readCeilingDefs, readCeilingSheet, type CeilingDef, type CeilingSheetRead } from './fill/ceilings';
 import { checkScale, type ScaleCheck } from './scaleCheck';
 import { sheetImage } from './sheetImage';
 import { compareSheets } from './compareSheets';
@@ -41,7 +39,7 @@ import { middleOf, roomLocator } from './locate';
 import { buildingOfDoc, buildingsOf, fileLabel, onBuilding, quantitySections, type QtyGrouping } from './buildings';
 import { isHosted, saveFile } from './host';
 import { defaultTypes, newId, newProject, type Kind, type Measurement, type Project, type Pt, type Sheet, type TakeoffType, type Units } from './model';
-import { inspectPage, openPdf, type PDFDocumentProxy, type PDFPageProxy } from './pdf';
+import { openPdf, type PDFDocumentProxy, type PDFPageProxy } from './pdf';
 import { measurementVars, primaryOf, primaryUnit, sheetRepeat, typeTotals, type TypeTotals } from './quantities';
 import { clearStarterTypes, deleteProject, listProjects, type ProjectSummary, loadActivity, loadCurrentProject, deletePdf, loadPdf, loadProjectById, loadStarterTypes, persistStorage, saveActivity, savePdf, saveProject, saveStarterTypes, setStorageHooks, getSyncMark, setSyncMark } from './storage';
 import { readProjectFiles, writeBackup, writeProjectFile } from './projectFile';
@@ -53,10 +51,18 @@ import { FolderSync, type PullResult } from './folderSync';
 import { linesIn, onSheet, readNumber, readTitle, relativeBox, type Box } from './sheetNumbers';
 import { SheetNumbersDialog, type SheetNumberRow } from './components/SheetNumbersDialog';
 import { SymbolCountDialog, type SymbolChoice } from './components/SymbolCountDialog';
-import { countSymbolsInSet, findLegends, legendSymbols, pickSymbol, symbolBoxAt, visibleInk, type SetSheet, type SymbolTally } from './fill/autoSymbols';
-import { formatQty, lengthUnit, parseScale, toLength } from './units';
+import { symbolBoxAt, visibleInk, type SymbolTally } from './fill/autoSymbols';
+import { formatQty, lengthUnit, toLength } from './units';
+import { sheetsOf } from './automate/sheets';
+import { PALETTE, type SetAccess } from './automate/set';
+import type { Automation } from './automate/result';
+import { automateSprinklers as sprinklerTakeoff } from './automate/sprinklers';
+import { automateCeilings as ceilingTakeoff } from './automate/ceilings';
+import { symbolTakeoff, symbolTallies as tallySymbols } from './automate/symbols';
+import { doorTakeoff, findDoorTagsIn } from './automate/doors';
+import { applyRooms } from './automate/rooms';
+import { applyWalls, wallLegendFor } from './automate/walls';
 
-const PALETTE = ['#0a84ff', '#ff9f0a', '#30d158', '#bf5af2', '#ff375f', '#64d2ff', '#ffd60a', '#ac8e68', '#5e5ce6', '#ff6961'];
 const UNDO_LIMIT = 200;
 
 interface Toast {
@@ -753,39 +759,8 @@ export function App() {
       const docId = newId();
       await savePdf(docId, data);
       const pdf = await openPdf(data);
-      const sheets: Sheet[] = [];
-      let noText = 0;
-      for (let n = 1; n <= pdf.numPages; n++) {
-        setBusy(`Reading ${file.name}: sheet ${n} of ${pdf.numPages}`);
-        const pg = await pdf.getPage(n);
-        const info = await inspectPage(pg);
-        // Named from the title block: its sheet number, with the drawing title beside it.
-        const named = info.textRuns >= 5 ? readTitleBlock(await pageTexts(pg), info.width, info.height) : { number: null, title: null };
-        if (info.textRuns < 5) noText++;
-        // A single standard scale on the sheet is applied automatically and flagged for checking;
-        // a sheet noting its scale in both systems (1:100 and 1/8" = 1'-0") gets the project's.
-        const inUnits = info.scaleHints.filter((h) => /^1:/.test(h) === (projectRef.current?.units === 'metric'));
-        let detected = info.scaleHints.length === 1 ? info.scaleHints[0] : inUnits.length === 1 ? inUnits[0] : null;
-        // No scale printed (a plan whose title gives none): the one its dimensions agree on.
-        if (!detected && !info.scaleHints.length && info.textRuns >= 20) {
-          const read = checkScale(await pageTexts(pg), await segmentsOnce(pg), projectRef.current?.units ?? 'metric');
-          if (read && read.agree >= 5) detected = read.label;
-        }
-        pg.cleanup();
-        sheets.push({
-          id: newId(),
-          docId,
-          page: n,
-          name: named.number ?? info.name ?? `Page ${n}`,
-          ...(named.title ? { title: named.title } : {}),
-          width: info.width,
-          height: info.height,
-          metersPerPoint: detected ? parseScale(detected) : null,
-          scaleLabel: detected,
-          scaleSource: detected ? 'detected' : null,
-          scaleHints: info.scaleHints,
-        });
-      }
+      // Named from the title blocks, scales read.
+      const { sheets, noText } = await sheetsOf(pdf, docId, projectRef.current?.units, (n, of) => setBusy(`Reading ${file.name}: sheet ${n} of ${of}`));
       setPdfs((m) => new Map(m).set(docId, pdf));
       commit((p) => ({ ...p, docs: [...p.docs, { id: docId, name: file.name }], sheets: [...p.sheets, ...sheets] }), 'Add drawings');
       setSheetId((cur) => cur ?? sheets[0]?.id ?? null);
@@ -1409,225 +1384,43 @@ export function App() {
     }
   }
 
-  /**
-   * Fire sprinklers, with nothing marked: on every sprinkler plan, the heads are found and
-   * counted by kind, the pipe is found, measured and sized from its labels, and its tees,
-   * crosses, elbows and capped ends are counted. Each head carries its drop or sprig, each pipe
-   * size its lengths, joints and hangers, so the quantities are the bill of materials.
-   * A re-run replaces what the last run made.
-   */
-  async function automateSprinklers() {
-    const p = projectRef.current!;
-    const metric = p.units === 'metric';
-    const plan = (x: Sheet) => {
-      const t = `${x.name} ${x.title ?? ''}`;
-      return /SPRINKLER|FIRE SUPPRESSION|FIRE PROTECTION/i.test(t) && !/DETAIL|RISER|NOTES|SCHEDULE|DIAGRAM|LEGEND/i.test(t);
+  /** The open drawings, as the automations read them. `keepOpen`: the open sheet's linework is kept for the tools. */
+  function setAccess(keepOpen = false): SetAccess {
+    return {
+      page: async (s) => (await pdfsRef.current.get(s.docId)?.getPage(s.page)) ?? null,
+      texts: sheetTexts,
+      segments: async (s) => {
+        const pg = await pdfsRef.current.get(s.docId)?.getPage(s.page);
+        return pg ? (keepOpen && s.id === sheet?.id ? segmentsOf(pg) : segmentsOnce(pg)) : null;
+      },
+      progress: (t) => setBusy(t),
     };
-    let targets = p.sheets.filter((x) => !x.superseded && plan(x));
-    if (!targets.length && sheet) targets = [sheet];
-    const unscaled = targets.filter((x) => !x.metersPerPoint);
-    targets = targets.filter((x) => x.metersPerPoint);
-    if (!targets.length) {
-      setToast({ text: unscaled.length ? 'Set the sprinkler sheets’ scale first.' : 'No sprinkler plans found.', undo: false });
-      return;
-    }
-    type Read = { sheet: Sheet; read: NonNullable<ReturnType<typeof readSprinklerSheet>> };
-    const reads: Read[] = [];
+  }
+
+  /** Runs a whole-set automation and adds what it found as one change. */
+  async function runAutomation(label: string, run: () => Promise<Automation>) {
+    let r: Automation;
     try {
-      for (const [i, x] of targets.entries()) {
-        setBusy(`Sprinklers: reading ${x.name} (${i + 1} of ${targets.length})…`);
-        await new Promise((r) => setTimeout(r, 0));
-        const pg = await pdfsRef.current.get(x.docId)?.getPage(x.page);
-        if (!pg) continue;
-        const [segs, texts] = await Promise.all([segmentsOnce(pg), sheetTexts(x)]);
-        const block = titleBlockBox(texts, x.width, x.height);
-        const read = readSprinklerSheet(segs, texts, x, block ? [block] : []);
-        if (read && read.network.pieces.length) reads.push({ sheet: x, read });
-      }
+      r = await run();
     } catch (e) {
       setToast({ text: `Something went wrong: ${e instanceof Error ? e.message : String(e)}`, undo: false });
       return;
     } finally {
       setBusy(null);
     }
-    if (!reads.length) {
-      setToast({ text: 'No sprinkler pipe found on the sprinkler plans.', undo: false });
+    if (!r.apply) {
+      setToast({ text: r.message, undo: false });
       return;
     }
-
-    // Types, found by name so a re-run fills the same ones.
-    const len = metric ? 'm' : 'ft';
-    const sizeName = (size: string | null) => (size ? (size.endsWith('"') ? size : `${size} mm`) : 'unsized');
-    const types: TakeoffType[] = [...p.types];
-    const made: TakeoffType[] = [];
-    let groupId = (p.groups ?? []).find((g) => g.name === 'Fire sprinklers')?.id;
-    const newGroup = groupId ? null : { id: newId(), name: 'Fire sprinklers' };
-    groupId ??= newGroup!.id;
-    const typeFor = (name: string, kind: TakeoffType['kind'], items: { name: string; unit: string; formula: string }[]) => {
-      const found = types.find((t) => t.name === name && t.kind === kind);
-      if (found) return found.id;
-      const t: TakeoffType = {
-        id: newId(),
-        name,
-        color: PALETTE[types.length % PALETTE.length],
-        kind,
-        height: 0,
-        // The estimator's workbook prices fire suppression in its mechanical tab.
-        division: '20-25 Mechanical',
-        package: 'Fire protection',
-        groupId,
-        items: items.map((it) => ({ id: newId(), ...it })),
-      };
-      types.push(t);
-      made.push(t);
-      return t.id;
-    };
-    const drop = metric ? { size: '25 mm', each: 0.6, sprig: 0.15 } : { size: '1"', each: 2, sprig: 0.5 };
-    const HEADS: Record<HeadShape, { name: string; drop: boolean }> = {
-      triangle: { name: 'Sprinkler head – sidewall (▲)', drop: true },
-      'circle with dot': { name: 'Sprinkler head – pendent (◉)', drop: true },
-      'open circle': { name: 'Sprinkler head – upright (○)', drop: false },
-      'circle with slash': { name: 'Sprinkler head – ⊘ (see legend)', drop: true },
-      other: { name: 'Sprinkler head – other', drop: true },
-    };
-    const headType = (shape: HeadShape) => {
-      const h = HEADS[shape];
-      return typeFor(h.name, 'count', [
-        { name: h.name.replace('Sprinkler head – ', 'Head, '), unit: 'ea', formula: 'N' },
-        h.drop
-          ? { name: `${drop.size} drop, ${drop.each} ${len} each`, unit: len, formula: `N * ${drop.each}` }
-          : { name: `${drop.size} sprig, ${drop.sprig} ${len} each`, unit: len, formula: `N * ${drop.sprig}` },
-        { name: 'Outlet fitting (reducer / tee)', unit: 'ea', formula: 'N' },
-        ...(h.drop ? [{ name: 'Escutcheon', unit: 'ea', formula: 'N' }] : []),
-      ]);
-    };
-    const pipeType = (size: string | null) => {
-      const small = size ? sizeValue(size) <= 32 : true;
-      const stick = metric ? 6.4 : 21;
-      const hanger = metric ? (small ? 3.7 : 4.6) : small ? 12 : 15;
-      return typeFor(`Sprinkler pipe ${sizeName(size)}`, 'linear', [
-        { name: `Pipe ${sizeName(size)}`, unit: len, formula: 'L' },
-        { name: `Pipe lengths (${stick} ${len})`, unit: 'ea', formula: `ceil(L / ${stick})` },
-        { name: 'Joints / couplings', unit: 'ea', formula: `ceil(L / ${stick})` },
-        { name: `Hangers (every ${hanger} ${len})`, unit: 'ea', formula: `ceil(L / ${hanger})` },
-      ]);
-    };
-    const FITTING: Record<FittingKind, string> = { tee: 'Tee', cross: 'Cross', elbow: 'Elbow', cap: 'Cap / plugged end' };
-    const fittingType = (kind: FittingKind, size: string | null) => {
-      const name = `${FITTING[kind]} ${sizeName(size)}`;
-      return typeFor(name, 'count', [{ name, unit: 'ea', formula: 'N' }]);
-    };
-
-    const added: Project['measurements'] = [];
-    const summary: string[] = [];
-    let heads = 0;
-    let metres = 0;
-    for (const { sheet: x, read } of reads) {
-      for (const g of read.heads) for (const at of g.at) added.push({ id: newId(), sheetId: x.id, typeId: headType(g.shape), points: [at], holes: [], source: 'sprinklers' });
-      for (const r of runsOf(read.network.pieces)) added.push({ id: newId(), sheetId: x.id, typeId: pipeType(r.size), points: r.points, holes: [], source: 'sprinklers' });
-      for (const f of read.network.fittings) added.push({ id: newId(), sheetId: x.id, typeId: fittingType(f.kind, f.size), points: [f.at], holes: [], source: 'sprinklers' });
-      const h = read.heads.reduce((n, g) => n + g.at.length, 0);
-      const m = read.network.pieces.reduce((n, q) => n + polylineLength([q.a, q.b]), 0) * x.metersPerPoint!;
-      heads += h;
-      metres += m;
-      summary.push(`${x.name} ${h} heads`);
-    }
-    const sheets = new Set(reads.map((r) => r.sheet.id));
-    commit(
-      (q) => ({
-        ...q,
-        groups: newGroup ? [...(q.groups ?? []), newGroup] : q.groups,
-        types: [...q.types, ...made],
-        measurements: [...q.measurements.filter((m) => !(m.source === 'sprinklers' && sheets.has(m.sheetId))), ...added],
-      }),
-      'Fire sprinklers',
-    );
-    setToast({
-      text: `Sprinklers on ${reads.length} sheet${reads.length === 1 ? '' : 's'}: ${heads} heads, ${formatQty(toLength(metres, p.units))} ${lengthUnit(p.units)} of pipe by size, fittings and drops${unscaled.length ? ` · ${unscaled.length} without a scale skipped` : ''}`,
-      undo: true,
-    });
+    commit(r.apply, label);
+    setToast({ text: r.message, undo: true });
   }
 
-  /**
-   * Ceilings, with nothing marked: on every reflected ceiling plan, each ceiling area by its
-   * ceiling type (the type tag in it, else the legend swatch its pattern matches, else what is
-   * drawn in it), one takeoff type per code named from the ceiling types table. A plan with no
-   * type tags takes the areas its grid covers: a demolition plan's are existing ceiling to take
-   * down, an existing plan's existing ceiling to take down and put back, any other's new T-bar.
-   * A re-run replaces what the last run made.
-   */
-  async function automateCeilings() {
-    const p = projectRef.current!;
-    const metric = p.units === 'metric';
-    const title = (x: Sheet) => `${x.name} ${x.title ?? ''}`;
-    let targets = p.sheets.filter((x) => !x.superseded && /REFLECTED CEILING|\bRCP\b|CEILING PLAN/i.test(title(x)));
-    if (!targets.length && sheet) targets = [sheet];
-    const unscaled = targets.filter((x) => !x.metersPerPoint);
-    targets = targets.filter((x) => x.metersPerPoint);
-    if (!targets.length) {
-      setToast({ text: unscaled.length ? 'Set the ceiling plans’ scale first.' : 'No reflected ceiling plans found.', undo: false });
-      return;
-    }
-    const found: { sheet: Sheet; read: CeilingSheetRead }[] = [];
-    let defs: CeilingDef[] = [];
-    try {
-      // Ceiling types described on an assembly or legend sheet, for naming the codes.
-      for (const x of p.sheets.filter((x) => !x.superseded && !targets.includes(x) && /ASSEMBL|CEILING|TYPES/i.test(title(x))))
-        defs = mergeDefs([...defs, ...readCeilingDefs(await sheetTexts(x)).defs]);
-      for (const [i, x] of targets.entries()) {
-        setBusy(`Ceilings: reading ${x.name} (${i + 1} of ${targets.length})…`);
-        await new Promise((r) => setTimeout(r, 0));
-        const pg = await pdfsRef.current.get(x.docId)?.getPage(x.page);
-        if (!pg) continue;
-        const [segs, texts] = await Promise.all([segmentsOnce(pg), sheetTexts(x)]);
-        const block = titleBlockBox(texts, x.width, x.height);
-        const read = readCeilingSheet(segs, texts, x, { defs, avoid: block ? [block] : [] });
-        defs = mergeDefs([...defs, ...read.defs]);
-        if (read.areas.length) found.push({ sheet: x, read });
-      }
-    } catch (e) {
-      setToast({ text: `Something went wrong: ${e instanceof Error ? e.message : String(e)}`, undo: false });
-      return;
-    } finally {
-      setBusy(null);
-    }
-    if (!found.length) {
-      setToast({ text: 'No ceilings found on the ceiling plans.', undo: false });
-      return;
-    }
-    const types: TakeoffType[] = [...p.types];
-    const made: TakeoffType[] = [];
-    const typeFor = (spec: ReturnType<typeof ceilingTypeFor>) => {
-      const got = types.find((t) => t.name === spec.name && t.kind === 'area');
-      if (got) return got.id;
-      const t: TakeoffType = { id: newId(), name: spec.name, color: PALETTE[types.length % PALETTE.length], kind: 'area', height: 0, division: spec.division, package: spec.package, description: spec.description, items: spec.items.map((it) => ({ id: newId(), ...it })) };
-      types.push(t);
-      made.push(t);
-      return t.id;
-    };
-    const added: Project['measurements'] = [];
-    let total = 0;
-    const codes = new Set<string>();
-    for (const { sheet: x, read } of found) {
-      const plan = ceilingPlanKind(title(x));
-      for (const a of read.areas) {
-        const typeId = typeFor(ceilingTypeFor(a, { tagged: read.tagged, defs }, plan, metric));
-        codes.add(typeId);
-        added.push({ id: newId(), sheetId: x.id, typeId, points: a.points, holes: a.holes, source: 'ceilings', label: ceilingLabel(a) });
-        total += a.area * x.metersPerPoint! ** 2;
-      }
-    }
-    const sheets = new Set(found.map((f) => f.sheet.id));
-    commit(
-      (q) => ({ ...q, types: [...q.types, ...made], measurements: [...q.measurements.filter((m) => !(m.source === 'ceilings' && sheets.has(m.sheetId))), ...added] }),
-      'Ceilings',
-    );
-    const tagged = found.reduce((n, f) => n + f.read.areas.filter((a) => a.source === 'tag').length, 0);
-    setToast({
-      text: `Ceilings on ${found.length} plan${found.length === 1 ? '' : 's'}: ${added.length} areas in ${codes.size} type${codes.size === 1 ? '' : 's'}${tagged ? ` (${tagged} by type tag)` : ''}, ${formatQty(metric ? total : total * 10.7639)} ${metric ? 'm²' : 'SF'}${unscaled.length ? ` · ${unscaled.length} without a scale skipped` : ''}`,
-      undo: true,
-    });
-  }
+  /** Fire sprinklers on every sprinkler plan (see `src/automate/sprinklers.ts`). */
+  const automateSprinklers = () => runAutomation('Fire sprinklers', () => sprinklerTakeoff(projectRef.current!, setAccess(), sheet));
+
+  /** Ceilings on every reflected ceiling plan (see `src/automate/ceilings.ts`). */
+  const automateCeilings = () => runAutomation('Ceilings', () => ceilingTakeoff(projectRef.current!, setAccess(), sheet));
 
   /** Counts every copy of the symbol in the box, as the active count type. */
   async function countSymbols(box: [number, number, number, number]) {
@@ -1672,61 +1465,11 @@ export function App() {
    * every sheet at its scale). The counts are shown before anything is added.
    */
   async function automateSymbols(picked?: { at: Pt; reach: number }) {
-    const p = projectRef.current!;
-    const set: (SetSheet & { sheet: Sheet })[] = p.sheets.filter((x) => !x.superseded).map((x) => ({ id: x.id, name: x.name, width: x.width, height: x.height, sheet: x }));
-    const byId = new Map(set.map((x) => [x.id, x]));
-    const segsOf = async (x: SetSheet) => {
-      const s = byId.get(x.id)!.sheet;
-      const pg = await pdfsRef.current.get(s.docId)?.getPage(s.page);
-      return pg ? (s.id === sheet?.id ? segmentsOf(pg) : segmentsOnce(pg)) : null;
-    };
+    if (picked && !sheet) return;
     try {
-      setBusy(picked ? 'Looking at this symbol…' : 'Finding legends…');
-      await new Promise((r) => setTimeout(r, 30));
-      let home: (typeof set)[number] | undefined;
-      let symbol = null;
-      if (picked) {
-        home = sheet ? byId.get(sheet.id) : undefined;
-        const segs = home && (await segsOf(home));
-        if (!home || !segs) return;
-        const texts = await sheetTexts(home.sheet);
-        // Named after the legend line it matches, when this sheet has one.
-        const block = titleBlockBox(texts, home.width, home.height);
-        const legends = findLegends(texts, segs, home.width, home.height, block ? [block] : []).flatMap((l) => legendSymbols(l, texts, segs));
-        symbol = pickSymbol(segs, texts, picked.at, legends, 60);
-        if (!symbol) {
-          setToast({ text: 'No symbol there. Click right on its linework.', undo: false });
-          return;
-        }
-      }
-      const tallies = await countSymbolsInSet(
-        set,
-        {
-          texts: (x) => sheetTexts(byId.get(x.id)!.sheet),
-          segments: segsOf,
-          exclude: (x, texts) => {
-            const b = titleBlockBox(texts, x.width, x.height);
-            return b ? [b] : [];
-          },
-          sameScale: async (x, from) => {
-            const a = byId.get(x.id)!.sheet;
-            const b = byId.get(from.id)!.sheet;
-            if (a.metersPerPoint && b.metersPerPoint) return Math.abs(a.metersPerPoint / b.metersPerPoint - 1) <= 0.01;
-            // Unscaled: the scale read from its dimensions, and nothing when there are none to read.
-            const want = b.metersPerPoint;
-            const segs = await segsOf(x);
-            const read = segs ? checkScale(await sheetTexts(a), segs, p.units) : null;
-            return !!want && !!read && read.agree >= 5 && Math.abs(read.metersPerPoint / want - 1) <= 0.02;
-          },
-          progress: (t) => setBusy(t),
-        },
-        symbol && home ? { symbol, home } : undefined,
-      );
-      if (!tallies.length) {
-        setToast({ text: 'No symbol legend found. Click a symbol on the sheet to count it on every sheet.', undo: false, action: page ? { label: 'Click a symbol', run: startSymbolPick } : undefined });
-        return;
-      }
-      setSymbolTallies(tallies);
+      const r = await tallySymbols(projectRef.current!, setAccess(true), picked && sheet ? { sheet, at: picked.at } : undefined);
+      if (r.tallies.length) setSymbolTallies(r.tallies);
+      else if (r.message) setToast({ text: r.message, undo: false, action: !picked && page ? { label: 'Click a symbol', run: startSymbolPick } : undefined });
     } catch (e) {
       setToast({ text: `Something went wrong: ${e instanceof Error ? e.message : String(e)}`, undo: false });
     } finally {
@@ -1762,30 +1505,10 @@ export function App() {
 
   /** Adds the symbols chosen as count types (a type of that name already there gets its symbol count replaced). */
   function addSymbolTypes(choices: SymbolChoice[]) {
-    const p = projectRef.current!;
-    const types: TakeoffType[] = [];
-    const ids = choices.map((c) => {
-      const got = p.types.find((t) => t.kind === 'count' && t.name === c.name) ?? types.find((t) => t.name === c.name);
-      if (got) return got.id;
-      const t: TakeoffType = {
-        id: newId(),
-        name: c.name,
-        color: PALETTE[(p.types.length + types.length) % PALETTE.length],
-        kind: 'count',
-        height: 0,
-        division: guessDivision(c.name),
-        items: [{ id: newId(), name: c.name, unit: 'ea', formula: 'N' }],
-      };
-      types.push(t);
-      return t.id;
-    });
-    const added: Project['measurements'] = choices.flatMap((c, i) =>
-      c.tally.places.flatMap((pl) => pl.at.map((at) => ({ id: newId(), sheetId: pl.sheetId, typeId: ids[i], points: [at], holes: [], source: 'symbols' as const }))),
-    );
-    const typeIds = new Set(ids);
-    commit((q) => ({ ...q, types: [...q.types, ...types], measurements: [...q.measurements.filter((m) => !(m.source === 'symbols' && typeIds.has(m.typeId))), ...added] }), 'Count symbols');
-    setActiveTypeId(ids[0]);
-    setToast({ text: `Counted ${added.length} symbol${added.length === 1 ? '' : 's'} as ${choices.length} type${choices.length === 1 ? '' : 's'}`, undo: true });
+    const r = symbolTakeoff(projectRef.current!, choices);
+    commit(r.apply!, 'Count symbols');
+    setActiveTypeId(r.typeIds[0]);
+    setToast({ text: r.message, undo: true });
   }
 
   /** Reads the legend boxed on the sheet into rows for the legend dialog. */
@@ -1952,85 +1675,21 @@ export function App() {
   /**
    * Counts door tags, named by their number; prefixed tags (S114A) by prefix. On every
    * sheet, a door number counts once in the project (enlarged plans repeat tags), on the
-   * first sheet it appears.
+   * first sheet it appears (see `src/automate/doors.ts`).
    */
   async function countDoorTags(everywhere = false) {
     if (!page || !sheet) return;
     setBusy('Finding door tags…');
     try {
       const p = projectRef.current!;
-      const found: { sheetId: string; tags: ReturnType<typeof findDoorTags> }[] = [];
-      const targets = everywhere ? p.sheets.filter((x) => !x.superseded || x.id === sheet.id) : [sheet];
-      for (const [i, x] of targets.entries()) {
-        if (everywhere) setBusy(`Finding door tags… sheet ${i + 1} of ${targets.length}`);
-        const pg = x.id === sheet.id ? page : await pdfsRef.current.get(x.docId)?.getPage(x.page);
-        if (!pg) continue;
-        const segs = x.id === sheet.id ? await segmentsOf(pg) : await segmentsOnce(pg);
-        const texts = await pageTexts(pg);
-        let tags = findDoorTags(texts, segs);
-        // Elevations and sections carry level markers (4000, 8570) in ovals that look like
-        // door tags. Door numbers follow the room numbers (door 113A by room 113), so only
-        // tags in the sheet's room-number range count; other sheets also need a plan's
-        // worth of them.
-        // (Lettered rooms, corridor A, have no number to go by.)
-        const rooms = findRoomLabels(texts, segs)
-          .map((r) => parseInt(r.number.replace(/^\D/, ''), 10))
-          .filter((n) => !Number.isNaN(n));
-        if (rooms.length) {
-          const [lo, hi] = [Math.min(...rooms) - 20, Math.max(...rooms) + 20];
-          // On the sheet being counted, doors numbered on their own (D001) are kept; only
-          // numbers well above the rooms' (level markers) go. Other sheets keep the range.
-          tags = tags.filter((d) => {
-            const n = parseInt(d.number.replace(/^\D/, ''), 10);
-            return x.id === sheet.id ? n <= hi : n >= lo && n <= hi;
-          });
-        }
-        if (x.id !== sheet.id && (!rooms.length || tags.length < 4)) continue;
-        found.push({ sheetId: x.id, tags });
-      }
-      const total = found.reduce((n, f) => n + f.tags.length, 0);
-      if (!total) {
-        setToast({ text: `No door tags on ${everywhere ? 'any sheet' : 'this sheet'}. A door tag is a door number in an oval, circle or hexagon.`, undo: false });
+      const r = doorTakeoff(p, await findDoorTagsIn(p, setAccess(true), sheet, everywhere), sheet, everywhere);
+      if (!r.apply) {
+        setToast({ text: r.message, undo: false });
         return;
       }
-      const newTypes: TakeoffType[] = [];
-      const typeFor = (prefix: string): string => {
-        const name = prefix ? `${prefix} – Openings tagged ${prefix}` : 'Doors';
-        const hit = [...p.types, ...newTypes].find((t) => t.kind === 'count' && (prefix ? t.name.split(' – ')[0] === prefix : /^doors?\b/i.test(t.name)));
-        if (hit) return hit.id;
-        const t: TakeoffType = {
-          id: newId(),
-          name,
-          color: PALETTE[(p.types.length + newTypes.length) % PALETTE.length],
-          kind: 'count',
-          height: p.units === 'metric' ? 3 : 10,
-          division: '08 Openings',
-          items: [{ id: newId(), name: prefix ? `Opening ${prefix}` : 'Door, frame & hardware', unit: 'ea', formula: 'N' }],
-        };
-        newTypes.push(t);
-        return t.id;
-      };
-      // Doors already counted under their number are left alone: on this sheet, or anywhere when counting every sheet.
-      const counted = new Set(p.measurements.filter((m) => m.label && (everywhere || m.sheetId === sheet.id)).map((m) => `${m.typeId}|${m.label}`));
-      const added = found.flatMap(({ sheetId, tags }) =>
-        tags.flatMap((d) => {
-          const typeId = typeFor(/^[A-Z]/.test(d.number) ? d.number[0] : '');
-          const key = `${typeId}|${d.number}`;
-          if (counted.has(key)) return [];
-          counted.add(key);
-          return [{ id: newId(), sheetId, typeId, points: [d.at], holes: [], label: d.number }];
-        }),
-      );
-      if (!added.length) {
-        setToast({ text: `All ${total} door tags ${everywhere ? 'on the drawings' : 'on this sheet'} are already counted.`, undo: false });
-        return;
-      }
-      const used = new Set(added.map((m) => m.typeId));
-      commit((q) => ({ ...q, types: [...q.types, ...newTypes.filter((t) => used.has(t.id))], measurements: [...q.measurements, ...added] }), 'Door tags');
-      const byType = [...used].map((id) => `${added.filter((m) => m.typeId === id).length} ${([...p.types, ...newTypes].find((t) => t.id === id)?.name ?? '').split(' – ')[0]}`);
-      const sheets = new Set(added.map((m) => m.sheetId)).size;
+      commit(r.apply, 'Door tags');
       setToast({
-        text: `Counted ${byType.join(', ')}${everywhere ? ` on ${sheets} sheet${sheets === 1 ? '' : 's'}` : ''}`,
+        text: r.message,
         undo: true,
         action: !everywhere && p.sheets.length > 1 ? { label: 'Count on all sheets', run: () => void countDoorTags(true) } : undefined,
       });
@@ -3389,20 +3048,9 @@ export function App() {
           earlier={project.measurements.filter((m) => m.sheetId === sheet.id && m.source === 'walls').length}
           palette={PALETTE}
           // This drawing file's schedules first: another building's WE1 may be a different wall.
-          legend={[...project.sheets.filter((s) => s.docId === sheet.docId), ...project.sheets.filter((s) => s.docId !== sheet.docId)].flatMap((s) => s.aiAssemblies?.assemblies ?? [])}
+          legend={wallLegendFor(project, sheet)}
           maxOpening={maxOpening}
-          onApply={({ types, measurements, replaceEarlier, stopsAtDoors }) =>
-            commit(
-              (p) => ({
-                ...p,
-                types: [...p.types, ...types].map((t) =>
-                  stopsAtDoors.has(t.id) && (t.stopsAtDoors ?? false) !== stopsAtDoors.get(t.id) ? { ...t, stopsAtDoors: stopsAtDoors.get(t.id) } : t,
-                ),
-                measurements: [...p.measurements.filter((m) => !(replaceEarlier && m.sheetId === sheet.id && m.source === 'walls')), ...measurements],
-              }),
-              'Wall takeoff',
-            )
-          }
+          onApply={(r) => commit(applyWalls(sheet.id, r), 'Wall takeoff')}
           onClose={() => setAiDialog(null)}
         />
       )}
@@ -3415,16 +3063,7 @@ export function App() {
           earlier={project.measurements.filter((m) => m.sheetId === sheet.id && m.source === 'rooms').length}
           palette={PALETTE}
           maxOpening={maxOpening}
-          onApply={({ types, measurements, replaceEarlier }) =>
-            commit(
-              (p) => ({
-                ...p,
-                types: [...p.types, ...types],
-                measurements: [...p.measurements.filter((m) => !(replaceEarlier && m.sheetId === sheet.id && m.source === 'rooms')), ...measurements],
-              }),
-              'Room takeoff',
-            )
-          }
+          onApply={(r) => commit(applyRooms(sheet.id, r), 'Room takeoff')}
           onClose={() => setAiDialog(null)}
         />
       )}
