@@ -373,26 +373,54 @@ function sampleShapes(sample: SymbolSample) {
   );
 }
 
-const gridCache = new WeakMap<Segment[], Map<string, Segment[]>>();
 const GRID = 16;
-/** Sheet segments drawn wholly inside a box. */
-function segsIn(segs: Segment[], [x0, y0, x1, y1]: Box): Segment[] {
-  let grid = gridCache.get(segs);
-  if (!grid) {
-    grid = new Map();
-    for (const s of segs) {
-      const k = `${Math.floor(s.x1 / GRID)},${Math.floor(s.y1 / GRID)}`;
-      const list = grid.get(k);
-      if (list) list.push(s);
-      else grid.set(k, [s]);
-    }
-    gridCache.set(segs, grid);
+/** A sheet's segments by the grid cell each starts in and each ends in, for footprint lookups. */
+interface EndIndex {
+  starts: Map<number, number[]>;
+  ends: Map<number, number[]>;
+  ci: Int32Array;
+  cj: Int32Array;
+}
+const endCache = new WeakMap<Segment[], EndIndex>();
+const cellKey = (i: number, j: number) => (i + 65536) * 131072 + (j + 65536);
+function endIndex(segs: Segment[]): EndIndex {
+  let ix = endCache.get(segs);
+  if (ix) return ix;
+  ix = { starts: new Map(), ends: new Map(), ci: new Int32Array(segs.length), cj: new Int32Array(segs.length) };
+  const add = (m: Map<number, number[]>, k: number, i: number) => {
+    const list = m.get(k);
+    if (list) list.push(i);
+    else m.set(k, [i]);
+  };
+  for (let i = 0; i < segs.length; i++) {
+    const s = segs[i];
+    ix.ci[i] = Math.floor(s.x1 / GRID);
+    ix.cj[i] = Math.floor(s.y1 / GRID);
+    add(ix.starts, cellKey(ix.ci[i], ix.cj[i]), i);
+    add(ix.ends, cellKey(Math.floor(s.x2 / GRID), Math.floor(s.y2 / GRID)), i);
   }
-  const out: Segment[] = [];
-  for (let i = Math.floor(x0 / GRID); i <= Math.floor(x1 / GRID); i++)
-    for (let j = Math.floor(y0 / GRID); j <= Math.floor(y1 / GRID); j++)
-      for (const s of grid.get(`${i},${j}`) ?? []) if (s.x1 >= x0 && s.x1 <= x1 && s.y1 >= y0 && s.y1 <= y1 && s.x2 >= x0 && s.x2 <= x1 && s.y2 >= y0 && s.y2 <= y1) out.push(s);
-  return out;
+  endCache.set(segs, ix);
+  return ix;
+}
+
+/**
+ * The segments drawn wholly inside `box` with an end on `foot` (a box inside it), by the grid cell
+ * they start in (column by column), then as drawn: only the cells under the footprint are looked in.
+ */
+function footSegs(segs: Segment[], box: Box, foot: Box): Segment[] {
+  const ix = endIndex(segs);
+  const onFoot = (x: number, y: number) => x >= foot[0] && x <= foot[2] && y >= foot[1] && y <= foot[3];
+  const within = (s: Segment) => s.x1 >= box[0] && s.x1 <= box[2] && s.y1 >= box[1] && s.y1 <= box[3] && s.x2 >= box[0] && s.x2 <= box[2] && s.y2 >= box[1] && s.y2 <= box[3];
+  const got: number[] = [];
+  const [i0, i1, j0, j1] = [Math.floor(foot[0] / GRID), Math.floor(foot[2] / GRID), Math.floor(foot[1] / GRID), Math.floor(foot[3] / GRID)];
+  for (let i = i0; i <= i1; i++)
+    for (let j = j0; j <= j1; j++) {
+      for (const n of ix.starts.get(cellKey(i, j)) ?? []) if (onFoot(segs[n].x1, segs[n].y1) && within(segs[n])) got.push(n);
+      // Ending on the footprint, started off it (those started on it are in already).
+      for (const n of ix.ends.get(cellKey(i, j)) ?? []) if (!onFoot(segs[n].x1, segs[n].y1) && onFoot(segs[n].x2, segs[n].y2) && within(segs[n])) got.push(n);
+    }
+  got.sort((m, n) => ix.ci[m] - ix.ci[n] || ix.cj[m] - ix.cj[n] || m - n);
+  return got.map((n) => segs[n]);
 }
 
 /** Turns a point the matcher's way: quarter turns 0–3, 4–7 mirrored first. */
@@ -431,6 +459,18 @@ function clipT(ax: number, ay: number, bx: number, by: number, [x0, y0, x1, y1]:
   return t0 < t1 ? [t0, t1] : null;
 }
 
+/** A sample's extent and finest stroke, worked out once per sample. */
+const boundsCache = new WeakMap<readonly SymbolLine[], { x0: number; x1: number; y0: number; y1: number; fine: number }>();
+function sampleBounds(sample: readonly SymbolLine[]) {
+  const xs = sample.flatMap((l) => [l.x1, l.x2]);
+  const ys = sample.flatMap((l) => [l.y1, l.y2]);
+  // Hatching behind it (stipple, a fine-pen pattern) is not part of it.
+  const strokes = sample.filter((l) => !l.filled && l.width > 0).map((l) => l.width);
+  const b = { x0: Math.min(...xs), x1: Math.max(...xs), y0: Math.min(...ys), y1: Math.max(...ys), fine: strokes.length ? Math.min(...strokes) / 2 : 0 };
+  boundsCache.set(sample, b);
+  return b;
+}
+
 /** Grid cells across a symbol when comparing drawings: fine enough to tell ◐ from ◒, coarse enough that a legend drawn a little differently from the plan's blocks still matches. */
 const LOOK_CELLS = 14;
 /** A copy must look this much like the sample (each drawing's ink found in the other). */
@@ -441,15 +481,10 @@ export const LOOK = 0.8;
  * the sample (0–1). Only linework wholly inside the symbol's footprint counts: a grid line or
  * wall running through is not part of it.
  */
-export function copyLooks(segs: Segment[], sample: readonly SymbolLine[], at: Pt, turn: number, size = 1): { score: number; matched: number } {
-  const xs = sample.flatMap((l) => [l.x1, l.x2]);
-  const ys = sample.flatMap((l) => [l.y1, l.y2]);
-  const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
+export function copyLooks(segs: Segment[], sample: readonly SymbolLine[], at: Pt, turn: number, size = 1, min = 0): { score: number; matched: number } {
+  const { x0, x1, y0, y1, fine } = boundsCache.get(sample) ?? sampleBounds(sample);
   const pad = Math.max(x1 - x0, y1 - y0) / LOOK_CELLS + 0.3;
   const r = (Math.max(Math.abs(x0), Math.abs(x1), Math.abs(y0), Math.abs(y1)) + pad) * size;
-  // Hatching behind it (stipple, a fine-pen pattern) is not part of it.
-  const strokes = sample.filter((l) => !l.filled && l.width > 0).map((l) => l.width);
-  const fine = strokes.length ? Math.min(...strokes) / 2 : 0;
   const copy: LookLine[] = [];
   const box: Box = [x0 - pad, y0 - pad, x1 + pad, y1 + pad];
   const inside = (x: number, y: number) => x >= box[0] && x <= box[2] && y >= box[1] && y <= box[3];
@@ -458,7 +493,14 @@ export function copyLooks(segs: Segment[], sample: readonly SymbolLine[], at: Pt
   // that only runs into the footprint, is not part of it.
   const reachOut = r + Math.max(x1 - x0, y1 - y0) * size;
   const attached: number[][] = [];
-  for (const s of segsIn(segs, [at[0] - reachOut, at[1] - reachOut, at[0] + reachOut, at[1] + reachOut])) {
+  // The footprint on the sheet (quarter turns keep it square to the sheet), a hair bigger: a line
+  // with neither end on it is neither part of the copy nor attached to it.
+  const [c0x, c0y] = turnPt(box[0] * size, box[1] * size, turn);
+  const [c1x, c1y] = turnPt(box[2] * size, box[3] * size, turn);
+  const e = 1e-6 * (1 + reachOut);
+  const [fx0, fx1] = [at[0] + Math.min(c0x, c1x) - e, at[0] + Math.max(c0x, c1x) + e];
+  const [fy0, fy1] = [at[1] + Math.min(c0y, c1y) - e, at[1] + Math.max(c0y, c1y) + e];
+  for (const s of footSegs(segs, [at[0] - reachOut, at[1] - reachOut, at[0] + reachOut, at[1] + reachOut], [fx0, fy0, fx1, fy1])) {
     if (!s.filled && s.width < fine) continue;
     if (segLen(s) < 0.4 * size) continue;
     const [ax, ay] = unturn((s.x1 - at[0]) / size, (s.y1 - at[1]) / size, turn);
@@ -508,7 +550,7 @@ export function copyLooks(segs: Segment[], sample: readonly SymbolLine[], at: Pt
     if (Math.hypot(fx2 - fx1, fy2 - fy1) <= span && on.width !== undefined && Math.abs(on.width - w / size) <= 0.05 + on.width * 0.1)
       beyond.push({ x1: fx1, y1: fy1, x2: fx2, y2: fy2 });
   }
-  const r2 = look(sample as readonly LookLine[] as LookLine[], copy, LOOK_CELLS, beyond);
+  const r2 = look(sample as readonly LookLine[] as LookLine[], copy, LOOK_CELLS, beyond, min);
   return { score: r2.score, matched: r2.matched * size * size };
 }
 
@@ -565,7 +607,8 @@ export function findLookalikes(sample: SymbolSample, segs: Segment[], minLook = 
         if (!(size >= lo && size <= hi)) continue;
         const [ox, oy] = turnPt(main.cx * size, main.cy * size, turn);
         const at: Pt = [c.cx - ox, c.cy - oy];
-        const { score, matched } = copyLooks(ink, sample.lines, at, turn, size);
+        // Below the likeness wanted (or the best this shape already has) is no use: let it go early.
+        const { score, matched } = copyLooks(ink, sample.lines, at, turn, size, best ? Math.max(minLook, best.score) : minLook);
         if (score >= minLook && (!best || score > best.score)) best = { at, size, score, turn, matched };
       }
     }

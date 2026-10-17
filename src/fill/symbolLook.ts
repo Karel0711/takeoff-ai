@@ -28,16 +28,18 @@ export function inkCells(lines: LookLine[], box: Box, cell: number): { cells: Ui
   const cells = new Uint8Array(nx * ny);
   /** The insides of filled shapes alone. */
   const fill = new Uint8Array(nx * ny);
-  const mark = (x: number, y: number) => {
-    const i = Math.floor((x - box[0]) / cell);
-    const j = Math.floor((y - box[1]) / cell);
-    if (i >= 0 && j >= 0 && i < nx && j < ny) cells[j * nx + i] = 1;
-  };
   const fills = new Map<number, LookLine[]>();
   const groups = new Map<number, LookLine[]>();
+  const [bx, by] = [box[0], box[1]];
   for (const l of lines) {
     const n = Math.max(1, Math.ceil(Math.hypot(l.x2 - l.x1, l.y2 - l.y1) / (cell / 3)));
-    for (let k = 0; k <= n; k++) mark(l.x1 + ((l.x2 - l.x1) * k) / n, l.y1 + ((l.y2 - l.y1) * k) / n);
+    const [dx, dy] = [l.x2 - l.x1, l.y2 - l.y1];
+    // Points along the line, each inking its cell (as `mark`, written out: this runs for every line of every copy looked at).
+    for (let k = 0; k <= n; k++) {
+      const i = Math.floor((l.x1 + (dx * k) / n - bx) / cell);
+      const j = Math.floor((l.y1 + (dy * k) / n - by) / cell);
+      if (i >= 0 && j >= 0 && i < nx && j < ny) cells[j * nx + i] = 1;
+    }
     if (l.group !== undefined && !l.filled) {
       const list = groups.get(l.group);
       if (list) list.push(l);
@@ -64,15 +66,21 @@ export function inkCells(lines: LookLine[], box: Box, cell: number): { cells: Ui
     const x1 = Math.max(...shape.map((l) => Math.max(l.x1, l.x2)));
     const y0 = Math.min(...shape.map((l) => Math.min(l.y1, l.y2)));
     const y1 = Math.max(...shape.map((l) => Math.max(l.y1, l.y2)));
-    for (let j = Math.max(0, Math.floor((y0 - box[1]) / cell)); j <= Math.min(ny - 1, Math.floor((y1 - box[1]) / cell)); j++)
+    for (let j = Math.max(0, Math.floor((y0 - box[1]) / cell)); j <= Math.min(ny - 1, Math.floor((y1 - box[1]) / cell)); j++) {
+      const py = box[1] + (j + 0.5) * cell;
+      // Even-odd: a point is inside when a ray from it crosses the outline an odd number of times.
+      // Where the outline crosses this row, once per row; then along it, the crossings still ahead.
+      const xs: number[] = [];
+      for (const l of shape) if (l.y1 > py !== l.y2 > py) xs.push(l.x1 + ((py - l.y1) * (l.x2 - l.x1)) / (l.y2 - l.y1));
+      if (!xs.length) continue;
+      xs.sort((a, b) => a - b);
+      let passed = 0;
       for (let i = Math.max(0, Math.floor((x0 - box[0]) / cell)); i <= Math.min(nx - 1, Math.floor((x1 - box[0]) / cell)); i++) {
         const px = box[0] + (i + 0.5) * cell;
-        const py = box[1] + (j + 0.5) * cell;
-        // Even-odd: a point is inside when a ray from it crosses the outline an odd number of times.
-        let inside = false;
-        for (const l of shape) if (l.y1 > py !== l.y2 > py && px < l.x1 + ((py - l.y1) * (l.x2 - l.x1)) / (l.y2 - l.y1)) inside = !inside;
-        if (inside) cells[j * nx + i] = fill[j * nx + i] = 1;
+        while (passed < xs.length && xs[passed] <= px) passed++;
+        if ((xs.length - passed) % 2 === 1) cells[j * nx + i] = fill[j * nx + i] = 1;
       }
+    }
   }
   return { cells, fill, nx, ny };
 }
@@ -109,13 +117,21 @@ export function lookScore(sample: LookLine[], copy: LookLine[], cells = 20): num
   return look(sample, copy, cells).score;
 }
 
-/**
- * The same, with how much of the copy's drawing the sample accounts for (in the sample's units
- * squared). `beyond` are short lines running on from the copy out of its footprint (a sconce's
- * stem round a pot light's place): parts the sample would need to have.
- */
-export function look(sample: LookLine[], copy: LookLine[], cells = 20, beyond: LookLine[] = []): { score: number; matched: number } {
-  if (!sample.length || !copy.length) return { score: 0, matched: 0 };
+/** What `look` needs of a sample, worked out once per sample (it is compared at thousands of places). */
+interface SampleFrame {
+  span: number;
+  box: Box;
+  cell: number;
+  ink: ReturnType<typeof inkCells>;
+  solid: number;
+  parts: Part[];
+}
+const frames = new WeakMap<readonly LookLine[], Map<number, SampleFrame>>();
+function frameOf(sample: LookLine[], cells: number): SampleFrame {
+  let byCells = frames.get(sample);
+  if (!byCells) frames.set(sample, (byCells = new Map()));
+  let f = byCells.get(cells);
+  if (f) return f;
   const xs = sample.flatMap((l) => [l.x1, l.x2]);
   const ys = sample.flatMap((l) => [l.y1, l.y2]);
   const span = Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys), 0.5);
@@ -124,17 +140,39 @@ export function look(sample: LookLine[], copy: LookLine[], cells = 20, beyond: L
   // Fine enough across a long thin symbol's short side too: a slash across a 1x4 box is not its outline.
   const short = Math.min(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys));
   const cell = Math.max(0.12, span / (cells * 3), Math.min(span / cells, short / 12));
-  const a = inkCells(sample, box, cell);
+  const ink = inkCells(sample, box, cell);
+  f = { span, box, cell, ink, solid: ink.fill.reduce((n, v) => n + v, 0), parts: partsOf(sample) };
+  byCells.set(cells, f);
+  return f;
+}
+
+/**
+ * The same, with how much of the copy's drawing the sample accounts for (in the sample's units
+ * squared). `beyond` are short lines running on from the copy out of its footprint (a sconce's
+ * stem round a pot light's place): parts the sample would need to have. Given `min`, a copy is
+ * let go as soon as it is sure to score under it (its score then is only known to be under
+ * `min`, and `matched` is not worked out).
+ */
+export function look(sample: LookLine[], copy: LookLine[], cells = 20, beyond: LookLine[] = [], min = 0): { score: number; matched: number } {
+  if (!sample.length || !copy.length) return { score: 0, matched: 0 };
+  const { span, box, cell, ink: a, solid: solidA, parts } = frameOf(sample, cells);
   const b = inkCells(copy, box, cell);
   const back = coveredCount(b.cells, a.cells, a.nx, a.ny);
+  if (back.share < min) return { score: back.share, matched: 0 };
   let score = Math.min(covered(a.cells, b.cells, a.nx, a.ny), back.share);
+  if (score < min) return { score, matched: 0 };
   const matched = back.hit * cell * cell;
   // Solid parts compared on their own: outlines alike, a half-filled circle is still not a quartered one.
-  const solid = (f: Uint8Array) => f.reduce((n, v) => n + v, 0);
-  if (solid(a.fill) >= 3 || solid(b.fill) >= 3) score = Math.min(score, covered(a.fill, b.fill, a.nx, a.ny), covered(b.fill, a.fill, a.nx, a.ny));
+  const solid = (f: Uint8Array) => {
+    let n = 0;
+    for (let i = 0; i < f.length; i++) n += f[i];
+    return n;
+  };
+  if (solidA >= 3 || solid(b.fill) >= 3) score = Math.min(score, covered(a.fill, b.fill, a.nx, a.ny), covered(b.fill, a.fill, a.nx, a.ny));
+  if (score < min) return { score, matched };
   // Every part drawn, both ways: a small part (a sconce's stem, the slash of a night light) is
   // little of the ink but all of the difference.
-  if (!partsAlike(sample, [...copy, ...beyond], span)) score = Math.min(score, 0.5);
+  if (!alikeParts(parts, partsOf([...copy, ...beyond]), span)) score = Math.min(score, 0.5);
   return { score, matched };
 }
 
@@ -185,10 +223,15 @@ function partsOf(lines: LookLine[]): Part[] {
   const size = new Map<number, number>();
   for (const l of lines) if (l.group !== undefined) size.set(l.group, (size.get(l.group) ?? 0) + 1);
   const loose = (i: number) => lines[i].group === undefined || size.get(lines[i].group!) === 1;
+  // Every loose line ending in a cell joins every loose line ending in it or a cell beside it: all
+  // of those are one part, so each joins the first of the cell's (pair by pair would be the same
+  // parts, at the square of the work on a busy drawing).
   for (const [k, list] of ends) {
+    const first = list.find(loose);
+    if (first === undefined) continue;
     const [gx, gy] = k.split(',').map(Number);
     for (let dx = -1; dx <= 1; dx++)
-      for (let dy = -1; dy <= 1; dy++) for (const j of ends.get(`${gx + dx},${gy + dy}`) ?? []) for (const i of list) if (i !== j && loose(i) && loose(j)) join(i, j);
+      for (let dy = -1; dy <= 1; dy++) for (const j of ends.get(`${gx + dx},${gy + dy}`) ?? []) if (j !== first && loose(j)) join(j, first);
   }
   const groups = new Map<number, LookLine[]>();
   lines.forEach((l, i) => {
@@ -221,8 +264,10 @@ function partsOf(lines: LookLine[]): Part[] {
  * ticks), so sizes and places are loose; a part missing or extra is not.
  */
 export function partsAlike(a: LookLine[], b: LookLine[], span: number): boolean {
-  const pa = partsOf(a);
-  const pb = partsOf(b);
+  return alikeParts(partsOf(a), partsOf(b), span);
+}
+
+function alikeParts(pa: Part[], pb: Part[], span: number): boolean {
   const total = pa.reduce((n, p) => n + p.length, 0);
   // Specks (a dot of hatching, a sliver) are too little to go on.
   const counts = (p: Part) => p.length >= total * 0.04 && Math.max(p.w, p.h) >= span * 0.1;
