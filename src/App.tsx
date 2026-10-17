@@ -3070,6 +3070,8 @@ export function App() {
       {aiDialog === 'rooms' && page && sheet && (
         <RoomsDialog
           page={page}
+          doc={pdfs.get(sheet.docId)}
+          others={[...pdfs.values()]}
           sheet={sheet}
           units={project.units}
           types={project.types}
