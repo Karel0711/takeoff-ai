@@ -608,6 +608,26 @@ export function hatchFamilies(segs: Segment[], minSpacing: number, maxSpacing = 
     if (list) list.push(sg);
     else byKey.set(key, [sg]);
   }
+  // Edges of filled shapes that are not white masks: walls drawn as fills.
+  const fills = segs.filter((sg) => (sg.filled || sg.width === 0) && !/^#f{6}$/i.test(sg.color ?? '') && Math.hypot(sg.x2 - sg.x1, sg.y2 - sg.y1) >= 2);
+  let fillIndex: SegmentIndex | null = null;
+  const onFill = (m: Segment) => {
+    if (!fills.length || m.filled || m.width === 0) return false;
+    fillIndex ??= new SegmentIndex(fills, 32);
+    const L = Math.hypot(m.x2 - m.x1, m.y2 - m.y1);
+    const ux = (m.x2 - m.x1) / L;
+    const uy = (m.y2 - m.y1) / L;
+    let along = 0;
+    for (const k of fillIndex.query(Math.min(m.x1, m.x2) - 0.5, Math.min(m.y1, m.y2) - 0.5, Math.max(m.x1, m.x2) + 0.5, Math.max(m.y1, m.y2) + 0.5)) {
+      const f = fills[k];
+      const off = (x: number, y: number) => Math.abs((x - m.x1) * uy - (y - m.y1) * ux);
+      if (off(f.x1, f.y1) > 0.4 || off(f.x2, f.y2) > 0.4) continue;
+      const t1 = (f.x1 - m.x1) * ux + (f.y1 - m.y1) * uy;
+      const t2 = (f.x2 - m.x1) * ux + (f.y2 - m.y1) * uy;
+      along += Math.max(0, Math.min(L, Math.max(t1, t2)) - Math.max(0, Math.min(t1, t2)));
+    }
+    return along >= 0.5 * L;
+  };
   const lines = new Map<Segment, string>();
   const spacing = new Map<string, number>();
   const spacings = new Map<string, number[]>();
@@ -678,14 +698,26 @@ export function hatchFamilies(segs: Segment[], minSpacing: number, maxSpacing = 
     // A ceiling grid's cells are tiles, never as small as a wall is thick.
     if (gridded) {
       // A grid: its lines are crossed by (or meet) the lines across it on both sides; an
-      // outline round the grid is met from one side only. In the walls' pen, where walls lying
-      // evenly spaced meet each other's faces at tees from either side, a grid line is crossed
-      // straight through at two nodes at least (lines drawn cell by cell meet end to end there).
+      // outline round the grid is met from one side only.
       const index = new SegmentIndex(across, 32);
-      const wallPen = wallPens.includes(key.slice(1, key.indexOf(' ')));
-      keep = (i) => {
-        if (!inRun(i)) return false;
-        const { m, lo, hi } = items[i];
+      // Whether a line is met from both sides.
+      const metBoth = ({ m, lo, hi }: (typeof items)[number]) => {
+        const nx = -uy;
+        const ny = ux;
+        const sides: { a: boolean; b: boolean }[] = [];
+        for (const k of index.query(Math.min(m.x1, m.x2) - 1, Math.min(m.y1, m.y2) - 1, Math.max(m.x1, m.x2) + 1, Math.max(m.y1, m.y2) + 1)) {
+          const q = across[k];
+          const d1 = (q.x1 - m.x1) * nx + (q.y1 - m.y1) * ny;
+          const d2 = (q.x2 - m.x1) * nx + (q.y2 - m.y1) * ny;
+          if (Math.min(d1, d2) > 0.6 || Math.max(d1, d2) < -0.6) continue;
+          const t = ((q.x1 + q.x2) / 2) * ux + ((q.y1 + q.y2) / 2) * uy;
+          if (t < lo - 0.6 || t > hi + 0.6) continue;
+          sides.push({ a: Math.max(d1, d2) > 0.6, b: Math.min(d1, d2) < -0.6 });
+        }
+        return sides.some((x) => x.a) && sides.some((x) => x.b);
+      };
+      // The nodes where a line is crossed straight through.
+      const crossedThrough = ({ m, lo, hi }: (typeof items)[number]) => {
         const nx = -uy;
         const ny = ux;
         const sides: { t: number; a: boolean; b: boolean }[] = [];
@@ -698,8 +730,6 @@ export function hatchFamilies(segs: Segment[], minSpacing: number, maxSpacing = 
           if (t < lo - 0.6 || t > hi + 0.6) continue;
           sides.push({ t, a: Math.max(d1, d2) > 0.6, b: Math.min(d1, d2) < -0.6 });
         }
-        // Off the wall pens, met from both sides anywhere along it will do.
-        if (!wallPen && sides.some((x) => x.a) && sides.some((x) => x.b)) return true;
         sides.sort((p, q) => p.t - q.t);
         let through = 0;
         for (let s = 0; s < sides.length; ) {
@@ -713,8 +743,15 @@ export function hatchFamilies(segs: Segment[], minSpacing: number, maxSpacing = 
           if (a && b) through++;
           s = e;
         }
-        return through >= 2;
+        return through;
       };
+      // A wall's face drawn along the edge of its fill (walls filled grey or black, poché) is
+      // no grid line, however evenly the walls happen to lie.
+      // In the walls' own pen, where walls lying evenly spaced meet each other's faces at tees
+      // from either side, a grid line is crossed straight through at two nodes at least (lines
+      // drawn cell by cell meet end to end there).
+      const wallPen = wallPens.includes(key.slice(1, key.indexOf(' ')));
+      keep = (i) => inRun(i) && !onFill(items[i].m) && (wallPen ? crossedThrough(items[i]) >= 2 : metBoth(items[i]));
     } else {
       // A hatch one way: a pen that draws mostly hatch (a pen of walls or outlines, a few of
       // them happening to lie evenly spaced, keeps them).
@@ -1020,13 +1057,31 @@ export function readCeilingSheet(
     (dotKeysIn.get(id) ?? dotKeysIn.set(id, new Set()).get(id)!).add(m.key);
   }
   const areaPt = (id: number) => faces.pixels[id] / res ** 2;
+  // How much of each face its stipple spreads over: of the squares (two dots' spacing a side)
+  // whose middle lies in the face, the share holding a dot. A room with stippled bulkheads
+  // round an open middle is not a stippled ceiling.
+  const cell = 2 / Math.sqrt(0.006);
+  const cols = Math.ceil(W / cell);
+  const rows = Math.ceil(H / cell);
+  const dottedCell = new Uint8Array(cols * rows);
+  for (const m of marks) if (stippleDot.has(m) && stippleKeys.has(m.key)) dottedCell[Math.min(rows - 1, Math.floor(m.cy / cell)) * cols + Math.min(cols - 1, Math.floor(m.cx / cell))] = 1;
+  const cellsIn = new Float64Array(n);
+  const dottedIn = new Float64Array(n);
+  for (let r = 0; r < rows; r++)
+    for (let c = 0; c < cols; c++) {
+      const id = faceAt((c + 0.5) * cell, (r + 0.5) * cell);
+      if (id < 0) continue;
+      cellsIn[id]++;
+      if (dottedCell[r * cols + c]) dottedIn[id]++;
+    }
+  const spread = (id: number) => (cellsIn[id] < 6 ? 1 : dottedIn[id] / cellsIn[id]);
   const kindOf = (id: number): { kind: CeilingKind; keys: string[] } => {
     const A = areaPt(id);
     const cover = [...hatchCover].map(([k, arr]) => [k, arr[id] / A] as const).filter(([, c]) => c >= 0.25);
     const dirs = new Set(cover.map(([k]) => k));
     const total = cover.reduce((s, [, c]) => s + c, 0);
     // Stipple laid over a grid is the stipple's finish (a gypsum ceiling in a gridded room).
-    if (dots[id] >= 12 && dots[id] / A >= 0.006) return { kind: 'stipple', keys: [...(dotKeysIn.get(id) ?? [])] };
+    if (dots[id] >= 12 && dots[id] / A >= 0.006 && spread(id) >= 0.35) return { kind: 'stipple', keys: [...(dotKeysIn.get(id) ?? [])] };
     // A lay-in grid's cells are tiles (600 to 1200 or so each way); boards or planks laid on
     // purlins draw two families too, one of them much closer.
     const tile = (k: string) => {
@@ -1148,8 +1203,19 @@ export function readCeilingSheet(
       if (votes.size) break;
     }
     // A tag drawn over a light fixture or a diffuser types the room round it, not the fixture.
+    // (A fixture is an island in the room: the room all round it, not a stair's treads or a
+    // closet the tag sits in.)
     const fixture = pt(1.6, 40) ** 2;
-    if ([...votes.keys()].some((id) => areaPt(id) >= fixture)) for (const id of [...votes.keys()]) if (areaPt(id) < fixture) votes.delete(id);
+    const islandIn = (small: number, big: number) => {
+      const [x0, y0, x1, y1] = [0, 1, 2, 3].map((k) => faces.bbox[4 * small + k] / res);
+      const mx = (x0 + x1) / 2;
+      const my = (y0 + y1) / 2;
+      const d = 3;
+      const ring: Pt[] = [[x0 - d, y0 - d], [mx, y0 - d], [x1 + d, y0 - d], [x1 + d, my], [x1 + d, y1 + d], [mx, y1 + d], [x0 - d, y1 + d], [x0 - d, my]];
+      return ring.filter(([x, y]) => faceAt(x, y) === big).length >= 5;
+    };
+    const bigs = [...votes.keys()].filter((id) => areaPt(id) >= fixture);
+    if (bigs.length) for (const id of [...votes.keys()]) if (areaPt(id) < fixture && bigs.some((b) => islandIn(id, b))) votes.delete(id);
     let best = -1;
     for (const [id, v] of votes) if (best < 0 || v > votes.get(best)! || (v === votes.get(best)! && faces.pixels[id] > faces.pixels[best])) best = id;
     if (best < 0) continue;
@@ -1237,14 +1303,19 @@ export function readCeilingSheet(
     const fit = [...new Set(list.map((t) => t.key))].filter((k) => gridCode(k) === grid);
     return fit.length === 1 ? groupIndex(`code:${fit[0]}`) : -1;
   };
+  // The face a room tag stands in (round its box; inside the box is the box's own face).
+  const labeledFace = new Set(labels.flatMap((l) => [faceAt(l.at[0], l.at[1]), ...(l.box ? [faceAt(l.box[0] - 3, l.at[1]), faceAt(l.box[2] + 3, l.at[1])] : [])]).filter((id) => id >= 0));
   for (let changed = true; changed; ) {
     changed = false;
     for (let id = 0; id < n; id++) {
       if (faceGroup[id] >= 0 || !usable(id) || areaPt(id) < minPiece) continue;
       let best = -1;
       let bestC = 0;
+      // A bigger space with a room of its own named in it is another room, not a piece of this one.
+      const named = labeledFace.has(id);
       for (const [o, c] of contact.get(id) ?? []) {
         if (faceGroup[o] < 0) continue;
+        if (named && areaPt(id) > 2 * areaPt(o)) continue;
         const gi = passOn(o, id);
         if (gi >= 0 && c > bestC) {
           best = gi;
@@ -1282,12 +1353,25 @@ export function readCeilingSheet(
   }
   for (let id = 0; id < n; id++) {
     if (faceGroup[id] >= 0 || !usable(id) || lettering[id] > areaPt(id) * 0.08) continue;
-    const { kind, keys } = kinds[id];
+    const { kind: drawnAs, keys } = kinds[id];
+    // Lines one way at a tile's spacing that no plank or slat swatch runs with: long tiles laid
+    // in a grid whose short way is not drawn.
+    const tiled = (k: string) => !!mpp && (hatch.spacings.get(k) ?? []).some((sp) => sp * mpp >= 0.45 && sp * mpp <= 1.65);
+    const plank = (k: string) => legend.some((l) => l.kind === 'hatch' && l.keys.some((x) => x.split(' ')[1] === k.split(' ')[1]));
+    // (Only where the legend tells a plank or slat hatch from tiles: a set without one draws
+    // joists and structure one way at such spacings too.)
+    const tellsApart = legend.some((l) => l.kind === 'hatch') && legend.some((l) => l.kind === 'grid' || l.implied === 'grid');
+    const kind: CeilingKind = tellsApart && drawnAs === 'hatch' && keys.length && keys.every((k) => tiled(k) && !plank(k)) ? 'grid' : drawnAs;
     if (kind !== 'plain') {
-      if (areaPt(id) < fallbackMin) continue;
+      // A stipple is plainly a finish (gypsum), down to a closet's ceiling; lines are less sure.
+      if (areaPt(id) < (kind === 'stipple' ? fallbackMin / 2.3 : fallbackMin)) continue;
       const same = legend.filter((l) => l.kind === kind);
       const said = legend.filter((l) => l.kind !== kind && l.implied === kind && !legend.some((o) => o !== l && o.kind === kind));
-      const row = same.find((l) => l.keys.some((x) => keys.includes(x))) ?? (same.length === 1 ? same[0] : said.length === 1 ? said[0] : undefined);
+      // A hatch is a legend row's only when its lines run the same way as the swatch's (planks
+      // one way, a corridor's tiles the other).
+      const dir = (k: string) => k.split(' ')[1];
+      const runs = (l: CeilingSwatch) => kind !== 'hatch' || l.keys.some((x) => keys.some((y) => dir(x) === dir(y)));
+      const row = same.find((l) => l.keys.some((x) => keys.includes(x))) ?? (same.length === 1 && runs(same[0]) ? same[0] : said.length === 1 ? said[0] : undefined);
       if (row) faceGroup[id] = groupIndex(`legend:${legend.indexOf(row)}`);
       // Lines one way only, with no legend saying what they are, are stairs or notes as often as a ceiling.
       else if (kind !== 'hatch') faceGroup[id] = groupIndex(`kind:${kind}`);
