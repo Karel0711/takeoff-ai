@@ -502,7 +502,7 @@ export function findCeilingTags(input: PageText[], segs: Segment[], defs: Ceilin
   const noHeight = texts.filter((o) => /^[-–—]$/.test(o.str.trim()));
   for (const raw of texts) {
     // An existing ceiling's tag: its material with an EX marker ("EX-ACT", "EX. GWB").
-    const ex = /^EX[-.\s]*([A-Z]{2,4})$/.exec(bare(raw.str));
+    const ex = /^EX[-.\s]+([A-Z]{2,4})$/.exec(bare(raw.str));
     const str = ex ? `EX-${ex[1]}` : bare(raw.str);
     // A ceiling note's number in a keynote symbol the size of the notes' own.
     const keynote = !!notes?.defs.some((d) => d.code === str) && Math.abs(raw.h - notes.h) <= notes.h * 0.15 && !(notes.box && raw.cx >= notes.box[0] && raw.cx <= notes.box[2] && raw.cy >= notes.box[1] && raw.cy <= notes.box[3]);
@@ -936,7 +936,15 @@ export function readCeilingSheet(
   const defs = mergeDefs([...(options.defs ?? []), ...own.defs, ...notes.defs]);
   const avoid: Box[] = [...(options.avoid ?? []), ...(own.box ? [own.box] : []), ...(notes.box && notes.defs.length ? [notes.box] : [])];
   const inBox = (x: number, y: number, boxes: Box[]) => boxes.some(([a, b, c, d]) => x >= a && x <= c && y >= b && y <= d);
-  let tags = findCeilingTags(texts, segs, defs, [...own.defs, ...notes.defs].map((d) => d.at), notes).filter((t) => !inBox(t.at[0], t.at[1], avoid));
+  // Where the set lists its ceiling types, a code of another family (T8 beside c1, c3, cx3) is
+  // a fixture's or a door's mark, not a ceiling type.
+  const listed = mergeDefs([...(options.defs ?? []), ...own.defs]);
+  const family = (k: string) => /^[a-z]*/.exec(k)![0];
+  const families = new Set(listed.map((d) => family(d.key)));
+  const keyed = new Set(notes.defs.map((d) => d.key));
+  let tags = findCeilingTags(texts, segs, defs, [...own.defs, ...notes.defs].map((d) => d.at), notes).filter(
+    (t) => !inBox(t.at[0], t.at[1], avoid) && (listed.length < 3 || keyed.has(t.key) || listed.some((d) => d.key === t.key) || families.has(family(t.key))),
+  );
   const mpp = sheet.metersPerPoint;
   const pt = (m: number, fallback: number) => (mpp ? m / mpp : fallback);
 
@@ -1457,7 +1465,10 @@ export function readCeilingSheet(
   const index = new SegmentIndex(barrierLines, 32);
   const areas: CeilingArea[] = [];
   const close = Math.max(1, Math.round(res * 1.2));
-  const minArea = pt(0.6, 6) ** 2;
+  // No slivers: a ceiling piece under a square metre, or a strip too thin to stand in
+  // (under 300 mm across, area over perimeter), is a gap between lines, not a ceiling.
+  const minArea = pt(1, 10) ** 2;
+  const minThick = pt(0.3, 3);
   const spelled = new Map<string, string>();
   for (const t of tags) if (!spelled.has(t.key)) spelled.set(t.key, t.code);
   for (let gi = 0; gi < groupKeys.length; gi++) {
@@ -1520,7 +1531,8 @@ export function readCeilingSheet(
       if (outer.length < 3) continue;
       const holeRings = holes.map((hm) => toPts(traceBoundary(hm, cw, chh))).filter((r) => r.length >= 3);
       const area = Math.abs(ringArea(outer)) - holeRings.reduce((s, r) => s + Math.abs(ringArea(r)), 0);
-      if (area < minArea) continue;
+      const perimeter = outer.reduce((n, p, i) => n + Math.hypot(outer[(i + 1) % outer.length][0] - p[0], outer[(i + 1) % outer.length][1] - p[1]), 0);
+      if (area < minArea || area / perimeter < minThick / 2) continue;
       const inside = (p: Pt) => pointInRing(p, outer) && !holeRings.some((r) => pointInRing(p, r));
       const mine = tags.filter((t) => inside(t.at) && (gk === `code:${t.key}` || !gk.startsWith('code:')));
       const heights = [...new Set(mine.filter((t) => t.height && !t.above).map((t) => t.height!))];
