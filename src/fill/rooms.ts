@@ -382,7 +382,9 @@ function fillOne(model: WallModel, label: RoomLabel, sheetW: number, sheetH: num
   let res = fillRoom(model, [roomPoint(label)], sheetW, sheetH, 2);
   // Drawn without lineweights, the number's own box is in the wall pen and fills first:
   // start again just outside it, below, above the name, then to either side.
-  if (res.ok && label.box && !label.seed && withinBox(res.points, label.box)) {
+  // (Or a space hardly bigger than the box: the box sitting on a dashed line or a symbol.)
+  const boxArea = label.box ? (label.box[2] - label.box[0]) * (label.box[3] - label.box[1]) : 0;
+  if (res.ok && label.box && !label.seed && (withinBox(res.points, label.box) || Math.abs(ringArea(res.points)) < 6 * boxArea)) {
     const [x0, y0, x1, y1] = label.box;
     const [cx, cy] = label.at;
     const w = x1 - x0;

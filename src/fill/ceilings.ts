@@ -235,8 +235,9 @@ export function backgroundInk(s: Segment): boolean {
  */
 export function explodedDashes(segs: Segment[]): Set<Segment> {
   const out = new Set<Segment>();
-  // Pieces by pen and direction (to 6°), then by the line they lie on.
-  const groups = new Map<string, { s: Segment; off: number; a: number; b: number; ux: number; uy: number }[]>();
+  // Pieces by pen and direction (to 6°), then by the line they lie on, measured along the
+  // group's own mean direction.
+  const byDir = new Map<string, { s: Segment; ang: number }[]>();
   for (const s of segs) {
     if (s.filled || s.curve) continue;
     const L = Math.hypot(s.x2 - s.x1, s.y2 - s.y1);
@@ -244,18 +245,27 @@ export function explodedDashes(segs: Segment[]): Set<Segment> {
     let ang = Math.atan2(s.y2 - s.y1, s.x2 - s.x1);
     if (ang < 0) ang += Math.PI;
     if (ang >= Math.PI - 1e-9) ang -= Math.PI;
-    const axis = Math.abs(s.y2 - s.y1) <= 0.05 ? 0 : Math.abs(s.x2 - s.x1) <= 0.05 ? Math.PI / 2 : ang;
-    const bucket = Math.round((axis * 180) / Math.PI / 6) % 30;
-    const th = (bucket * 6 * Math.PI) / 180;
+    if (Math.abs(s.y2 - s.y1) <= 0.05) ang = 0;
+    else if (Math.abs(s.x2 - s.x1) <= 0.05) ang = Math.PI / 2;
+    const bucket = Math.round((ang * 180) / Math.PI / 6) % 30;
+    const key = `${bucket}|${s.width}|${s.color ?? ''}`;
+    (byDir.get(key) ?? byDir.set(key, []).get(key)!).push({ s, ang: bucket === 0 && ang > Math.PI / 2 ? ang - Math.PI : ang });
+  }
+  const groups: { s: Segment; off: number; a: number; b: number }[][] = [];
+  for (const list of byDir.values()) {
+    if (list.length < 4) continue;
+    const th = list.reduce((n, p) => n + p.ang, 0) / list.length;
     const ux = Math.cos(th);
     const uy = Math.sin(th);
-    const key = `${bucket}|${s.width}|${s.color ?? ''}`;
-    const t1 = s.x1 * ux + s.y1 * uy;
-    const t2 = s.x2 * ux + s.y2 * uy;
-    const off = ((s.x1 + s.x2) / 2) * -uy + ((s.y1 + s.y2) / 2) * ux;
-    (groups.get(key) ?? groups.set(key, []).get(key)!).push({ s, off, a: Math.min(t1, t2), b: Math.max(t1, t2), ux, uy });
+    groups.push(
+      list.map(({ s }) => {
+        const t1 = s.x1 * ux + s.y1 * uy;
+        const t2 = s.x2 * ux + s.y2 * uy;
+        return { s, off: ((s.x1 + s.x2) / 2) * -uy + ((s.y1 + s.y2) / 2) * ux, a: Math.min(t1, t2), b: Math.max(t1, t2) };
+      }),
+    );
   }
-  for (const all of groups.values()) {
+  for (const all of groups) {
     if (all.length < 4) continue;
     all.sort((p, q) => p.off - q.off);
     // Lines: pieces whose offsets lie within a quarter point of the last (a slanted line's
