@@ -380,10 +380,16 @@ function fillOne(model: WallModel, label: RoomLabel, sheetW: number, sheetH: num
   // A space that leaks past the window is an open area or a gap in the walls, left for
   // drawing by hand (or named by another tag inside it, below).
   let res = fillRoom(model, [roomPoint(label)], sheetW, sheetH, 2);
+  const boxArea = label.box ? (label.box[2] - label.box[0]) * (label.box[3] - label.box[1]) : 0;
+  // A leader ending in something smaller than its tag (a fixture, a symbol) points at no room:
+  // the room is the one round the tag.
+  if (label.seed && res.ok && Math.abs(ringArea(res.points)) < 2 * boxArea) {
+    const here = fillRoom(model, [label.at], sheetW, sheetH, 2);
+    if (here.ok && !(label.box && withinBox(here.points, label.box))) res = here;
+  }
   // Drawn without lineweights, the number's own box is in the wall pen and fills first:
   // start again just outside it, below, above the name, then to either side.
   // (Or a space hardly bigger than the box: the box sitting on a dashed line or a symbol.)
-  const boxArea = label.box ? (label.box[2] - label.box[0]) * (label.box[3] - label.box[1]) : 0;
   if (res.ok && label.box && !label.seed && (withinBox(res.points, label.box) || Math.abs(ringArea(res.points)) < 6 * boxArea)) {
     const [x0, y0, x1, y1] = label.box;
     const [cx, cy] = label.at;
