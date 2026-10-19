@@ -176,25 +176,37 @@ export function simplify(pts: [number, number][], tol: number): [number, number]
       far = i;
     }
   }
+  // Each half split at its point farthest off the chord until every point is within `tol`
+  // (kept by marking, not by recursion: a pixel staircase can split thousands deep).
   const dp = (p: [number, number][]): [number, number][] => {
     if (p.length < 3) return p;
-    const [a, b] = [p[0], p[p.length - 1]];
-    const L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
-    let idx = 0;
-    let maxD = 0;
-    for (let i = 1; i < p.length - 1; i++) {
-      const dist = Math.abs((b[0] - a[0]) * (a[1] - p[i][1]) - (a[0] - p[i][0]) * (b[1] - a[1])) / L;
-      if (dist > maxD) {
-        maxD = dist;
-        idx = i;
+    const keep = new Uint8Array(p.length);
+    keep[0] = 1;
+    keep[p.length - 1] = 1;
+    const stack: [number, number][] = [[0, p.length - 1]];
+    while (stack.length) {
+      const [s, e] = stack.pop()!;
+      if (e - s < 2) continue;
+      const [a, b] = [p[s], p[e]];
+      const L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+      let idx = s;
+      let maxD = 0;
+      for (let i = s + 1; i < e; i++) {
+        const dist = Math.abs((b[0] - a[0]) * (a[1] - p[i][1]) - (a[0] - p[i][0]) * (b[1] - a[1])) / L;
+        if (dist > maxD) {
+          maxD = dist;
+          idx = i;
+        }
       }
+      if (maxD <= tol) continue;
+      keep[idx] = 1;
+      stack.push([s, idx], [idx, e]);
     }
-    if (maxD <= tol) return [a, b];
-    return [...dp(p.slice(0, idx + 1)).slice(0, -1), ...dp(p.slice(idx))];
+    return p.filter((_, i) => keep[i]);
   };
   const first = dp(pts.slice(0, far + 1));
-  const second = dp([...pts.slice(far), pts[0]]);
-  return [...first.slice(0, -1), ...second.slice(0, -1)];
+  const second = dp(pts.slice(far).concat([pts[0]]));
+  return first.slice(0, -1).concat(second.slice(0, -1));
 }
 
 /** Pixel-corner coordinates back to sheet points. */

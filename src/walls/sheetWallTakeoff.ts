@@ -3,8 +3,10 @@ import type { PDFDocumentProxy, PDFPageProxy } from '../pdf';
 import { segmentsOf, wallModelFor } from '../fill/sheetWalls';
 import { pageTexts, type PageText } from '../pageText';
 import { WALL_TAG, type TagText } from './tags';
-import { CODE, classifyCode, emptySetTypes, listedCodes, mergeSetTypes, readTagLegend, readTypeSheet, type SetTypes } from './setTypes';
-import { wallTakeoff, type WallTakeoffResult } from './wallTakeoff';
+import { CODE, classifyCode, codeOfText, emptySetTypes, listedCodes, mergeSetTypes, readTagLegend, readTypeSheet, type SetTypes } from './setTypes';
+import type { WallTakeoffResult } from './wallTakeoff';
+import { wallTakeoffByTags } from './tagPens';
+import { buildWallModel } from '../fill/roomFill';
 
 /**
  * Wall type tags on the page, with each text's centre and size in sheet points. What
@@ -20,14 +22,15 @@ export async function wallTagTexts(page: PDFPageProxy, known: readonly string[] 
 export function tagTextsFrom(texts: PageText[], known: readonly string[] = [], set?: SetTypes, size?: [number, number]): TagText[] {
   // This sheet's own legend adds to the set's; the codes listed in its schedules are no tags.
   const context = mergeSetTypes([set ?? emptySetTypes(), readTagLegend(texts)]);
-  const listed = size ? listedCodes(texts, size[0], size[1]) : new Map();
+  // (Only lists right under their heading: a plan's own tags can line up by chance.)
+  const listed = size ? listedCodes(texts, size[0], size[1], true) : new Map();
   const out: TagText[] = [];
   for (const t of texts) {
-    if (!CODE.test(t.str) || listed.has(t)) continue;
-    const c = classifyCode(t.str, context, known, (code) => WALL_TAG.test(code));
+    if (!CODE.test(t.str.trim()) || listed.has(t)) continue;
+    const c = classifyCode(codeOfText(t.str), context, known, (code) => WALL_TAG.test(code));
     if (!c) continue;
-    // W-1 and W1 are the same type.
-    const code = t.str.replace('-', '');
+    // W-1 and W1 are the same type ("EX 1" is EX1).
+    const code = codeOfText(t.str).replace('-', '');
     out.push({ code, cx: t.cx, cy: t.cy, w: t.w, h: t.h, ...(c.wall ? (c.confirmed ? { confirmed: true } : {}) : { generic: true }) });
   }
   return out;
@@ -81,11 +84,8 @@ export async function sheetWallTakeoff(
   if (!sheet.metersPerPoint) throw new Error('Set the sheet scale first.');
   const [model, segments, texts] = await Promise.all([wallModelFor(page, sheet, maxOpening), segmentsOf(page), wallTagTexts(page, known.codes, known.set)]);
   // The wall takeoff reads tags and leaders itself: it takes the wall pens' symbols as drawn.
-  return wallTakeoff([...model.lines, ...(model.symbols ?? [])], segments, texts, sheet.metersPerPoint, {
-    doors: model.openings,
-    throughDoors,
-    stopAtDoors,
-    exterior: known.exterior,
-    kinds: known.set?.kinds,
-  });
+  const mpp = sheet.metersPerPoint;
+  return wallTakeoffByTags(model, segments, texts, mpp, { throughDoors, stopAtDoors, exterior: known.exterior, kinds: known.set?.kinds }, (pens) =>
+    buildWallModel(segments, mpp, { pens, maxOpening, stats: model.stats }),
+  );
 }

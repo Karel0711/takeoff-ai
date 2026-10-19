@@ -4,6 +4,7 @@ import { marksOf } from './marks';
 import { simplify, traceBoundary } from './raster';
 import { detectWallPens, penStats } from './walls';
 import type { Segment } from './vectors';
+import { maxOf, minOf } from '../arrays';
 
 export interface HatchRegion {
   points: Pt[];
@@ -53,10 +54,10 @@ export function hatchRegionsOf(segs: Segment[], keys: string[], cell: number, op
   const pad = cell * 2;
   const xs = lines.flatMap((m) => [m.line![0], m.line![2]]);
   const ys = lines.flatMap((m) => [m.line![1], m.line![3]]);
-  const x0 = Math.min(...xs) - pad;
-  const y0 = Math.min(...ys) - pad;
-  const w = Math.ceil((Math.max(...xs) + pad - x0) * res);
-  const h = Math.ceil((Math.max(...ys) + pad - y0) * res);
+  const x0 = minOf(xs) - pad;
+  const y0 = minOf(ys) - pad;
+  const w = Math.ceil((maxOf(xs) + pad - x0) * res);
+  const h = Math.ceil((maxOf(ys) + pad - y0) * res);
   const mask = new Uint8Array(w * h);
   for (const m of lines) {
     const [ax, ay, bx, by] = m.line!.map((v, i) => (v - (i % 2 ? y0 : x0)) * res);
@@ -157,11 +158,14 @@ export function findGridHatch(
   const outside = (x: number, y: number) => !avoid.some(([a, b, c, d]) => x >= a && x <= c && y >= b && y <= d);
   const marks = marksOf(segs).filter((m) => m.line && !m.glyph && outside(m.cx, m.cy));
   const inside = segs.filter((s) => outside((s.x1 + s.x2) / 2, (s.y1 + s.y2) / 2));
+  // A lay-in grid's cells are ceiling tiles, 300 to about 1600 mm a side: a closer pattern
+  // (hatching in a wall, a dashed line's dashes) or a wider one (the structural grid) is not one.
+  const tile = (cell: number) => !metersPerPoint || (cell * metersPerPoint >= 0.28 && cell * metersPerPoint <= 1.65);
   // Wall pens are left out, unless nothing else draws a grid (a sheet of ceiling only).
-  return gridOf(marks, inside, walls) ?? (walls.size ? gridOf(marks, inside, new Set()) : null);
+  return gridOf(marks, inside, walls, tile) ?? (walls.size ? gridOf(marks, inside, new Set(), tile) : null);
 }
 
-function gridOf(marks: ReturnType<typeof marksOf>, inside: Segment[], walls: Set<string>): { keys: string[]; cell: number; regions: HatchRegion[] } | null {
+function gridOf(marks: ReturnType<typeof marksOf>, inside: Segment[], walls: Set<string>, tile: (cell: number) => boolean): { keys: string[]; cell: number; regions: HatchRegion[] } | null {
   const pens = new Map<string, { h: typeof marks; v: typeof marks }>();
   for (const m of marks) {
     const [pen, shape] = m.key.split(' ');
@@ -179,6 +183,7 @@ function gridOf(marks: ReturnType<typeof marksOf>, inside: Segment[], walls: Set
     if (!ch || !cv) continue;
     const keys = [`${pen} line0`, `${pen} line90`];
     const cell = Math.max(ch, cv);
+    if (!tile(ch) || !tile(cv)) continue;
     const regions = hatchRegionsOf(inside, keys, cell).filter((r) => r.area >= cell * cell * 12);
     const area = regions.reduce((n, r) => n + r.area, 0);
     if (!best || area > best.area) best = { keys, cell, regions, area };

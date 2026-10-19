@@ -52,14 +52,15 @@ export interface WallTakeoffOptions {
 /** Kinds of wall tag. A wall has at most one of each; a tag's type spreads only within its kind. */
 export function tagKind(code: string, exterior?: readonly string[], kinds?: Record<string, string>): string {
   if (exterior?.includes(code)) return 'exterior';
-  const given = kinds?.[code];
-  if (given) return given;
   const letters = code.replace(/-?\d.*$/, '').toUpperCase();
   // An "x" after the prefix marks existing work of the same kind (wx1, FRX2).
   const prefix = letters.length > 1 && letters.endsWith('X') && letters !== 'EX' ? letters.slice(0, -1) : letters;
-  if (prefix === 'EW' || prefix === 'EXT' || prefix === 'EP') return 'exterior';
-  if (prefix === 'FR') return 'furring';
-  if (prefix === 'FW') return 'foundation';
+  // Furring and foundation walls by their letters, even listed among the interior or exterior wall types.
+  const lettered = prefix === 'FR' ? 'furring' : prefix === 'FW' ? 'foundation' : null;
+  const given = kinds?.[code];
+  if (given) return lettered && (given === 'partition' || given === 'exterior') ? lettered : given;
+  if (lettered) return lettered;
+  if (prefix === 'EW' || prefix === 'EXT' || prefix === 'EP' || prefix === 'EX') return 'exterior';
   return 'partition';
 }
 
@@ -84,13 +85,41 @@ export function wallTakeoff(
   const found = findWallRuns(wallLines, pt(minThickness), pt(maxThickness)).filter(
     (r) => runLength(r) >= Math.max(pt(0.1), r.thickness * 0.5),
   );
-  const runs: WallRun[] = offSquare(found).map((r) => ({ ...r, a: [...r.a] as Pt, b: [...r.b] as Pt }));
+  const tags = sameFamily(resolveTags(texts, allSegments));
+  // A tag's own box or diamond, drawn in a wall pen, reads as a short thick wall: it is none.
+  // (The symbol when one was read, else a box round the text with about its height to spare.)
+  const inTag = (p: Pt) =>
+    tags.some((t) => {
+      const hx = Math.max(t.symbol ? t.symbol.size / 2 : 0, t.w / 2 + t.h) + 1;
+      const hy = Math.max(t.symbol ? t.symbol.size / 2 : 0, t.h * 1.5) + 1;
+      return Math.abs(p[0] - t.cx) <= hx && Math.abs(p[1] - t.cy) <= hy;
+    });
+  // Or its box's two long sides read as a wall's faces with the tag's text between them: a
+  // short band round a tag's text (a wall a tag sits on runs on well past it).
+  const roundTag = (r: WallRun) => {
+    const L = runLength(r);
+    const [ux, uy] = [(r.b[0] - r.a[0]) / L, (r.b[1] - r.a[1]) / L];
+    return tags.some((t) => {
+      const along = (t.cx - r.a[0]) * ux + (t.cy - r.a[1]) * uy;
+      const across = Math.abs((t.cx - r.a[0]) * -uy + (t.cy - r.a[1]) * ux);
+      return across <= r.thickness / 2 && along >= 0 && along <= L && L <= 3 * Math.max(t.w, 2 * t.h, t.symbol?.size ?? 0);
+    });
+  };
+  const runs: WallRun[] = offSquare(found)
+    .filter((r) => !(inTag(r.a) && inTag(r.b)) && !roundTag(r))
+    .map((r) => ({ ...r, a: [...r.a] as Pt, b: [...r.b] as Pt }));
 
   // Join ends at corners and tees; remember where to split the walls they meet.
   const splits = runs.map(() => [] as Pt[]);
   const corners: { r1: number; end1: 'a' | 'b'; r2: number; at: Pt }[] = [];
   const tees: { r1: number; end1: 'a' | 'b'; r2: number; at: Pt }[] = [];
   const moves: { run: WallRun; end: 'a' | 'b'; to: Pt }[] = [];
+  // Every search below looks only at the walls near the end or line it starts from (indexed by
+  // their boxes, grown by the farthest each search reaches): a sheet's walls one by one against
+  // all the others is the square of its walls.
+  const thickest = runs.reduce((n, r) => Math.max(n, r.thickness), 0);
+  const reachJ = thickest * 2 + 4;
+  let index = runBoxes(runs, reachJ);
   runs.forEach((r, ri) => {
     for (const end of ['a', 'b'] as const) {
       const e = r[end];
@@ -99,7 +128,8 @@ export function wallTakeoff(
       const ux = (e[0] - o[0]) / L;
       const uy = (e[1] - o[1]) / L;
       let best: { x: number; r2: number; at: Pt; corner: boolean } | null = null;
-      runs.forEach((r2, r2i) => {
+      nearRuns(index, e, e, reachJ).forEach((r2i) => {
+        const r2 = runs[r2i];
         if (r2i === ri) return;
         const L2 = runLength(r2);
         const vx = (r2.b[0] - r2.a[0]) / L2;
@@ -131,7 +161,10 @@ export function wallTakeoff(
   });
   // A wall broken by a pier or a step in its faces carries on: free ends facing each
   // other on nearly one line, a short way apart, meet in the middle.
-  const joined = new Set(moves.map((m) => `${runs.indexOf(m.run)}${m.end}`));
+  const runNo = new Map(runs.map((r, i) => [r, i]));
+  const joined = new Set(moves.map((m) => `${runNo.get(m.run)}${m.end}`));
+  const reachC = thickest * 2.5 + 4;
+  index = endBoxes(runs);
   const continues: { r1: number; end1: 'a' | 'b'; r2: number; end2: 'a' | 'b' }[] = [];
   runs.forEach((r, ri) => {
     for (const end of ['a', 'b'] as const) {
@@ -142,7 +175,8 @@ export function wallTakeoff(
       const ux = (e[0] - o[0]) / L;
       const uy = (e[1] - o[1]) / L;
       let best: { r2: number; end2: 'a' | 'b'; gap: number } | null = null;
-      runs.forEach((r2, r2i) => {
+      nearRuns(index, e, e, reachC, 2).forEach((r2i) => {
+        const r2 = runs[r2i];
         if (r2i <= ri) return;
         for (const end2 of ['a', 'b'] as const) {
           if (joined.has(`${r2i}${end2}`)) continue;
@@ -173,12 +207,14 @@ export function wallTakeoff(
   for (const m of moves) m.run[m.end] = m.to;
   // Two walls on one line that both end at one junction (a wall meeting them there from
   // the side) continue each other through it.
+  index = endBoxes(runs);
   runs.forEach((r, ri) => {
     for (const end of ['a', 'b'] as const) {
       const e = r[end];
       const o = end === 'a' ? r.b : r.a;
       const L = dist(e, o);
-      runs.forEach((r2, r2i) => {
+      nearRuns(index, e, e, Math.max(2, thickest / 2) + 1, 2).forEach((r2i) => {
+        const r2 = runs[r2i];
         if (r2i <= ri) return;
         for (const end2 of ['a', 'b'] as const) {
           const e2 = r2[end2];
@@ -193,8 +229,10 @@ export function wallTakeoff(
   });
 
   // Walls crossing each other split each other too.
+  index = runBoxes(runs, 1);
   for (let i = 0; i < runs.length; i++) {
-    for (let j = i + 1; j < runs.length; j++) {
+    for (const j of nearRuns(index, runs[i].a, runs[i].b, 1)) {
+      if (j <= i) continue;
       const p = crossing(runs[i], runs[j]);
       if (p) {
         splits[i].push(p);
@@ -276,11 +314,11 @@ export function wallTakeoff(
     return out;
   };
   // Types from tags: each tag labels the piece of wall it points at.
-  const tags = sameFamily(resolveTags(texts, allSegments));
   const unmatched: WallTag[] = [];
   const tagged = pieces.map(() => new Map<string, { codes: string[]; d: number }>());
   /** Pieces of a furring wrap round a column: the wrap is the whole of that type there. */
   const wrapped = new Set<number>();
+  const drawnIndex = runBoxes(drawn, 1);
   for (const tag of tags) {
     // Follow each leader out from the tag; the first point that lands on a wall is
     // what it points at, and the leader that gets there soonest wins. A tag with
@@ -303,7 +341,10 @@ export function wallTakeoff(
       for (let k = tag.leader ? 1 : 0; k < Math.min(path.length, bestSteps); k++) {
         let hit = -1;
         let hitD = Infinity;
-        drawn.forEach((r, ri) => {
+        // The farthest a wall's centreline can be from the point and still be hit.
+        const far = thickest / 2 + Math.max(1.5, tag.symbol ? tag.symbol.size * 1.5 : 0, pt(1.0)) + 1;
+        nearRuns(drawnIndex, path[k], path[k], far).forEach((ri) => {
+          const r = drawn[ri];
           // A tick lands inside the wall's band itself, not in the round end beyond it (a
           // locker or a cabinet drawn square on beside the wall reads as a short thick wall).
           const d = tag.tick ? distInBand(path[k], r) : distToRun(path[k], r);
@@ -431,22 +472,20 @@ export function wallTakeoff(
   const best = new Map(kinds.map((k) => [k, pieces.map(() => Infinity)]));
   const code = new Map(kinds.map((k) => [k, pieces.map((): string[] | null => null)]));
   const done = new Map(kinds.map((k) => [k, new Set<number>()]));
-  const queue: [string, number][] = [];
+  const queue = new Queue<[string, number]>();
   for (const kind of kinds) {
     pieces.forEach((_, i) => {
       const t = tagged[i].get(kind);
       if (t) {
         best.get(kind)![i] = 0;
         code.get(kind)![i] = t.codes;
-        queue.push([kind, i]);
+        queue.push([kind, i], 0);
       }
     });
   }
-  // Dijkstra on piece centres (small graphs: a linear scan for the minimum is fine).
-  while (queue.length) {
-    let k = 0;
-    for (let q = 1; q < queue.length; q++) if (best.get(queue[q][0])![queue[q][1]] < best.get(queue[k][0])![queue[k][1]]) k = q;
-    const [kind, i] = queue.splice(k, 1)[0];
+  // Dijkstra on piece centres.
+  while (queue.size) {
+    const [kind, i] = queue.pop();
     const bestK = best.get(kind)!;
     const codeK = code.get(kind)!;
     if (done.get(kind)!.has(i)) continue;
@@ -467,12 +506,15 @@ export function wallTakeoff(
       if (kind === 'furring' && (link === 'straight' || wrapped.has(i))) continue;
       // Within a fifth of the thickness counts as the same wall for exterior and
       // foundation walls (cladding and footing changes, pilasters); others must match.
-      if (diff > (followsWall(kind) && !tee ? 0.2 : 0)) continue;
+      // An exterior or foundation wall is the building's edge: a wall running into its side
+      // (or that it runs into) is an interior wall, however thick it is drawn.
+      if (followsWall(kind) && tee) continue;
+      if (diff > (followsWall(kind) ? 0.2 : 0)) continue;
       const d = bestK[i] + (runLength(pieces[i]) + runLength(pieces[j])) / 2;
       if (d < bestK[j]) {
         bestK[j] = d;
         codeK[j] = codeK[i];
-        queue.push([kind, j]);
+        queue.push([kind, j], d);
       }
     }
   }
@@ -504,7 +546,8 @@ export function wallTakeoff(
     : doors.filter((q) => {
         const cx = q.reduce((n, v) => n + v[0], 0) / q.length;
         const cy = q.reduce((n, v) => n + v[1], 0) / q.length;
-        return !drawn.some((r) => {
+        return !nearRuns(drawnIndex, [cx, cy], [cx, cy], thickest / 2 + 1).some((ri) => {
+          const r = drawn[ri];
           const L = runLength(r);
           const t = ((cx - r.a[0]) * (r.b[0] - r.a[0]) + (cy - r.a[1]) * (r.b[1] - r.a[1])) / L;
           if (t < 0 || t > L) return false;
@@ -580,11 +623,23 @@ function offSquare(runs: WallRun[]): WallRun[] {
  * triangle, a room number in a box.
  */
 function sameFamily(tags: WallTag[]): WallTag[] {
-  const shapes = new Set(tags.filter((t) => t.confirmed && t.symbol).map((t) => t.symbol!.shape));
+  const kind = (t: WallTag) => t.symbol!.core ?? t.symbol!.shape;
+  const confirmed = tags.filter((t) => t.confirmed && t.symbol);
+  const count = new Map<string, number>();
+  for (const t of confirmed) count.set(kind(t), (count.get(kind(t)) ?? 0) + 1);
+  const all = new Map<string, number>();
+  for (const t of tags) if (t.symbol) all.set(kind(t), (all.get(kind(t)) ?? 0) + 1);
+  const shapes = new Set([...count].filter(([, n]) => n >= Math.max(1, confirmed.length * 0.1)).map(([s]) => s));
+  // A code the set lists as a wall type, in a symbol a family of other codes use and few wall
+  // tags do, is another kind of tag sharing its code (window type W3 in a hexagon among window
+  // types W1a, W2b, beside wall type W3 in boxes).
+  const settled = confirmed.length >= 8;
+  const otherFamily = (k: string) => (all.get(k) ?? 0) >= 3 && (count.get(k) ?? 0) < (all.get(k) ?? 0) / 2;
   return tags.filter((t) => {
-    if (t.confirmed || !t.symbol) return true;
+    if (!t.symbol) return true;
+    if (t.confirmed) return !settled || shapes.has(kind(t)) || !otherFamily(kind(t));
     if (t.symbol.shape === 'triangle') return false;
-    return !shapes.size || shapes.has(t.symbol.shape);
+    return !shapes.size || shapes.has(kind(t));
   });
 }
 
@@ -730,6 +785,71 @@ function crossing(r: WallRun, q: WallRun): Pt | null {
   const m2 = r.thickness / 2 + 1;
   if (t < m1 || t > L1 - m1 || s < m2 || s > L2 - m2) return null;
   return [r.a[0] + ux * t, r.a[1] + uy * t];
+}
+
+/** A priority queue: the least key first, of equal keys the first pushed. */
+class Queue<T> {
+  private heap: { key: number; seq: number; v: T }[] = [];
+  private seq = 0;
+  get size() {
+    return this.heap.length;
+  }
+  private less(i: number, j: number) {
+    const [a, b] = [this.heap[i], this.heap[j]];
+    return a.key < b.key || (a.key === b.key && a.seq < b.seq);
+  }
+  private swap(i: number, j: number) {
+    [this.heap[i], this.heap[j]] = [this.heap[j], this.heap[i]];
+  }
+  push(v: T, key: number) {
+    this.heap.push({ key, seq: this.seq++, v });
+    for (let i = this.heap.length - 1; i > 0; ) {
+      const up = (i - 1) >> 1;
+      if (!this.less(i, up)) break;
+      this.swap(i, up);
+      i = up;
+    }
+  }
+  pop(): T {
+    const top = this.heap[0].v;
+    const last = this.heap.pop()!;
+    if (this.heap.length) {
+      this.heap[0] = last;
+      for (let i = 0; ; ) {
+        const [l, r] = [2 * i + 1, 2 * i + 2];
+        let m = i;
+        if (l < this.heap.length && this.less(l, m)) m = l;
+        if (r < this.heap.length && this.less(r, m)) m = r;
+        if (m === i) break;
+        this.swap(i, m);
+        i = m;
+      }
+    }
+    return top;
+  }
+}
+
+/** The runs' boxes grown by `grow`, indexed (for `nearRuns`). */
+function runBoxes(runs: WallRun[], grow: number): SegmentIndex {
+  return new SegmentIndex(
+    runs.map((r) => ({ x1: Math.min(r.a[0], r.b[0]) - grow, y1: Math.min(r.a[1], r.b[1]) - grow, x2: Math.max(r.a[0], r.b[0]) + grow, y2: Math.max(r.a[1], r.b[1]) + grow, width: 0, filled: false })),
+    32,
+  );
+}
+
+/** The runs' two ends, indexed (entries 2i and 2i + 1: run i's ends a and b). */
+function endBoxes(runs: WallRun[]): SegmentIndex {
+  return new SegmentIndex(
+    runs.flatMap((r) => [r.a, r.b].map((p) => ({ x1: p[0], y1: p[1], x2: p[0], y2: p[1], width: 0, filled: false }))),
+    32,
+  );
+}
+
+/** Runs (ascending) whose indexed entries may lie within `reach` of the box from p to q; `per` entries per run. */
+function nearRuns(index: SegmentIndex, p: Pt, q: Pt, reach: number, per = 1): number[] {
+  const hits = index.query(Math.min(p[0], q[0]) - reach, Math.min(p[1], q[1]) - reach, Math.max(p[0], q[0]) + reach, Math.max(p[1], q[1]) + reach);
+  const out = per === 1 ? hits : [...new Set(hits.map((i) => Math.floor(i / per)))];
+  return out.sort((m, n) => m - n);
 }
 
 /** Distance across a wall to its centreline, from a point alongside it (Infinity past its ends). */

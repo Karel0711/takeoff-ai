@@ -1,4 +1,5 @@
 import type { Segment } from './vectors';
+import { maxOf, minOf, pushAll } from '../arrays';
 
 const len = (s: Segment) => Math.hypot(s.x2 - s.x1, s.y2 - s.y1);
 
@@ -11,6 +12,12 @@ export interface PenStats {
   length: number;
   /** Length of this pen's lines that run parallel to another of its lines a wall-thickness away. */
   paired: number;
+  /**
+   * Length of its lines that are rungs of a ladder: a parallel line the same distance away on
+   * both sides (hatching, stair treads). Not counted in `paired`: a wall's face has its other
+   * face on one side and the room on the other.
+   */
+  ladder?: number;
 }
 
 /** Spatial hash of segment midpoints, for neighbour queries. */
@@ -35,8 +42,111 @@ class Grid {
     const r = Math.ceil(radius / this.size);
     const cx = Math.floor(x / this.size);
     const cy = Math.floor(y / this.size);
-    for (let i = cx - r; i <= cx + r; i++) for (let j = cy - r; j <= cy + r; j++) out.push(...(this.cells.get(`${i},${j}`) ?? []));
+    for (let i = cx - r; i <= cx + r; i++) for (let j = cy - r; j <= cy + r; j++) {
+      const cell = this.cells.get(`${i},${j}`);
+      if (cell) pushAll(out, cell);
+    }
     return out;
+  }
+}
+
+const BINS = 64;
+const BIN = Math.PI / BINS;
+/** A line's direction, 0 to π, and the direction bin (of `BINS`, centred on 0 and the right angles) it is in. */
+const direction = (s: Segment, L: number) => {
+  let t = Math.atan2((s.y2 - s.y1) / L, (s.x2 - s.x1) / L);
+  if (t < 0) t += Math.PI;
+  if (t >= Math.PI) t -= Math.PI;
+  return { t, bin: Math.round(t / BIN) % BINS };
+};
+
+interface InLineCell {
+  rho: Float64Array;
+  idx: Int32Array;
+  half: number;
+}
+
+/**
+ * `Grid` for finding lines in line with a given one: the same cells (by midpoint), each cell's
+ * lines kept by direction bin and, within a bin, by where their start crosses the bin's normal. A
+ * look round a line's end goes through only the lines running its way that lie about on its
+ * line: on a large-scale sheet the cells are as big as the widest gap bridged and hold most of
+ * the sheet, so looking at every line in them is the square of the sheet's lines.
+ */
+class InLineGrid {
+  private cells = new Map<string, Map<number, InLineCell>>();
+  private t: Float64Array;
+  private bin: Int32Array;
+  constructor(
+    private lines: Segment[],
+    lens: number[],
+    private size: number,
+  ) {
+    this.t = new Float64Array(lines.length);
+    this.bin = new Int32Array(lines.length);
+    const raw = new Map<string, Map<number, number[]>>();
+    lines.forEach((s, n) => {
+      const d = direction(s, lens[n]);
+      this.t[n] = d.t;
+      this.bin[n] = d.bin;
+      const k = `${Math.floor((s.x1 + s.x2) / 2 / size)},${Math.floor((s.y1 + s.y2) / 2 / size)}`;
+      let byBin = raw.get(k);
+      if (!byBin) raw.set(k, (byBin = new Map()));
+      // Looked for from its own bin and the two beside it (a degree either way can cross into one).
+      for (const q of new Set([d.bin, (d.bin + 1) % BINS, (d.bin + BINS - 1) % BINS])) {
+        const list = byBin.get(q);
+        if (list) list.push(n);
+        else byBin.set(q, [n]);
+      }
+    });
+    for (const [k, byBin] of raw) {
+      const out = new Map<number, InLineCell>();
+      for (const [q, ids] of byBin) {
+        const [nx, ny] = [-Math.sin(q * BIN), Math.cos(q * BIN)];
+        const rho = ids.map((n) => lines[n].x1 * nx + lines[n].y1 * ny);
+        const order = ids.map((_, m) => m).sort((x, y) => rho[x] - rho[y]);
+        let half = 0;
+        for (const n of ids) half = Math.max(half, lens[n] / 2);
+        out.set(q, { rho: Float64Array.from(order, (m) => rho[m]), idx: Int32Array.from(order, (m) => ids[m]), half });
+      }
+      this.cells.set(k, out);
+    }
+  }
+
+  /**
+   * Indices of lines whose midpoint is within `radius` cells' reach of (x, y), as `Grid.near`
+   * finds them, that may run within a degree of line `of` with their start within `off` of its
+   * line: every such line (and some others).
+   */
+  *inLine(x: number, y: number, radius: number, of: number, off: number): Generator<number> {
+    const r = Math.ceil(radius / this.size);
+    const cx = Math.floor(x / this.size);
+    const cy = Math.floor(y / this.size);
+    const a = this.lines[of];
+    const q = this.bin[of];
+    const [nx, ny] = [-Math.sin(q * BIN), Math.cos(q * BIN)];
+    const rho = a.x1 * nx + a.y1 * ny;
+    // The line's normal and the bin's differ by this angle: across a distance D their offsets differ by up to D times it.
+    const dt = Math.abs(this.t[of] - q * BIN);
+    const tilt = Math.min(dt, Math.PI - dt);
+    for (let i = cx - r; i <= cx + r; i++)
+      for (let j = cy - r; j <= cy + r; j++) {
+        const cell = this.cells.get(`${i},${j}`)?.get(q);
+        if (!cell) continue;
+        // The farthest a start in this cell can be from the line's start: the cell, widened by its longest line's half.
+        const dx = Math.max(Math.abs(i * this.size - cell.half - a.x1), Math.abs((i + 1) * this.size + cell.half - a.x1));
+        const dy = Math.max(Math.abs(j * this.size - cell.half - a.y1), Math.abs((j + 1) * this.size + cell.half - a.y1));
+        const D = Math.hypot(dx, dy);
+        const tol = off + D * tilt * 1.001 + 1e-6 * (1 + D);
+        let lo = 0;
+        let hi = cell.rho.length;
+        while (lo < hi) {
+          const m = (lo + hi) >> 1;
+          if (cell.rho[m] < rho - tol) lo = m + 1;
+          else hi = m;
+        }
+        for (let m = lo; m < cell.rho.length && cell.rho[m] <= rho + tol; m++) yield cell.idx[m];
+      }
   }
 }
 
@@ -80,26 +190,41 @@ export function penStats(segs: Segment[], minGap: number, maxGap: number, join =
     }
     const grid = new Grid(list, Math.max(16, maxGap * 2));
     let paired = 0;
+    let ladder = 0;
     for (const a of list) {
       const L = len(a);
       if (L < 2 * minGap) continue;
       const ux = (a.x2 - a.x1) / L;
       const uy = (a.y2 - a.y1) / L;
       let best = 0;
+      // The parallel lines each side (pairing, at least twice as long as the gap), by distance.
+      const lefts: number[] = [];
+      const rights: number[] = [];
       for (const b of grid.near((a.x1 + a.x2) / 2, (a.y1 + a.y2) / 2, L / 2 + maxGap)) {
         if (b === a) continue;
         const Lb = len(b);
         const vx = (b.x2 - b.x1) / Lb;
         const vy = (b.y2 - b.y1) / Lb;
         if (Math.abs(ux * vy - uy * vx) > 0.035) continue;
-        const d = Math.abs((b.x1 - a.x1) * -uy + (b.y1 - a.y1) * ux);
+        const sd = (b.x1 - a.x1) * -uy + (b.y1 - a.y1) * ux;
+        const d = Math.abs(sd);
         if (d < minGap || d > maxGap) continue;
         const ov = overlap(a, b, ux, uy);
-        if (ov >= 2 * d) best = Math.max(best, ov);
+        if (ov >= 2 * d) {
+          best = Math.max(best, ov);
+          (sd > 0 ? lefts : rights).push(d);
+        }
       }
-      paired += best;
+      // A rung of a ladder: the same spacing both sides and a further rung beyond (four lines or
+      // more evenly spaced). Three lines evenly spaced are a wall drawn with a middle layer.
+      const left = lefts.length ? Math.min(...lefts) : Infinity;
+      const right = rights.length ? Math.min(...rights) : Infinity;
+      const even = left < Infinity && right < Infinity && Math.abs(left - right) <= 0.1 * Math.max(left, right);
+      const at = (ds: number[], want: number) => ds.some((d) => Math.abs(d - want) <= 0.1 * want);
+      if (even && (at(lefts, 2 * left) || at(rights, 2 * right))) ladder += L;
+      else paired += best;
     }
-    out.push({ key, segments: list.length, length, paired });
+    out.push({ key, segments: list.length, length, paired, ladder });
   }
   return out.sort((a, b) => b.paired - a.paired);
 }
@@ -187,8 +312,8 @@ export function wallShapedFills(segs: Segment[], minGap: number, maxGap: number)
   for (const list of bySub.values()) {
     const xs = list.flatMap((s) => [s.x1, s.x2]);
     const ys = list.flatMap((s) => [s.y1, s.y2]);
-    const w = Math.max(...xs) - Math.min(...xs);
-    const h = Math.max(...ys) - Math.min(...ys);
+    const w = maxOf(xs) - minOf(xs);
+    const h = maxOf(ys) - minOf(ys);
     const [narrow, long] = w < h ? [w, h] : [h, w];
     const edge = list.reduce((n, s) => n + len(s), 0);
     all += edge;
@@ -272,7 +397,8 @@ export interface GlazingRule {
 export function bridgeGaps(walls: Segment[], maxGap: number, glazing?: GlazingRule): Segment[] {
   const lines = walls.filter((s) => len(s) >= 0.5);
   const reach = glazing ? Math.max(maxGap, glazing.maxGap) : maxGap;
-  const grid = new Grid(lines, Math.max(16, reach));
+  const lens = lines.map(len);
+  const byLine = new InLineGrid(lines, lens, Math.max(16, reach));
   const other = glazing ? new Grid(glazing.lines, 32) : null;
   /** Share of the gap a→b covered by other linework running along it (window glazing, frames). */
   const glazed = (ax: number, ay: number, bx: number, by: number): number => {
@@ -307,7 +433,8 @@ export function bridgeGaps(walls: Segment[], maxGap: number, glazing?: GlazingRu
   };
   const bridges: Segment[] = [];
   const seen = new Set<string>();
-  for (const a of lines) {
+  for (let ai = 0; ai < lines.length; ai++) {
+    const a = lines[ai];
     const La = len(a);
     const ux = (a.x2 - a.x1) / La;
     const uy = (a.y2 - a.y1) / La;
@@ -319,9 +446,11 @@ export function bridgeGaps(walls: Segment[], maxGap: number, glazing?: GlazingRu
       // that carries on from this end (CAD often splits walls into pieces) is no gap.
       let best: { x: number; y: number; d: number } | null = null;
       let continues = false;
-      for (const b of grid.near(ex, ey, reach + 32)) {
+      // The lines running this way about on this line (offset under 0.3), among those `Grid.near` would give.
+      for (const bi of byLine.inLine(ex, ey, reach + 32, ai, 0.3)) {
+        const b = lines[bi];
         if (b === a) continue;
-        const Lb = len(b);
+        const Lb = lens[bi];
         const vx = (b.x2 - b.x1) / Lb;
         const vy = (b.y2 - b.y1) / Lb;
         if (Math.abs(ux * vy - uy * vx) > 0.0175) continue; // 1°
@@ -389,7 +518,7 @@ export function symbolShapes(segs: Segment[], maxSize: number): Set<Segment> {
     if (list.some((s, i) => i > 0 && Math.hypot(s.x1 - list[i - 1].x2, s.y1 - list[i - 1].y2) > 0.3)) continue;
     const xs = list.flatMap((s) => [s.x1, s.x2]);
     const ys = list.flatMap((s) => [s.y1, s.y2]);
-    if (Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) > maxSize) continue;
+    if (Math.max(maxOf(xs) - minOf(xs), maxOf(ys) - minOf(ys)) > maxSize) continue;
     const slanted = list.some((s) => Math.min(Math.abs(s.x2 - s.x1), Math.abs(s.y2 - s.y1)) > 0.1 * len(s));
     if (slanted) for (const s of list) out.add(s);
   }

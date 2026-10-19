@@ -42,7 +42,18 @@ export function checkScale(texts: PageText[], segs: Segment[], units: Units): Sc
   return a && b ? (b.agree > a.agree ? b : a) : (a ?? b);
 }
 
-function checkScaleAs(texts: PageText[], segs: Segment[], units: Units): ScaleCheck | null {
+/** One dimension string read against the line it labels: metres per sheet point, and where it is. */
+export interface DimensionVote {
+  metersPerPoint: number;
+  cx: number;
+  cy: number;
+}
+
+/**
+ * Each dimension figure paired with the line it sits on (see `checkScale`), as metres per
+ * sheet point at its place on the sheet; `read`: dimension figures read in all.
+ */
+export function dimensionVotes(texts: PageText[], segs: Segment[], units: Units): { votes: DimensionVote[]; read: number } {
   const lines = segs.filter((s) => !s.filled && Math.hypot(s.x2 - s.x1, s.y2 - s.y1) > 8);
   // Lines bucketed by midpoint.
   const cell = 64;
@@ -53,7 +64,7 @@ function checkScaleAs(texts: PageText[], segs: Segment[], units: Units): ScaleCh
     if (list) list.push(s);
     else grid.set(k, [s]);
   }
-  const votes: number[] = [];
+  const votes: DimensionVote[] = [];
   let read = 0;
   for (const t of texts) {
     const meters = dimensionMeters(t.str, units);
@@ -89,8 +100,14 @@ function checkScaleAs(texts: PageText[], segs: Segment[], units: Units): ScaleCh
         }
       }
     }
-    if (best) votes.push(meters / best);
+    if (best) votes.push({ metersPerPoint: meters / best, cx: t.cx, cy: t.cy });
   }
+  return { votes, read };
+}
+
+function checkScaleAs(texts: PageText[], segs: Segment[], units: Units): ScaleCheck | null {
+  const { votes: found, read } = dimensionVotes(texts, segs, units);
+  const votes = found.map((v) => v.metersPerPoint);
   if (votes.length < 3) return null;
   // The scale most votes agree on (within 1.5%).
   let top: ScaleCheck | null = null;

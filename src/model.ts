@@ -135,7 +135,7 @@ export interface Measurement {
   /** Cutouts subtracted from an area measurement. */
   holes: Pt[][];
   /** Made by the automatic wall or room takeoff, so a re-run can replace it. */
-  source?: 'walls' | 'rooms' | 'legend' | 'sprinklers' | 'ceilings' | 'symbols';
+  source?: 'walls' | 'rooms' | 'legend' | 'sprinklers' | 'ceilings' | 'symbols' | 'windows';
   /** A name for this takeoff, e.g. the room it covers ("112 RECEIVING & GEN. STORAGE"). */
   label?: string;
   /**
@@ -153,6 +153,12 @@ export interface Measurement {
    * schedule gives it. Its wall finishes run up to it (instead of the wall type's height).
    */
   ceilingHeight?: number;
+  /**
+   * Walls finished more than one way (a schedule with a column per wall: tile on two walls,
+   * paint on two): the share of the room's walls each wall finish type takes, by type id. Used
+   * while it includes `finishes.walls`; a wall finish picked by hand replaces it.
+   */
+  wallShares?: Record<string, number>;
 }
 
 export type FinishRole = 'floor' | 'base' | 'walls' | 'ceiling';

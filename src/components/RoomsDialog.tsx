@@ -1,16 +1,20 @@
 import { useEffect, useState } from 'react';
-import { findRoomLabels, fillRoomsAsync, roomPoint, type FoundRoom } from '../fill/rooms';
+import { roomPoint, type FoundRoom } from '../fill/rooms';
 import { fillRoom } from '../fill/roomFill';
 import { ringArea } from '../geometry';
-import { segmentsOf, wallModelFor } from '../fill/sheetWalls';
-import { newId, type Measurement, type Pt, type Sheet, type TakeoffType, type Units } from '../model';
-import { pageTexts } from '../pageText';
-import type { PDFPageProxy } from '../pdf';
+import { wallModelFor } from '../fill/sheetWalls';
+import type { Measurement, Sheet, TakeoffType, Units } from '../model';
+import { findRooms, notRoomCodes, roomDoubt, roomName, roomNumber, roomsTypeOf, roomTakeoff } from '../automate/rooms';
+import { projectSetTypes } from '../automate/walls';
+import type { PDFDocumentProxy, PDFPageProxy } from '../pdf';
 import { useEscape } from './Dialogs';
 import { areaUnit, formatQty, toArea } from '../units';
 
 interface Props {
   page: PDFPageProxy;
+  /** The sheet's drawing file and the project's others: their type schedules say which boxed codes are not rooms. */
+  doc?: PDFDocumentProxy;
+  others?: PDFDocumentProxy[];
   sheet: Sheet;
   units: Units;
   types: TakeoffType[];
@@ -23,26 +27,29 @@ interface Props {
 }
 
 type State =
-  | { phase: 'running'; step: string; done: number; total: number }
-  | { phase: 'done'; rooms: FoundRoom[]; ms: number }
-  | { phase: 'error'; message: string };
+  { phase: 'running'; step: string; done: number; total: number } | { phase: 'done'; rooms: FoundRoom[]; ms: number } | { phase: 'error'; message: string };
 
 const NEW = '__new__';
-const roomNumber = (r: FoundRoom) => r.labels.map((l) => l.number).join(' / ');
-const roomName = (r: FoundRoom) => [...new Set(r.labels.map((l) => l.name).filter(Boolean))].join(' / ');
 
 /**
  * Room takeoff: finds every room tag on the sheet (number in a box, name above or below it),
  * fills each room to the inside face of its walls, and adds the ones picked as
  * named area takeoffs.
  */
-export function RoomsDialog({ page, sheet, units, types, earlier, palette, maxOpening, onApply, onClose }: Props) {
-  const [state, setState] = useState<State>({ phase: 'running', step: 'Reading the sheet…', done: 0, total: 0 });
+export function RoomsDialog({ page, doc, others, sheet, units, types, earlier, palette, maxOpening, onApply, onClose }: Props) {
+  const [state, setState] = useState<State>({
+    phase: 'running',
+    step: 'Reading the sheet…',
+    done: 0,
+    total: 0,
+  });
   const [picked, setPicked] = useState<Set<number>>(new Set());
   const [names, setNames] = useState<Map<number, string>>(new Map());
+  /** Rooms likely not rooms (a wall tag in a box, a sliver), left unpicked, with why. */
+  const [doubts, setDoubts] = useState<Map<number, string>>(new Map());
   const areaTypes = types.filter((t) => t.kind === 'area');
   // Rooms go under their own type; their floor, ceiling and other finishes are set in Room finishes.
-  const [typeId, setTypeId] = useState(() => areaTypes.find((t) => /^rooms?\b/i.test(t.name))?.id ?? NEW);
+  const [typeId, setTypeId] = useState(() => roomsTypeOf(types) ?? NEW);
   const [replaceEarlier, setReplaceEarlier] = useState(true);
   const mpp = sheet.metersPerPoint ?? 0;
 
@@ -51,18 +58,41 @@ export function RoomsDialog({ page, sheet, units, types, earlier, palette, maxOp
     const started = performance.now();
     (async () => {
       try {
-        const [segs, texts, model] = await Promise.all([segmentsOf(page), pageTexts(page), wallModelFor(page, sheet, maxOpening)]);
-        const labels = findRoomLabels(texts, segs);
+        const [rooms, set] = await Promise.all([
+          findRooms(page, sheet, maxOpening, (done, total) => {
+            if (live)
+              setState({
+                phase: 'running',
+                step: `Filling room ${Math.min(done + 1, total)} of ${total}…`,
+                done,
+                total,
+              });
+          }),
+          projectSetTypes(doc, others).catch(() => undefined),
+        ]);
         if (!live) return;
-        const rooms = await fillRoomsAsync(model, labels, sheet.width, sheet.height, (done, total) => {
-          if (live) setState({ phase: 'running', step: `Filling room ${Math.min(done + 1, total)} of ${total}…`, done, total });
-        });
-        if (!live) return;
-        setPicked(new Set(rooms.flatMap((r, i) => (r.points ? [i] : []))));
+        const codes = notRoomCodes(types, set);
+        setDoubts(
+          new Map(
+            rooms.flatMap((r, i) => {
+              const d = roomDoubt(r, codes, sheet.metersPerPoint);
+              return d ? [[i, d] as const] : [];
+            }),
+          ),
+        );
+        setPicked(new Set(rooms.flatMap((r, i) => (r.points && !roomDoubt(r, codes, sheet.metersPerPoint) ? [i] : []))));
         setNames(new Map(rooms.map((r, i) => [i, roomName(r)])));
-        setState({ phase: 'done', rooms, ms: Math.round(performance.now() - started) });
+        setState({
+          phase: 'done',
+          rooms,
+          ms: Math.round(performance.now() - started),
+        });
       } catch (e) {
-        if (live) setState({ phase: 'error', message: e instanceof Error ? e.message : String(e) });
+        if (live)
+          setState({
+            phase: 'error',
+            message: e instanceof Error ? e.message : String(e),
+          });
       }
     })();
     return () => {
@@ -91,7 +121,21 @@ export function RoomsDialog({ page, sheet, units, types, earlier, palette, maxOp
         // From the latest state: another retry may have finished meanwhile.
         setState((cur) =>
           cur.phase === 'done'
-            ? { ...cur, rooms: cur.rooms.map((r, j) => (j === i ? { ...r, points: res.points, openings: res.openings, reason: undefined, area: Math.abs(ringArea(res.points)), wider: true } : r)) }
+            ? {
+                ...cur,
+                rooms: cur.rooms.map((r, j) =>
+                  j === i
+                    ? {
+                        ...r,
+                        points: res.points,
+                        openings: res.openings,
+                        reason: undefined,
+                        area: Math.abs(ringArea(res.points)),
+                        wider: true,
+                      }
+                    : r,
+                ),
+              }
             : cur,
         );
         setPicked((s) => new Set(s).add(i));
@@ -109,38 +153,16 @@ export function RoomsDialog({ page, sheet, units, types, earlier, palette, maxOp
 
   function add() {
     if (state.phase !== 'done') return;
-    const newTypes: TakeoffType[] = [];
-    let target = typeId;
-    if (typeId === NEW) {
-      const t: TakeoffType = {
-        id: newId(),
-        name: 'Rooms',
-        color: palette[types.length % palette.length],
-        kind: 'area',
-        height: units === 'metric' ? 3 : 10,
-        items: [],
-        division: '09 Finishes',
-      };
-      newTypes.push(t);
-      target = t.id;
-    }
-    const measurements: Measurement[] = state.rooms.flatMap((r, i) =>
-      r.points && picked.has(i)
-        ? [
-            {
-              id: newId(),
-              sheetId: sheet.id,
-              typeId: target,
-              points: r.points.map((p) => [...p] as Pt),
-              holes: [],
-              ...(r.openings ? { openings: r.openings } : {}),
-              source: 'rooms' as const,
-              label: `${roomNumber(r)} ${names.get(i) ?? ''}`.trim(),
-            },
-          ]
-        : [],
-    );
-    onApply({ types: newTypes, measurements, replaceEarlier: earlier > 0 && replaceEarlier });
+    const made = roomTakeoff(state.rooms, {
+      sheet,
+      typeId: typeId === NEW ? null : typeId,
+      picked,
+      names,
+      types,
+      units,
+      palette,
+    });
+    onApply({ ...made, replaceEarlier: earlier > 0 && replaceEarlier });
     onClose();
   }
 
@@ -175,11 +197,14 @@ export function RoomsDialog({ page, sheet, units, types, earlier, palette, maxOp
         {state.phase === 'done' && (
           <>
             <p className="muted">
-              Every room tag on the sheet (a number such as 101, 101a or B23 in a small box, with the name above or below it), filled to the
-              inside face of its walls. Tags in one open space share it.
+              Every room tag on the sheet (a number such as 101, 101a or B23 in a small box, with the name above or below it), filled to the inside face of its
+              walls. Tags in one open space share it.
             </p>
             {state.rooms.length === 0 ? (
-              <p className="warn">No room tags found on this sheet. A room tag is a room number in a small box with the room name above or below it, or a bare number under the name.</p>
+              <p className="warn">
+                No room tags found on this sheet. A room tag is a room number in a small box with the room name above or below it, or a bare number under the
+                name.
+              </p>
             ) : (
               <table className="wall-table rooms-table">
                 <thead>
@@ -231,6 +256,7 @@ export function RoomsDialog({ page, sheet, units, types, earlier, palette, maxOp
                           <>
                             {area(r)}
                             {(r as FoundRoom & { wider?: boolean }).wider && <div className="field-hint">wider openings closed, check it</div>}
+                            {doubts.has(i) && <div className="field-hint">{doubts.get(i)}</div>}
                           </>
                         ) : stillOpen.has(i) ? (
                           <span className="muted">Not closed, draw by hand</span>
@@ -260,8 +286,8 @@ export function RoomsDialog({ page, sheet, units, types, earlier, palette, maxOp
               </label>
               {earlier > 0 && (
                 <label className="inline">
-                  <input type="checkbox" checked={replaceEarlier} onChange={(e) => setReplaceEarlier(e.target.checked)} /> Replace this sheet’s
-                  earlier rooms ({earlier})
+                  <input type="checkbox" checked={replaceEarlier} onChange={(e) => setReplaceEarlier(e.target.checked)} /> Replace this sheet’s earlier rooms (
+                  {earlier})
                 </label>
               )}
               <div className="spacer" />

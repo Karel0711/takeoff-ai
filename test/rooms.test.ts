@@ -174,3 +174,37 @@ describe('leaks', () => {
     expect(fillRooms(m, labels.slice(0, 2), 1000, 1000).map((r) => r.labels.length)).toEqual([2]);
   });
 });
+
+describe('room tags among other boxed tags', () => {
+  // Three named rooms, wall type tags boxed like room numbers but never named, a room number
+  // written with its RM prefix, and a pen width that differs in its last digits side to side.
+  const wobbly = (x: number, y: number) => tagBox(x, y).map((s, i) => ({ ...s, width: i % 2 ? 0.2400003 : 0.2399997 }));
+  const lines = [...tagBox(2, 2), ...tagBox(6, 2), ...wobbly(10, 2), ...tagBox(2, 6), ...tagBox(6, 6), ...tagBox(10, 6)];
+  const texts = [
+    text('OFFICE', 2, 1.6),
+    text('101', 2, 2),
+    text('LUNCH ROOM', 6, 1.6),
+    text('RM 102', 6, 2),
+    text('LOCKERS', 10, 1.6),
+    text('103', 10, 2),
+    text('W3', 2, 6),
+    text('EW1', 6, 6),
+    text('W3', 10, 6),
+  ];
+
+  it('takes the named numbers as rooms and leaves the unnamed family of wall tags', () => {
+    const labels = findRoomLabels(texts, lines);
+    expect(labels.map((l) => [l.number, l.name])).toEqual([
+      ['101', 'OFFICE'],
+      ['102', 'LUNCH ROOM'],
+      ['103', 'LOCKERS'],
+    ]);
+  });
+
+  it('takes one-digit numbers in wide boxes as rooms when they are named', () => {
+    const wide = (x: number, y: number) => rect(x - 0.7, y - 0.2, x + 0.7, y + 0.2, 0.24);
+    const t = [text('STORAGE', 2, 1.6), text('1', 2, 2), text('WASHROOM', 6, 1.6), text('2', 6, 2), text('CORRIDOR', 10, 1.6), text('3', 10, 2), text('4', 14, 2)];
+    const labels = findRoomLabels(t, [...wide(2, 2), ...wide(6, 2), ...wide(10, 2), ...wide(14, 2)]);
+    expect(labels.map((l) => l.number)).toEqual(['1', '2', '3']);
+  });
+});

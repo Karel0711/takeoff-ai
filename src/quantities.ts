@@ -94,6 +94,14 @@ export function finishVars(room: Measurement, type: TakeoffType, sheet: Sheet, u
   return { L, H, A, P: 0, N: 1, I: 0 };
 }
 
+/** A room's wall finish shares, while they include its wall finish (see `Measurement.wallShares`); else null. */
+export function wallSharesOf(m: Measurement): [string, number][] | null {
+  const walls = m.finishes?.walls;
+  if (!walls || !m.wallShares || !(walls in m.wallShares)) return null;
+  const shares = Object.entries(m.wallShares).filter(([, v]) => v > 0);
+  return shares.length > 1 ? shares : null;
+}
+
 /** One measurement's share of one type: drawn as that type, or a room finished with it. */
 export interface Contribution {
   m: Measurement;
@@ -125,7 +133,20 @@ export function contributions(project: Project): Contribution[] {
     for (const { role } of FINISH_ROLES) {
       // A finish of the room's own type would count the room twice.
       const t = m.finishes[role] && m.finishes[role] !== m.typeId ? types.get(m.finishes[role]!) : undefined;
-      if (t) out.push({ m, type: t, sheet, vars: times(finishVars(m, t, sheet, project.units), k), role });
+      if (!t) continue;
+      const shares = role === 'walls' ? wallSharesOf(m) : null;
+      if (!shares) {
+        out.push({ m, type: t, sheet, vars: times(finishVars(m, t, sheet, project.units), k), role });
+        continue;
+      }
+      // Walls finished several ways: each type its share of them.
+      for (const [id, share] of shares) {
+        const st = types.get(id);
+        if (!st || id === m.typeId) continue;
+        const v = times(finishVars(m, st, sheet, project.units), k);
+        // Its share of the walls' length and area; still one room.
+        out.push({ m, type: st, sheet, vars: v && { ...v, L: v.L * share, A: v.A * share, P: v.P * share, O: (v.O ?? 0) * share }, role });
+      }
     }
   }
   return out;
