@@ -197,9 +197,9 @@ export function penStats(segs: Segment[], minGap: number, maxGap: number, join =
       const ux = (a.x2 - a.x1) / L;
       const uy = (a.y2 - a.y1) / L;
       let best = 0;
-      // The nearest parallel line each side (pairing, at least twice as long as the gap).
-      let left = Infinity;
-      let right = Infinity;
+      // The parallel lines each side (pairing, at least twice as long as the gap), by distance.
+      const lefts: number[] = [];
+      const rights: number[] = [];
       for (const b of grid.near((a.x1 + a.x2) / 2, (a.y1 + a.y2) / 2, L / 2 + maxGap)) {
         if (b === a) continue;
         const Lb = len(b);
@@ -212,11 +212,16 @@ export function penStats(segs: Segment[], minGap: number, maxGap: number, join =
         const ov = overlap(a, b, ux, uy);
         if (ov >= 2 * d) {
           best = Math.max(best, ov);
-          if (sd > 0) left = Math.min(left, d);
-          else right = Math.min(right, d);
+          (sd > 0 ? lefts : rights).push(d);
         }
       }
-      if (left < Infinity && right < Infinity && Math.abs(left - right) <= 0.1 * Math.max(left, right)) ladder += L;
+      // A rung of a ladder: the same spacing both sides and a further rung beyond (four lines or
+      // more evenly spaced). Three lines evenly spaced are a wall drawn with a middle layer.
+      const left = lefts.length ? Math.min(...lefts) : Infinity;
+      const right = rights.length ? Math.min(...rights) : Infinity;
+      const even = left < Infinity && right < Infinity && Math.abs(left - right) <= 0.1 * Math.max(left, right);
+      const at = (ds: number[], want: number) => ds.some((d) => Math.abs(d - want) <= 0.1 * want);
+      if (even && (at(lefts, 2 * left) || at(rights, 2 * right))) ladder += L;
       else paired += best;
     }
     out.push({ key, segments: list.length, length, paired, ladder });

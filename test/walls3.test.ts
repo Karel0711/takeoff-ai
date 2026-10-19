@@ -58,6 +58,15 @@ describe('hatching is no wall pen', () => {
     expect(detectWallPens(stats)).toEqual(['0.35']);
   });
 
+  it('keeps a wall drawn with a middle layer (three evenly spaced lines) as wall pairs', () => {
+    const walls = [...room(0, 0, 0.35, 0.2), ...room(0, 6, 0.35, 0.2)];
+    // The middle layer: a third line halfway between the faces.
+    const mid = [...poly(0.35, [0.1, 0.1], [5.9, 0.1], [5.9, 3.9], [0.1, 3.9], [0.1, 0.1]), ...poly(0.35, [0.1, 6.1], [5.9, 6.1], [5.9, 9.9], [0.1, 9.9], [0.1, 6.1])];
+    const w = penStats([...walls, ...mid], pt(0.06), pt(0.7)).find((s) => s.key === '0.35')!;
+    expect(w.ladder ?? 0).toBe(0);
+    expect(w.paired / w.length).toBeGreaterThan(0.5);
+  });
+
   it('gives up on a wall search that would test every line against thousands of others', () => {
     const hatch: Segment[] = [];
     for (let i = 0; i < 400; i++) hatch.push(...poly(0.7, [0, i * 0.1], [40, i * 0.1]), ...poly(0.7, [i * 0.1, 0], [i * 0.1, 40]));
