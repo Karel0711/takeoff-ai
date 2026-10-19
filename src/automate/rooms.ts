@@ -55,9 +55,11 @@ export async function findRooms(page: PDFPageProxy, sheet: Sheet, maxOpening: nu
   const [segs, texts, model] = await Promise.all([segmentsOf(page), pageTexts(page), wallModelFor(page, sheet, maxOpening)]);
   const labels = findRoomLabels(texts, segs);
   let rooms = await fillRoomsAsync(model, labels, sheet.width, sheet.height, progress ?? (() => {}));
-  // Rooms that leaked out through a wide doorway (an overhead door): again with doorways twice as wide closed.
-  if (rooms.some((r) => !r.points && r.reason === 'not-closed'))
-    rooms = closeWide(rooms, await wallModelFor(page, sheet, 2 * maxOpening), labels, sheet.width, sheet.height);
+  // Rooms that leaked out through a wide doorway (an overhead door, a garage's run of them):
+  // again with doorways twice, then three times as wide closed.
+  for (const k of [2, 3, 4])
+    if (rooms.some((r) => !r.points && r.reason === 'not-closed'))
+      rooms = closeWide(rooms, await wallModelFor(page, sheet, k * maxOpening), labels, sheet.width, sheet.height);
   return cutIslands(rooms);
 }
 

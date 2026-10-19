@@ -9,7 +9,9 @@ import { readLegendRows } from './legend';
 import { marksOf, type Mark } from './marks';
 import { drawSegments, makeGrid, simplify, traceBoundary } from './raster';
 import { buildWallModel, snapToLines } from './roomFill';
+import { detectWallPens, penStats } from './walls';
 import { findRoomLabels } from './rooms';
+import { scaleNotes } from '../sheetScale';
 import type { Segment } from './vectors';
 import { findRoot, maxOf, minOf } from '../arrays';
 
@@ -85,10 +87,12 @@ const bare = (s: string) => s.trim().replace(/^\((.+)\)$|^\[(.+)\]$/, '$1$2');
 const LETTERS = /^[A-Z]{2,4}$/;
 /** Code prefixes ceiling types go by (an x after them for existing: cx, actx). */
 const CEILING_PREFIX = /^(?:c|cl|clg|cg|ceil|act|acp|apc|acl|at|ec|gwb|gb|gyp|lap|sat|sc|t)x?$/i;
-const HEIGHT = /^\+?\d{1,2}'\s*-?\s*\d{1,2}(?:\s+\d{1,2}\/\d{1,2})?"?(?:\s*a\.?f\.?f\.?)?$|^\+?\d,?\d{3}\s*(?:mm)?(?:\s*a\.?f\.?f\.?)?$/i;
+const HEIGHT = /^(?:\+\/-\s*|±\s*)?\+?\d{1,2}'\s*-?\s*\d{1,2}(?:\s+\d{1,2}\/\d{1,2})?"?(?:\s*a\.?f\.?f\.?)?$|^(?:\+\/-\s*|±\s*)?\+?\d,?\d{3}\s*(?:mm)?(?:\s*a\.?f\.?f\.?)?$/i;
 /** A legend row about a ceiling finish (not a diffuser or a light drawn as a box). */
 const CEILING_WORDS = /ceiling|\bclg\b|tile|panel|board|gypsum|\bgyp|\bgwb\b|\bact\b|lay-?in|acoustic|plaster|bulkhead|soffit|t-bar|suspended|drywall/i;
 const ABOVE = /^(?:above|abv\.?|\(above\))$/i;
+/** A note marking a space with no ceiling: open to below or above, a shaft. */
+const OPEN_SPACE = /\bopen\s+(?:to|into)\s+(?:below|above|level|floor)|^no\s+ceiling\b|^open\s+shaft\b/i;
 
 export const codeKey = (s: string) => s.replace(/-/g, '').toLowerCase();
 
@@ -135,8 +139,8 @@ export function readCeilingDefs(input: PageText[], segs: Segment[] = []): { defs
     if (new Set(rows.map((r) => codeKey(r.str))).size < 3) continue;
     // A column of letters only (GYP, EXP, MS: materials abbreviated) is a ceiling table only
     // under a ceiling heading, and its descriptions can be a couple of words.
-    const lettered = rows.every((r) => !CODE.test(r.str));
-    if (!lettered && rows.some((r) => !CODE.test(r.str))) continue;
+    // Codes and words mixed (C-1, C-2, EX, OPEN) likewise.
+    const lettered = rows.some((r) => !CODE.test(r.str));
     const pitch = rows.length > 1 ? (rows[rows.length - 1].cy - rows[0].cy) / (rows.length - 1) : 50;
     const headedAbove = texts.some((t) => /ceiling.*(type|schedule|assembl|legend|material)|(type|schedule|assembl|legend|material).*ceiling|\bclg\b/i.test(t.str) && t.cy < rows[0].cy && t.cy > rows[0].cy - 3 * pitch && t.cx + t.w / 2 > rows[0].cx - 40 && t.cx - t.w / 2 < rows[0].cx + 400);
     if (lettered && !headedAbove) continue;
@@ -226,40 +230,76 @@ export function backgroundInk(s: Segment): boolean {
 }
 
 /**
- * Lines drawn dashed by hand: short pieces of one pen on one line with gaps between them
- * (CAD exports often explode a dashed line into its dashes). Four in a row at least.
+ * Lines drawn dashed by hand: short pieces of one pen on one line (any direction) with gaps
+ * between them (CAD exports often explode a dashed line into its dashes). Four in a row at least.
  */
 export function explodedDashes(segs: Segment[]): Set<Segment> {
   const out = new Set<Segment>();
-  const lines = new Map<string, { s: Segment; a: number; b: number }[]>();
+  // Pieces by pen and direction (to 6°), then by the line they lie on, measured along the
+  // group's own mean direction.
+  const byDir = new Map<string, { s: Segment; ang: number }[]>();
   for (const s of segs) {
     if (s.filled || s.curve) continue;
     const L = Math.hypot(s.x2 - s.x1, s.y2 - s.y1);
     if (L < 0.3 || L > 14) continue;
-    const horizontal = Math.abs(s.y2 - s.y1) <= 0.05;
-    const vertical = Math.abs(s.x2 - s.x1) <= 0.05;
-    if (!horizontal && !vertical) continue;
-    const at = horizontal ? s.y1 : s.x1;
-    const key = `${horizontal ? 'h' : 'v'}${Math.round(at * 4)}|${s.width}|${s.color ?? ''}`;
-    const [a, b] = horizontal ? [Math.min(s.x1, s.x2), Math.max(s.x1, s.x2)] : [Math.min(s.y1, s.y2), Math.max(s.y1, s.y2)];
-    (lines.get(key) ?? lines.set(key, []).get(key)!).push({ s, a, b });
+    let ang = Math.atan2(s.y2 - s.y1, s.x2 - s.x1);
+    if (ang < 0) ang += Math.PI;
+    if (ang >= Math.PI - 1e-9) ang -= Math.PI;
+    if (Math.abs(s.y2 - s.y1) <= 0.05) ang = 0;
+    else if (Math.abs(s.x2 - s.x1) <= 0.05) ang = Math.PI / 2;
+    const bucket = Math.round((ang * 180) / Math.PI / 6) % 30;
+    const key = `${bucket}|${s.width}|${s.color ?? ''}`;
+    (byDir.get(key) ?? byDir.set(key, []).get(key)!).push({ s, ang: bucket === 0 && ang > Math.PI / 2 ? ang - Math.PI : ang });
   }
-  for (const pieces of lines.values()) {
-    if (pieces.length < 4) continue;
-    pieces.sort((p, q) => p.a - q.a);
-    let run: typeof pieces = [pieces[0]];
-    const flush = () => {
-      if (run.length >= 4) for (const p of run) out.add(p.s);
-    };
-    for (let i = 1; i < pieces.length; i++) {
-      const gap = pieces[i].a - run[run.length - 1].b;
-      if (gap >= 0.5 && gap <= 12) run.push(pieces[i]);
-      else {
-        flush();
-        run = [pieces[i]];
+  const groups: { s: Segment; off: number; a: number; b: number }[][] = [];
+  for (const list of byDir.values()) {
+    if (list.length < 4) continue;
+    const th = list.reduce((n, p) => n + p.ang, 0) / list.length;
+    const ux = Math.cos(th);
+    const uy = Math.sin(th);
+    groups.push(
+      list.map(({ s }) => {
+        const t1 = s.x1 * ux + s.y1 * uy;
+        const t2 = s.x2 * ux + s.y2 * uy;
+        return { s, off: ((s.x1 + s.x2) / 2) * -uy + ((s.y1 + s.y2) / 2) * ux, a: Math.min(t1, t2), b: Math.max(t1, t2) };
+      }),
+    );
+  }
+  for (const all of groups) {
+    if (all.length < 4) continue;
+    all.sort((p, q) => p.off - q.off);
+    // Lines: pieces whose offsets lie within a quarter point of the last (a slanted line's
+    // pieces drift a little off the bucket's direction, so offsets are chained, not binned).
+    const lines: (typeof all)[] = [];
+    for (const p of all) {
+      let line: typeof all | undefined;
+      for (let k = lines.length - 1; k >= 0 && k >= lines.length - 12; k--) {
+        const l = lines[k];
+        if (Math.abs(l[l.length - 1].off - p.off) <= 0.25 && Math.abs(l[0].off - p.off) <= 1.5) {
+          line = l;
+          break;
+        }
       }
+      if (line) line.push(p);
+      else lines.push([p]);
     }
-    flush();
+    for (const pieces of lines) {
+      if (pieces.length < 4) continue;
+      pieces.sort((p, q) => p.a - q.a);
+      let run: typeof pieces = [pieces[0]];
+      const flush = () => {
+        if (run.length >= 4) for (const p of run) out.add(p.s);
+      };
+      for (let i = 1; i < pieces.length; i++) {
+        const gap = pieces[i].a - run[run.length - 1].b;
+        if (gap >= 0.5 && gap <= 12) run.push(pieces[i]);
+        else {
+          flush();
+          run = [pieces[i]];
+        }
+      }
+      flush();
+    }
   }
   return out;
 }
@@ -382,6 +422,56 @@ function withoutBackground(lines: Segment[]): Segment[] {
   return lines.filter((s) => !drop.has(s));
 }
 
+/**
+ * The column grid's bubbles: a grid label (A, 7, Ka, 12a) in a circle with a long straight
+ * line, the grid line, running off it. They stand outside the building.
+ */
+export function gridBubbles(texts: PageText[], segs: Segment[]): { at: Pt; r: number }[] {
+  const curves = segs.filter((sg) => sg.curve && !sg.filled);
+  if (!curves.length) return [];
+  const curveIndex = new SegmentIndex(curves, 16);
+  const straight = segs.filter((sg) => !sg.curve && !sg.filled && (Math.abs(sg.x1 - sg.x2) < 0.3 || Math.abs(sg.y1 - sg.y2) < 0.3));
+  const lineIndex = new SegmentIndex(straight, 32);
+  const out: { at: Pt; r: number }[] = [];
+  for (const t of texts) {
+    if (!/^(?:[A-Z]{1,2}\d?|\d{1,2}[A-Za-z]?|[A-Z]\.\d)$/.test(t.str.trim()) || !upright(t)) continue;
+    const R = 5 * t.h;
+    const near = curveIndex.query(t.cx - R, t.cy - R, t.cx + R, t.cy + R).map((i) => curves[i]);
+    // The circle: curved pieces all about one distance from a centre near the label.
+    const pts = near.flatMap((sg) => [[sg.x1, sg.y1], [sg.x2, sg.y2]] as Pt[]).filter(([x, y]) => Math.hypot(x - t.cx, y - t.cy) <= R);
+    if (pts.length < 6) continue;
+    const xs = pts.map((q) => q[0]);
+    const ys = pts.map((q) => q[1]);
+    const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
+    const w = x1 - x0;
+    const h = y1 - y0;
+    if (w < Math.max(t.w, t.h) || h < t.h * 1.2 || w / h > 1.25 || h / w > 1.25) continue;
+    const c: Pt = [(x0 + x1) / 2, (y0 + y1) / 2];
+    const r = (w + h) / 4;
+    if (Math.hypot(c[0] - t.cx, c[1] - t.cy) > 0.35 * r) continue;
+    if (pts.some(([x, y]) => Math.abs(Math.hypot(x - c[0], y - c[1]) - r) > 0.2 * r + 0.5)) continue;
+    // The grid line: drawn on from the circle, straight across or down the sheet (in one
+    // piece, or dashed), for some way.
+    const reach = 25 * t.h;
+    const long = ([[1, 0], [-1, 0], [0, 1], [0, -1]] as const).some(([dx, dy]) => {
+      const a: Pt = [c[0] + dx * r, c[1] + dy * r];
+      const b: Pt = [c[0] + dx * (r + reach), c[1] + dy * (r + reach)];
+      let ink = 0;
+      for (const i of lineIndex.query(Math.min(a[0], b[0]) - 1, Math.min(a[1], b[1]) - 1, Math.max(a[0], b[0]) + 1, Math.max(a[1], b[1]) + 1)) {
+        const sg = straight[i];
+        // Along the axis, on it.
+        if (dx ? Math.abs(sg.y1 - c[1]) > 0.8 || Math.abs(sg.y2 - c[1]) > 0.8 : Math.abs(sg.x1 - c[0]) > 0.8 || Math.abs(sg.x2 - c[0]) > 0.8) continue;
+        const [p, q] = dx ? [sg.x1, sg.x2] : [sg.y1, sg.y2];
+        const [lo, hi] = dx ? [Math.min(a[0], b[0]), Math.max(a[0], b[0])] : [Math.min(a[1], b[1]), Math.max(a[1], b[1])];
+        ink += Math.max(0, Math.min(hi, Math.max(p, q)) - Math.max(lo, Math.min(p, q)));
+      }
+      return ink >= 0.4 * reach;
+    });
+    if (long) out.push({ at: c, r });
+  }
+  return out;
+}
+
 /** Whether a code belongs to the ceiling types: listed in a ceiling types table, or with a ceiling prefix. */
 function isCeilingCode(str: string, defined: Set<string>): boolean {
   const m = CODE.exec(str);
@@ -421,12 +511,16 @@ export function findCeilingTags(input: PageText[], segs: Segment[], defs: Ceilin
   const heights = texts.filter((o) => HEIGHT.test(o.str.trim()));
   const noHeight = texts.filter((o) => /^[-–—]$/.test(o.str.trim()));
   for (const raw of texts) {
-    const str = bare(raw.str);
+    // An existing ceiling's tag: its material with an EX marker ("EX-ACT", "EX. GWB").
+    const ex = /^EX[-.\s]+([A-Z]{2,4})$/.exec(bare(raw.str));
+    const str = ex ? `EX-${ex[1]}` : bare(raw.str);
     // A ceiling note's number in a keynote symbol the size of the notes' own.
     const keynote = !!notes?.defs.some((d) => d.code === str) && Math.abs(raw.h - notes.h) <= notes.h * 0.15 && !(notes.box && raw.cx >= notes.box[0] && raw.cx <= notes.box[2] && raw.cy >= notes.box[1] && raw.cy <= notes.box[3]);
     // A material abbreviation the set's ceiling legend lists (or a usual one: GB, ACT), printed
     // with a ceiling height or the dash a height tag shows where there is none.
-    const lettered = LETTERS.test(str) && (defined.has(codeKey(str)) || CEILING_PREFIX.test(str)) && heightBeside(raw, heights, noHeight);
+    const material = ex ? ex[1] : str;
+    // An existing material marked EX with a ceiling height is a tag whatever the material (EX-CB).
+    const lettered = LETTERS.test(material) && (!!ex || defined.has(codeKey(str)) || CEILING_PREFIX.test(material)) && heightBeside(raw, heights, noHeight);
     if (!CODE.test(str) && !keynote && !lettered) continue;
     const t = str === raw.str ? raw : { ...raw, str };
     // A ceiling code by the set's ceiling types, by its prefix, or by the ceiling height printed with it.
@@ -513,7 +607,7 @@ const perpendicularKey = (key: string) => key.replace(/line(\d+)$/, (_, a) => `l
  * families of one pen. Spacings under `minSpacing` (wall thicknesses) are not hatch here, nor
  * over `maxSpacing`.
  */
-export function hatchFamilies(segs: Segment[], minSpacing: number, maxSpacing = minSpacing * 8, minGrid = minSpacing): { lines: Map<Segment, string>; spacing: Map<string, number>; spacings: Map<string, number[]> } {
+export function hatchFamilies(segs: Segment[], minSpacing: number, maxSpacing = minSpacing * 8, minGrid = minSpacing, wallPens: string[] = []): { lines: Map<Segment, string>; spacing: Map<string, number>; spacings: Map<string, number[]> } {
   const byKey = new Map<string, Segment[]>();
   for (const sg of segs) {
     if (sg.filled || sg.curve) continue;
@@ -524,6 +618,26 @@ export function hatchFamilies(segs: Segment[], minSpacing: number, maxSpacing = 
     if (list) list.push(sg);
     else byKey.set(key, [sg]);
   }
+  // Edges of filled shapes that are not white masks: walls drawn as fills.
+  const fills = segs.filter((sg) => (sg.filled || sg.width === 0) && !/^#f{6}$/i.test(sg.color ?? '') && Math.hypot(sg.x2 - sg.x1, sg.y2 - sg.y1) >= 2);
+  let fillIndex: SegmentIndex | null = null;
+  const onFill = (m: Segment) => {
+    if (!fills.length || m.filled || m.width === 0) return false;
+    fillIndex ??= new SegmentIndex(fills, 32);
+    const L = Math.hypot(m.x2 - m.x1, m.y2 - m.y1);
+    const ux = (m.x2 - m.x1) / L;
+    const uy = (m.y2 - m.y1) / L;
+    let along = 0;
+    for (const k of fillIndex.query(Math.min(m.x1, m.x2) - 0.5, Math.min(m.y1, m.y2) - 0.5, Math.max(m.x1, m.x2) + 0.5, Math.max(m.y1, m.y2) + 0.5)) {
+      const f = fills[k];
+      const off = (x: number, y: number) => Math.abs((x - m.x1) * uy - (y - m.y1) * ux);
+      if (off(f.x1, f.y1) > 0.4 || off(f.x2, f.y2) > 0.4) continue;
+      const t1 = (f.x1 - m.x1) * ux + (f.y1 - m.y1) * uy;
+      const t2 = (f.x2 - m.x1) * ux + (f.y2 - m.y1) * uy;
+      along += Math.max(0, Math.min(L, Math.max(t1, t2)) - Math.max(0, Math.min(t1, t2)));
+    }
+    return along >= 0.5 * L;
+  };
   const lines = new Map<Segment, string>();
   const spacing = new Map<string, number>();
   const spacings = new Map<string, number[]>();
@@ -593,16 +707,14 @@ export function hatchFamilies(segs: Segment[], minSpacing: number, maxSpacing = 
     let keep: (i: number) => boolean;
     // A ceiling grid's cells are tiles, never as small as a wall is thick.
     if (gridded) {
-      // A grid: its lines are crossed by (or meet) the lines across it on both sides. An
-      // outline round the grid, or a wall, is met from one side only.
+      // A grid: its lines are crossed by (or meet) the lines across it on both sides; an
+      // outline round the grid is met from one side only.
       const index = new SegmentIndex(across, 32);
-      keep = (i) => {
-        if (!inRun(i)) return false;
-        const { m, lo, hi } = items[i];
+      // Whether a line is met from both sides.
+      const metBoth = ({ m, lo, hi }: (typeof items)[number]) => {
         const nx = -uy;
         const ny = ux;
-        let a = false;
-        let b = false;
+        const sides: { a: boolean; b: boolean }[] = [];
         for (const k of index.query(Math.min(m.x1, m.x2) - 1, Math.min(m.y1, m.y2) - 1, Math.max(m.x1, m.x2) + 1, Math.max(m.y1, m.y2) + 1)) {
           const q = across[k];
           const d1 = (q.x1 - m.x1) * nx + (q.y1 - m.y1) * ny;
@@ -610,12 +722,46 @@ export function hatchFamilies(segs: Segment[], minSpacing: number, maxSpacing = 
           if (Math.min(d1, d2) > 0.6 || Math.max(d1, d2) < -0.6) continue;
           const t = ((q.x1 + q.x2) / 2) * ux + ((q.y1 + q.y2) / 2) * uy;
           if (t < lo - 0.6 || t > hi + 0.6) continue;
-          if (Math.max(d1, d2) > 0.6) a = true;
-          if (Math.min(d1, d2) < -0.6) b = true;
-          if (a && b) return true;
+          sides.push({ a: Math.max(d1, d2) > 0.6, b: Math.min(d1, d2) < -0.6 });
         }
-        return false;
+        return sides.some((x) => x.a) && sides.some((x) => x.b);
       };
+      // The nodes where a line is crossed straight through.
+      const crossedThrough = ({ m, lo, hi }: (typeof items)[number]) => {
+        const nx = -uy;
+        const ny = ux;
+        const sides: { t: number; a: boolean; b: boolean }[] = [];
+        for (const k of index.query(Math.min(m.x1, m.x2) - 1, Math.min(m.y1, m.y2) - 1, Math.max(m.x1, m.x2) + 1, Math.max(m.y1, m.y2) + 1)) {
+          const q = across[k];
+          const d1 = (q.x1 - m.x1) * nx + (q.y1 - m.y1) * ny;
+          const d2 = (q.x2 - m.x1) * nx + (q.y2 - m.y1) * ny;
+          if (Math.min(d1, d2) > 0.6 || Math.max(d1, d2) < -0.6) continue;
+          const t = ((q.x1 + q.x2) / 2) * ux + ((q.y1 + q.y2) / 2) * uy;
+          if (t < lo - 0.6 || t > hi + 0.6) continue;
+          sides.push({ t, a: Math.max(d1, d2) > 0.6, b: Math.min(d1, d2) < -0.6 });
+        }
+        sides.sort((p, q) => p.t - q.t);
+        let through = 0;
+        for (let s = 0; s < sides.length; ) {
+          let a = false;
+          let b = false;
+          let e = s;
+          for (; e < sides.length && sides[e].t - sides[s].t <= 0.8; e++) {
+            a ||= sides[e].a;
+            b ||= sides[e].b;
+          }
+          if (a && b) through++;
+          s = e;
+        }
+        return through;
+      };
+      // A wall's face drawn along the edge of its fill (walls filled grey or black, poché) is
+      // no grid line, however evenly the walls happen to lie.
+      // In the walls' own pen, where walls lying evenly spaced meet each other's faces at tees
+      // from either side, a grid line is crossed straight through at two nodes at least (lines
+      // drawn cell by cell meet end to end there).
+      const wallPen = wallPens.includes(key.slice(1, key.indexOf(' ')));
+      keep = (i) => inRun(i) && !onFill(items[i].m) && (wallPen ? crossedThrough(items[i]) >= 2 : metBoth(items[i]));
     } else {
       // A hatch one way: a pen that draws mostly hatch (a pen of walls or outlines, a few of
       // them happening to lie evenly spaced, keeps them).
@@ -800,7 +946,15 @@ export function readCeilingSheet(
   const defs = mergeDefs([...(options.defs ?? []), ...own.defs, ...notes.defs]);
   const avoid: Box[] = [...(options.avoid ?? []), ...(own.box ? [own.box] : []), ...(notes.box && notes.defs.length ? [notes.box] : [])];
   const inBox = (x: number, y: number, boxes: Box[]) => boxes.some(([a, b, c, d]) => x >= a && x <= c && y >= b && y <= d);
-  let tags = findCeilingTags(texts, segs, defs, [...own.defs, ...notes.defs].map((d) => d.at), notes).filter((t) => !inBox(t.at[0], t.at[1], avoid));
+  // Where the set lists its ceiling types, a code of another family (T8 beside c1, c3, cx3) is
+  // a fixture's or a door's mark, not a ceiling type.
+  const listed = mergeDefs([...(options.defs ?? []), ...own.defs]);
+  const family = (k: string) => /^[a-z]*/.exec(k)![0];
+  const families = new Set(listed.map((d) => family(d.key)));
+  const keyed = new Set(notes.defs.map((d) => d.key));
+  let tags = findCeilingTags(texts, segs, defs, [...own.defs, ...notes.defs].map((d) => d.at), notes).filter(
+    (t) => !inBox(t.at[0], t.at[1], avoid) && (listed.length < 3 || keyed.has(t.key) || listed.some((d) => d.key === t.key) || families.has(family(t.key))),
+  );
   const mpp = sheet.metersPerPoint;
   const pt = (m: number, fallback: number) => (mpp ? m / mpp : fallback);
 
@@ -857,11 +1011,25 @@ export function readCeilingSheet(
   }
 
   const drawn = segs.filter((s) => s.sub === undefined || !skip.has(s.sub));
-  const hatch = hatchFamilies(drawn, pt(0.28, 7), pt(2, 56), pt(0.45, 12));
+  const wallPens = mpp ? detectWallPens(penStats(segs, pt(0.06, 1.5), pt(0.7, 20))) : [];
+  const hatch = hatchFamilies(drawn, pt(0.28, 7), pt(2, 56), pt(0.45, 12), wallPens);
   // Dashed lines are things above or hidden (beams, bulkheads over, the structural grid), not ceiling edges.
   const dashes = explodedDashes(drawn);
   const kept = drawn.filter((s) => !hatch.lines.has(s) && !s.dashed && !dashes.has(s) && !(s.filled && backgroundInk(s)));
-  const barrierLines = withoutBackground(kept);
+  // A space open to the floor below (or above), a shaft: an X drawn across it and a note in it.
+  // It has no ceiling, and the X's lines are no ceiling edges.
+  const openNotes = texts.filter((t) => OPEN_SPACE.test(t.str));
+  const crossing = (sg: Segment) => {
+    const L = Math.hypot(sg.x2 - sg.x1, sg.y2 - sg.y1);
+    const a = Math.abs(((Math.atan2(sg.y2 - sg.y1, sg.x2 - sg.x1) * 180) / Math.PI) % 90);
+    if (L < pt(2, 60) || a < 15 || a > 75) return false;
+    return openNotes.some((t) => {
+      const d = Math.abs((sg.x2 - sg.x1) * (sg.y1 - t.cy) - (sg.x1 - t.cx) * (sg.y2 - sg.y1)) / L;
+      const along = ((t.cx - sg.x1) * (sg.x2 - sg.x1) + (t.cy - sg.y1) * (sg.y2 - sg.y1)) / (L * L);
+      return d <= Math.max(3 * t.h, t.w / 2) && along > -0.15 && along < 1.15;
+    });
+  };
+  const barrierLines = withoutBackground(openNotes.length ? kept.filter((sg) => !crossing(sg)) : kept);
   const res = Math.min(2, Math.sqrt(9e6 / (W * H)));
   const g = makeGrid(0, 0, W, H, res);
   drawSegments(g, barrierLines);
@@ -907,13 +1075,31 @@ export function readCeilingSheet(
     (dotKeysIn.get(id) ?? dotKeysIn.set(id, new Set()).get(id)!).add(m.key);
   }
   const areaPt = (id: number) => faces.pixels[id] / res ** 2;
+  // How much of each face its stipple spreads over: of the squares (two dots' spacing a side)
+  // whose middle lies in the face, the share holding a dot. A room with stippled bulkheads
+  // round an open middle is not a stippled ceiling.
+  const cell = 2 / Math.sqrt(0.006);
+  const cols = Math.ceil(W / cell);
+  const rows = Math.ceil(H / cell);
+  const dottedCell = new Uint8Array(cols * rows);
+  for (const m of marks) if (stippleDot.has(m) && stippleKeys.has(m.key)) dottedCell[Math.min(rows - 1, Math.floor(m.cy / cell)) * cols + Math.min(cols - 1, Math.floor(m.cx / cell))] = 1;
+  const cellsIn = new Float64Array(n);
+  const dottedIn = new Float64Array(n);
+  for (let r = 0; r < rows; r++)
+    for (let c = 0; c < cols; c++) {
+      const id = faceAt((c + 0.5) * cell, (r + 0.5) * cell);
+      if (id < 0) continue;
+      cellsIn[id]++;
+      if (dottedCell[r * cols + c]) dottedIn[id]++;
+    }
+  const spread = (id: number) => (cellsIn[id] < 6 ? 1 : dottedIn[id] / cellsIn[id]);
   const kindOf = (id: number): { kind: CeilingKind; keys: string[] } => {
     const A = areaPt(id);
     const cover = [...hatchCover].map(([k, arr]) => [k, arr[id] / A] as const).filter(([, c]) => c >= 0.25);
     const dirs = new Set(cover.map(([k]) => k));
     const total = cover.reduce((s, [, c]) => s + c, 0);
     // Stipple laid over a grid is the stipple's finish (a gypsum ceiling in a gridded room).
-    if (dots[id] >= 12 && dots[id] / A >= 0.006) return { kind: 'stipple', keys: [...(dotKeysIn.get(id) ?? [])] };
+    if (dots[id] >= 12 && dots[id] / A >= 0.006 && spread(id) >= 0.35) return { kind: 'stipple', keys: [...(dotKeysIn.get(id) ?? [])] };
     // A lay-in grid's cells are tiles (600 to 1200 or so each way); boards or planks laid on
     // purlins draw two families too, one of them much closer.
     const tile = (k: string) => {
@@ -929,12 +1115,94 @@ export function readCeilingSheet(
   const minWidth = pt(0.4, 10) * res;
   const cx = (id: number) => (faces.bbox[4 * id] + faces.bbox[4 * id + 2] + 1) / 2 / res;
   const cy = (id: number) => (faces.bbox[4 * id + 1] + faces.bbox[4 * id + 3] + 1) / 2 / res;
-  const usable = (id: number) => !faces.edge[id] && faces.inner[id] * 2 >= minWidth && areaPt(id) < sheetArea * 0.2 && !inBox(cx(id), cy(id), skipBoxes);
+  const open = new Set(openNotes.map((t) => faceNear(faces, t.cx, t.cy)));
+  // The paper round the drawings, framed in by the sheet border: where the drawings' scale
+  // notes are written (beside their titles, outside the building), and round the title block.
+  for (const n of scaleNotes(texts)) open.add(faceNear(faces, (n.box[0] + n.box[2]) / 2, (n.box[1] + n.box[3]) / 2));
+  for (const b of options.avoid ?? []) for (const [x, y] of [[b[0] - 3, (b[1] + b[3]) / 2], [(b[0] + b[2]) / 2, b[1] - 3]]) if (x > 0 && y > 0) open.add(faceNear(faces, x, y));
+  // Likewise round the column grid's bubbles.
+  for (const b of gridBubbles(texts, segs)) {
+    const votes = new Map<number, number>();
+    for (let k = 0; k < 8; k++) {
+      const id = faceAt(b.at[0] + (b.r + 4) * Math.cos((k * Math.PI) / 4), b.at[1] + (b.r + 4) * Math.sin((k * Math.PI) / 4));
+      if (id >= 0) votes.set(id, (votes.get(id) ?? 0) + 1);
+    }
+    const best = [...votes].sort((a, c) => c[1] - a[1])[0];
+    if (best && best[1] >= 4) open.add(best[0]);
+  }
+  open.delete(-1);
+  const usable = (id: number) => !faces.edge[id] && faces.inner[id] * 2 >= minWidth && areaPt(id) < sheetArea * 0.2 && !inBox(cx(id), cy(id), skipBoxes) && !open.has(id);
 
   // Each tag types the face it sits in: the face most of the points just round its symbol fall in.
   const tagsIn = new Map<number, CeilingTag[]>();
+  const labels = findRoomLabels(texts, segs);
+  // A ceiling tag stacked under (or over) a room tag whose leader points into its room, the
+  // two placed outside a room too small or too busy to hold them, goes with that room.
+  // The far end of a leader drawn off a room tag's box (with or without a dot at its end).
+  let leaderIndex: SegmentIndex | null = null;
+  const leaderLines = segs.filter((sg) => !sg.filled && !sg.curve && Math.hypot(sg.x2 - sg.x1, sg.y2 - sg.y1) > 1);
+  const leaderOf = (b: Box): Pt | null => {
+    leaderIndex ??= new SegmentIndex(leaderLines, 16);
+    const bh = Math.min(b[2] - b[0], b[3] - b[1]);
+    const onEdge = (x: number, y: number) => x >= b[0] - 1 && x <= b[2] + 1 && y >= b[1] - 1 && y <= b[3] + 1 && (Math.abs(x - b[0]) <= 1 || Math.abs(x - b[2]) <= 1 || Math.abs(y - b[1]) <= 1 || Math.abs(y - b[3]) <= 1);
+    const away = (x: number, y: number) => Math.max(b[0] - x, x - b[2], b[1] - y, y - b[3]);
+    for (const i of leaderIndex.query(b[0] - 1.5, b[1] - 1.5, b[2] + 1.5, b[3] + 1.5)) {
+      const first = leaderLines[i];
+      for (const [start, far] of [[[first.x1, first.y1], [first.x2, first.y2]], [[first.x2, first.y2], [first.x1, first.y1]]] as [Pt, Pt][]) {
+        if (!onEdge(start[0], start[1]) || away(far[0], far[1]) <= 0.5) continue;
+        // A line running on behind the box (a grid line, a wall) is no leader.
+        const L = Math.hypot(far[0] - start[0], far[1] - start[1]);
+        const ux = (far[0] - start[0]) / L;
+        const uy = (far[1] - start[1]) / L;
+        const across = Math.abs(ux) * (b[2] - b[0]) + Math.abs(uy) * (b[3] - b[1]);
+        const bx = start[0] - ux * (across + 2);
+        const by = start[1] - uy * (across + 2);
+        const behind = leaderIndex.query(bx - 1.5, by - 1.5, bx + 1.5, by + 1.5).some((j) => {
+          const o = leaderLines[j];
+          const off = (x: number, y: number) => Math.abs((x - start[0]) * uy - (y - start[1]) * ux);
+          return o !== first && off(o.x1, o.y1) < 0.5 && off(o.x2, o.y2) < 0.5;
+        });
+        if (behind) continue;
+        let end = far;
+        let prev = first;
+        for (let k = 0; k < 3; k++) {
+          const next = leaderIndex.query(end[0] - 0.5, end[1] - 0.5, end[0] + 0.5, end[1] + 0.5).map((j) => leaderLines[j]).find((o) => o !== prev && o.width === first.width && (Math.hypot(o.x1 - end[0], o.y1 - end[1]) < 0.5 || Math.hypot(o.x2 - end[0], o.y2 - end[1]) < 0.5));
+          if (!next) break;
+          end = Math.hypot(next.x1 - end[0], next.y1 - end[1]) < 0.5 ? [next.x2, next.y2] : [next.x1, next.y1];
+          prev = next;
+        }
+        if (away(end[0], end[1]) > 2 * bh) return end;
+      }
+    }
+    return null;
+  };
+  const ledTo = (t: CeilingTag): number => {
+    for (const l of labels) {
+      if (!l.box) continue;
+      const bh = l.box[3] - l.box[1];
+      const overlap = Math.min(l.box[2], t.box[2]) - Math.max(l.box[0], t.box[0]);
+      const gap = Math.max(t.box[1] - l.box[3], l.box[1] - t.box[3]);
+      if (overlap <= 0 || gap > 3 * bh) continue;
+      const seed = l.seed ?? leaderOf(l.box);
+      if (!seed) continue;
+      // Round the dot (drawn in the barrier), the face most points fall in.
+      const votes = new Map<number, number>();
+      for (let k = 0; k < 12; k++) {
+        const id = faceAt(seed[0] + 5 * Math.cos((k * Math.PI) / 6), seed[1] + 5 * Math.sin((k * Math.PI) / 6));
+        if (id >= 0 && usable(id)) votes.set(id, (votes.get(id) ?? 0) + 1);
+      }
+      const best = [...votes].sort((a, b) => b[1] - a[1])[0];
+      if (best) return best[0];
+    }
+    return -1;
+  };
   for (const t of tags) {
     if (t.above) continue;
+    const led = ledTo(t);
+    if (led >= 0) {
+      (tagsIn.get(led) ?? tagsIn.set(led, []).get(led)!).push(t);
+      continue;
+    }
     // Round the symbol, further out when what is just round it (a height oval drawn with it,
     // a light) is no ceiling.
     const votes = new Map<number, number>();
@@ -953,8 +1221,19 @@ export function readCeilingSheet(
       if (votes.size) break;
     }
     // A tag drawn over a light fixture or a diffuser types the room round it, not the fixture.
+    // (A fixture is an island in the room: the room all round it, not a stair's treads or a
+    // closet the tag sits in.)
     const fixture = pt(1.6, 40) ** 2;
-    if ([...votes.keys()].some((id) => areaPt(id) >= fixture)) for (const id of [...votes.keys()]) if (areaPt(id) < fixture) votes.delete(id);
+    const islandIn = (small: number, big: number) => {
+      const [x0, y0, x1, y1] = [0, 1, 2, 3].map((k) => faces.bbox[4 * small + k] / res);
+      const mx = (x0 + x1) / 2;
+      const my = (y0 + y1) / 2;
+      const d = 3;
+      const ring: Pt[] = [[x0 - d, y0 - d], [mx, y0 - d], [x1 + d, y0 - d], [x1 + d, my], [x1 + d, y1 + d], [mx, y1 + d], [x0 - d, y1 + d], [x0 - d, my]];
+      return ring.filter(([x, y]) => faceAt(x, y) === big).length >= 5;
+    };
+    const bigs = [...votes.keys()].filter((id) => areaPt(id) >= fixture);
+    if (bigs.length) for (const id of [...votes.keys()]) if (areaPt(id) < fixture && bigs.some((b) => islandIn(id, b))) votes.delete(id);
     let best = -1;
     for (const [id, v] of votes) if (best < 0 || v > votes.get(best)! || (v === votes.get(best)! && faces.pixels[id] > faces.pixels[best])) best = id;
     if (best < 0) continue;
@@ -1042,14 +1321,19 @@ export function readCeilingSheet(
     const fit = [...new Set(list.map((t) => t.key))].filter((k) => gridCode(k) === grid);
     return fit.length === 1 ? groupIndex(`code:${fit[0]}`) : -1;
   };
+  // The face a room tag stands in (round its box; inside the box is the box's own face).
+  const labeledFace = new Set(labels.flatMap((l) => [faceAt(l.at[0], l.at[1]), ...(l.box ? [faceAt(l.box[0] - 3, l.at[1]), faceAt(l.box[2] + 3, l.at[1])] : [])]).filter((id) => id >= 0));
   for (let changed = true; changed; ) {
     changed = false;
     for (let id = 0; id < n; id++) {
       if (faceGroup[id] >= 0 || !usable(id) || areaPt(id) < minPiece) continue;
       let best = -1;
       let bestC = 0;
+      // A bigger space with a room of its own named in it is another room, not a piece of this one.
+      const named = labeledFace.has(id);
       for (const [o, c] of contact.get(id) ?? []) {
         if (faceGroup[o] < 0) continue;
+        if (named && areaPt(id) > 2 * areaPt(o)) continue;
         const gi = passOn(o, id);
         if (gi >= 0 && c > bestC) {
           best = gi;
@@ -1078,7 +1362,6 @@ export function readCeilingSheet(
       if (codes.size === 1) faceGroup[id] = [...codes][0];
     }
 
-  const labels = findRoomLabels(texts, segs);
   const fallbackMin = pt(Math.sqrt(2.3), 15) ** 2;
   // Lettering in each face: a box of notes or a table cell is mostly text, a room is not.
   const lettering = new Float64Array(n);
@@ -1088,12 +1371,25 @@ export function readCeilingSheet(
   }
   for (let id = 0; id < n; id++) {
     if (faceGroup[id] >= 0 || !usable(id) || lettering[id] > areaPt(id) * 0.08) continue;
-    const { kind, keys } = kinds[id];
+    const { kind: drawnAs, keys } = kinds[id];
+    // Lines one way at a tile's spacing that no plank or slat swatch runs with: long tiles laid
+    // in a grid whose short way is not drawn.
+    const tiled = (k: string) => !!mpp && (hatch.spacings.get(k) ?? []).some((sp) => sp * mpp >= 0.45 && sp * mpp <= 1.65);
+    const plank = (k: string) => legend.some((l) => l.kind === 'hatch' && l.keys.some((x) => x.split(' ')[1] === k.split(' ')[1]));
+    // (Only where the legend tells a plank or slat hatch from tiles: a set without one draws
+    // joists and structure one way at such spacings too.)
+    const tellsApart = legend.some((l) => l.kind === 'hatch') && legend.some((l) => l.kind === 'grid' || l.implied === 'grid');
+    const kind: CeilingKind = tellsApart && drawnAs === 'hatch' && keys.length && keys.every((k) => tiled(k) && !plank(k)) ? 'grid' : drawnAs;
     if (kind !== 'plain') {
-      if (areaPt(id) < fallbackMin) continue;
+      // A stipple is plainly a finish (gypsum), down to a closet's ceiling; lines are less sure.
+      if (areaPt(id) < (kind === 'stipple' ? fallbackMin / 2.3 : fallbackMin)) continue;
       const same = legend.filter((l) => l.kind === kind);
       const said = legend.filter((l) => l.kind !== kind && l.implied === kind && !legend.some((o) => o !== l && o.kind === kind));
-      const row = same.find((l) => l.keys.some((x) => keys.includes(x))) ?? (same.length === 1 ? same[0] : said.length === 1 ? said[0] : undefined);
+      // A hatch is a legend row's only when its lines run the same way as the swatch's (planks
+      // one way, a corridor's tiles the other).
+      const dir = (k: string) => k.split(' ')[1];
+      const runs = (l: CeilingSwatch) => kind !== 'hatch' || l.keys.some((x) => keys.some((y) => dir(x) === dir(y)));
+      const row = same.find((l) => l.keys.some((x) => keys.includes(x))) ?? (same.length === 1 && runs(same[0]) ? same[0] : said.length === 1 ? said[0] : undefined);
       if (row) faceGroup[id] = groupIndex(`legend:${legend.indexOf(row)}`);
       // Lines one way only, with no legend saying what they are, are stairs or notes as often as a ceiling.
       else if (kind !== 'hatch') faceGroup[id] = groupIndex(`kind:${kind}`);
@@ -1179,7 +1475,10 @@ export function readCeilingSheet(
   const index = new SegmentIndex(barrierLines, 32);
   const areas: CeilingArea[] = [];
   const close = Math.max(1, Math.round(res * 1.2));
-  const minArea = pt(0.6, 6) ** 2;
+  // No slivers: a ceiling piece under a square metre, or a strip too thin to stand in
+  // (under 300 mm across, area over perimeter), is a gap between lines, not a ceiling.
+  const minArea = pt(1, 10) ** 2;
+  const minThick = pt(0.3, 3);
   const spelled = new Map<string, string>();
   for (const t of tags) if (!spelled.has(t.key)) spelled.set(t.key, t.code);
   for (let gi = 0; gi < groupKeys.length; gi++) {
@@ -1242,7 +1541,8 @@ export function readCeilingSheet(
       if (outer.length < 3) continue;
       const holeRings = holes.map((hm) => toPts(traceBoundary(hm, cw, chh))).filter((r) => r.length >= 3);
       const area = Math.abs(ringArea(outer)) - holeRings.reduce((s, r) => s + Math.abs(ringArea(r)), 0);
-      if (area < minArea) continue;
+      const perimeter = outer.reduce((n, p, i) => n + Math.hypot(outer[(i + 1) % outer.length][0] - p[0], outer[(i + 1) % outer.length][1] - p[1]), 0);
+      if (area < minArea || area / perimeter < minThick / 2) continue;
       const inside = (p: Pt) => pointInRing(p, outer) && !holeRings.some((r) => pointInRing(p, r));
       const mine = tags.filter((t) => inside(t.at) && (gk === `code:${t.key}` || !gk.startsWith('code:')));
       const heights = [...new Set(mine.filter((t) => t.height && !t.above).map((t) => t.height!))];
@@ -1270,7 +1570,9 @@ export function readCeilingSheet(
       });
     }
   }
-  return { tagged: true, areas, tags, defs, legend: legend.map((l) => ({ label: l.label, kind: l.kind })) };
+  // A legend row starting with a code describes that code where no types table does.
+  const described = mergeDefs([...defs, ...legend.filter((l) => l.code).map((l) => ({ code: l.code!, key: codeKey(l.code!), description: l.label, at: [l.box[0], l.box[1]] as Pt }))]);
+  return { tagged: true, areas, tags, defs: described, legend: legend.map((l) => ({ label: l.label, kind: l.kind })) };
 }
 
 /** Definitions from several tables, first description of each code kept. */
@@ -1305,6 +1607,10 @@ function finishLine(label: string): { code?: string; label: string; implied?: Ce
   const first = label.split(/\s+/)[0].replace(/[:.,]+$/, '');
   const lead = CODE.exec(first);
   if (!(CEILING_WORDS.test(label) || (lead && CEILING_PREFIX.test(lead[1]))) || NOT_A_FINISH.test(label)) return null;
+  // A note under a legend row ("Refer to reflected ceiling plans") names no finish.
+  if (/^(?:refer|see|as)\b/i.test(label.trim())) return null;
+  // A sample tag's callouts ("Ceiling material", "Ceiling type") name no finish.
+  if (/^(?:ceiling|clg\.?)\s+(?:material|type|finish|tag|code)s?$/i.test(label.trim())) return null;
   const implied: CeilingKind | undefined = /lay-?in|acoustic|\bact\b|t-?bar|ceiling tile|\bsat\d?\b|grid/i.test(label)
     ? 'grid'
     : /gyp|\bgwb\b|\bgb\b|drywall|wallboard|plaster/i.test(label)
@@ -1337,12 +1643,22 @@ export function ceilingSwatches(texts: PageText[], segs: Segment[], marks: Mark[
   const inBoxes = (x: number, y: number, boxes: Box[]) => boxes.some(([a, b, c, d]) => x >= a && x <= c && y >= b && y <= d);
   const heads = texts.filter((t) => upright(t) && isLegendHeading(t.str) && !inBoxes(t.cx, t.cy, [...avoid, ...frames]));
   const lineSegs = segs.filter((sg) => !(sg.filled && /^#f{6}$/i.test(sg.color ?? '')));
+  // Long upright lines: a legend's frame, the drawing's border. Words beyond one from the
+  // heading are another drawing's (the plan's tags beside a legend column), not the legend's.
+  const uprights = lineSegs.filter((sg) => Math.abs(sg.x2 - sg.x1) < 0.5 && Math.abs(sg.y2 - sg.y1) > 40);
+  const walledOff = (head: PageText, t: PageText) => {
+    const [xa, xb] = t.cx > head.cx ? [head.cx + head.w / 2, t.cx - t.w / 2] : [t.cx + t.w / 2, head.cx - head.w / 2];
+    if (xb <= xa) return false;
+    const ya = Math.min(head.cy, t.cy);
+    const yb = Math.max(head.cy, t.cy);
+    return uprights.some((sg) => sg.x1 > xa && sg.x1 < xb && Math.min(sg.y1, sg.y2) <= ya && Math.max(sg.y1, sg.y2) >= yb);
+  };
   for (const head of heads) {
     const h = head.h;
     const hl = head.cx - head.w / 2;
     const region: Box = [hl - 15 * h, head.cy + 0.5 * h, Math.min(width, hl + width * 0.35), Math.min(height, head.cy + height * 0.45)];
     const words = texts
-      .filter((t) => upright(t) && t !== head && t.cx >= region[0] && t.cx <= region[2] && t.cy >= region[1] && t.cy <= region[3] && /[A-Za-z0-9]{2}/.test(t.str) && !inBoxes(t.cx, t.cy, avoid))
+      .filter((t) => upright(t) && t !== head && t.cx >= region[0] && t.cx <= region[2] && t.cy >= region[1] && t.cy <= region[3] && /[A-Za-z0-9]{2}/.test(t.str) && !inBoxes(t.cx, t.cy, avoid) && !walledOff(head, t))
       .sort((a, b) => a.cy - b.cy);
     // Blocks: lines starting at one left edge, each close under the last.
     const blocks: { left: number; top: number; bottom: number; right: number; h: number; parts: PageText[] }[] = [];

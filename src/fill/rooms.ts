@@ -107,7 +107,7 @@ function leaderEnd(box: Box, index: SegmentIndex, lines: Segment[], marks: Map<n
   const len = (s: Segment) => Math.hypot(s.x2 - s.x1, s.y2 - s.y1);
   const near = dedupe(index.query(box.x0 - 2, box.y0 - 2, box.x1 + 2, box.y1 + 2).map((i) => lines[i]));
   for (const first of near) {
-    if (first.curve || len(first) < 0.6 * h) continue;
+    if (first.curve || len(first) < 2) continue;
     const ends: [Pt, Pt][] = [
       [
         [first.x1, first.y1],
@@ -119,7 +119,8 @@ function leaderEnd(box: Box, index: SegmentIndex, lines: Segment[], marks: Map<n
       ],
     ];
     for (const [start, far] of ends) {
-      if (!onOutline(start[0], start[1]) || !outside(far[0], far[1], 0.6 * h)) continue;
+      // A leader can leave the box in a short stub before it turns off to the room.
+      if (!onOutline(start[0], start[1]) || !outside(far[0], far[1], len(first) < 0.6 * h ? 0 : 0.6 * h)) continue;
       // Follow the leader through its elbows, same pen, end to end.
       let end = far;
       let prev = first;
@@ -131,6 +132,7 @@ function leaderEnd(box: Box, index: SegmentIndex, lines: Segment[], marks: Map<n
         end = Math.hypot(next.x1 - end[0], next.y1 - end[1]) < 0.5 ? [next.x2, next.y2] : [next.x1, next.y1];
         prev = next;
       }
+      if (!outside(end[0], end[1], 0.6 * h)) continue;
       // The dot or arrowhead: a small filled shape at the end, no bigger than the tag.
       for (const i of markIndex.query(end[0] - 1, end[1] - 1, end[0] + 1, end[1] + 1)) {
         const m = marks.get(markIndex.segs[i].sub!);
@@ -174,16 +176,19 @@ export function findRoomLabels(texts: PageText[], segs: Segment[]): RoomLabel[] 
   const lines = segs.filter((s) => !s.filled && Math.hypot(s.x2 - s.x1, s.y2 - s.y1) > 0.2);
   const index = new SegmentIndex(lines, 16);
   // Small filled shapes (leader dots, arrowheads) by subpath, for leaders from tags.
-  const filled = segs.filter((s) => s.filled && s.sub !== undefined);
+  // A dot can also be a tiny circle stroked with a heavy pen (as wide as the circle): its ink
+  // reaches half the pen's width out from the path.
+  const filled = segs.filter((s) => s.sub !== undefined && (s.filled || (s.curve && s.width >= 1.5)));
   const marks = new Map<number, Box>();
   for (const s of filled) {
+    const r = s.filled ? 0 : s.width / 2;
     const m = marks.get(s.sub!);
     if (m) {
-      m.x0 = Math.min(m.x0, s.x1, s.x2);
-      m.y0 = Math.min(m.y0, s.y1, s.y2);
-      m.x1 = Math.max(m.x1, s.x1, s.x2);
-      m.y1 = Math.max(m.y1, s.y1, s.y2);
-    } else marks.set(s.sub!, { x0: Math.min(s.x1, s.x2), y0: Math.min(s.y1, s.y2), x1: Math.max(s.x1, s.x2), y1: Math.max(s.y1, s.y2) });
+      m.x0 = Math.min(m.x0, s.x1 - r, s.x2 - r);
+      m.y0 = Math.min(m.y0, s.y1 - r, s.y2 - r);
+      m.x1 = Math.max(m.x1, s.x1 + r, s.x2 + r);
+      m.y1 = Math.max(m.y1, s.y1 + r, s.y2 + r);
+    } else marks.set(s.sub!, { x0: Math.min(s.x1, s.x2) - r, y0: Math.min(s.y1, s.y2) - r, x1: Math.max(s.x1, s.x2) + r, y1: Math.max(s.y1, s.y2) + r });
   }
   let markIndex: SegmentIndex | null = null;
   const boxed: { t: PageText; number: string; box: Box; above: string; below: string; lettered: boolean; short: boolean }[] = [];
@@ -375,9 +380,17 @@ function fillOne(model: WallModel, label: RoomLabel, sheetW: number, sheetH: num
   // A space that leaks past the window is an open area or a gap in the walls, left for
   // drawing by hand (or named by another tag inside it, below).
   let res = fillRoom(model, [roomPoint(label)], sheetW, sheetH, 2);
+  const boxArea = label.box ? (label.box[2] - label.box[0]) * (label.box[3] - label.box[1]) : 0;
+  // A leader ending in something smaller than its tag (a fixture, a symbol) points at no room:
+  // the room is the one round the tag.
+  if (label.seed && res.ok && Math.abs(ringArea(res.points)) < 2 * boxArea) {
+    const here = fillRoom(model, [label.at], sheetW, sheetH, 2);
+    if (here.ok && !(label.box && withinBox(here.points, label.box))) res = here;
+  }
   // Drawn without lineweights, the number's own box is in the wall pen and fills first:
   // start again just outside it, below, above the name, then to either side.
-  if (res.ok && label.box && !label.seed && withinBox(res.points, label.box)) {
+  // (Or a space hardly bigger than the box: the box sitting on a dashed line or a symbol.)
+  if (res.ok && label.box && !label.seed && (withinBox(res.points, label.box) || Math.abs(ringArea(res.points)) < 6 * boxArea)) {
     const [x0, y0, x1, y1] = label.box;
     const [cx, cy] = label.at;
     const w = x1 - x0;

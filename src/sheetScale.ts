@@ -162,7 +162,9 @@ export function viewTitle(texts: { str: string; h: number }[]): string | null {
   });
   if (!c.length) return null;
   const top = Math.max(...c.map((t) => t.h));
-  return c.find((t) => t.h >= top * 0.98)!.str.trim();
+  // Titles as big as each other (a plan and the legend drawn beside it): the sheet is the plan's.
+  const biggest = c.filter((t) => t.h >= top * 0.98);
+  return (biggest.find((t) => /\b(PLANS?|RCP)\b/i.test(t.str) && !/\b(LEGEND|SYMBOLS|NOTES|SCHEDULE|KEY PLAN)\b/i.test(t.str)) ?? biggest[0]).str.trim();
 }
 
 /** Why a sheet got the scale it did. */
