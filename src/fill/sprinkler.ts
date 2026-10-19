@@ -1,5 +1,6 @@
 import type { Pt } from '../model';
 import type { PageText } from '../pageText';
+import { findLegends, visibleInk } from './autoSymbols';
 import { matchSymbol, sampleSymbol, type SymbolSample } from './symbols';
 import type { Segment } from './vectors';
 
@@ -313,10 +314,80 @@ export function sprinklerNetwork(segs: Segment[], texts: PageText[], heads: Pt[]
 /** What a head symbol looks like, which names the head type. */
 export type HeadShape = 'triangle' | 'open circle' | 'circle with dot' | 'circle with slash' | 'other';
 
+/** The head type a note or legend line names it as. */
+export type HeadName = 'upright' | 'pendent' | 'sidewall' | 'concealed';
+
 export interface HeadGroup {
   shape: HeadShape;
   sample: SymbolSample;
   at: Pt[];
+  /** The type its note or legend line names, when one points at it. */
+  named?: HeadName;
+  /** The legend line or note naming it. */
+  label?: string;
+}
+
+/**
+ * A note or legend line naming a sprinkler head ("UPRIGHT SPRINKLER HEAD (TYP)", "SPRINKLER
+ * HEAD-NEW", "PENDENT SPRINKLER"), not other fire protection gear drawn round it
+ * (extinguishers, hose cabinets, valves, the pipe, alarm devices).
+ */
+export function isHeadLabel(str: string): boolean {
+  const s = str.toUpperCase();
+  if (!/\bSPRINKLERS?\b|\bSPKR\b|\b(UPRIGHT|PENDE?A?NT|SIDE ?WALL|CONCEALED)\s+HEADS?\b/.test(s)) return false;
+  return !/EXTINGUISH|CABINET|HOSE|VALVE|ALARM|PULL|BELL|DETECT|STANDPIPE|SIAMESE|CONNECTION|DRAIN|RISER|PIPE|PIPING|MAIN|BRANCH|TEST|GAUGE|SWITCH|LAYOUT|PLAN|NOTES?\b|SYSTEM|ROOM|ZONE|CONTRACTOR|PROVIDE|SHALL/.test(s);
+}
+
+/** The head type a label names, if any. */
+export function headNameOf(str: string): HeadName | undefined {
+  const s = str.toUpperCase();
+  if (/\bUPRIGHT/.test(s)) return 'upright';
+  if (/\bSIDE ?WALL/.test(s)) return 'sidewall';
+  if (/\bCONCEALED/.test(s)) return 'concealed';
+  if (/\bPENDE?A?NT/.test(s)) return 'pendent';
+  return undefined;
+}
+
+/**
+ * Where a note's leader points: the far ends of the line(s) drawn from either end of the
+ * label, followed through joints in the same pen (a short tick, then the slanted line).
+ */
+function leaderTips(t: PageText, grid: Grid<Segment>): Pt[] {
+  const ang = t.angle ?? 0;
+  const ux = Math.cos(ang);
+  const uy = Math.sin(ang);
+  const starts: Pt[] = [
+    [t.cx - (ux * t.w) / 2, t.cy - (uy * t.w) / 2],
+    [t.cx + (ux * t.w) / 2, t.cy + (uy * t.w) / 2],
+  ];
+  const reach = Math.max(2, t.h * 1.2);
+  const ends = (s: Segment): [Pt, Pt] => [
+    [s.x1, s.y1],
+    [s.x2, s.y2],
+  ];
+  const tips: Pt[] = [];
+  for (const st of starts)
+    for (const s of grid.near(st[0], st[1], 2)) {
+      const [a, b] = ends(s);
+      const [near, far] = len(a, st) <= len(b, st) ? [a, b] : [b, a];
+      if (len(near, st) > reach || len(far, st) <= reach) continue;
+      // Along the label's baseline, inside its length, is an underline, not a leader.
+      const along = Math.abs(((far[0] - near[0]) * ux + (far[1] - near[1]) * uy) / len(near, far));
+      const mid: Pt = [(near[0] + far[0]) / 2, (near[1] + far[1]) / 2];
+      if (along > 0.98 && Math.abs((mid[0] - t.cx) * ux + (mid[1] - t.cy) * uy) < t.w / 2) continue;
+      const used = new Set<Segment>([s]);
+      let at = far;
+      tips.push(at);
+      for (let step = 0; step < 4; step++) {
+        const next = grid.near(at[0], at[1], 1).find((q) => !used.has(q) && q.width === s.width && q.color === s.color && ends(q).some((e) => len(e, at) <= 0.6));
+        if (!next) break;
+        used.add(next);
+        const [p, q] = ends(next);
+        at = len(p, at) <= len(q, at) ? q : p;
+        tips.push(at);
+      }
+    }
+  return tips;
 }
 
 /** Circles and triangles a few points across: what sprinkler heads are drawn as. */
@@ -376,7 +447,7 @@ function onPipe(at: Pt, lines: Segment[], reach: number): boolean {
  * The sprinkler heads on a sheet, found with nothing marked: the circles and triangles the
  * pipe runs to, each kind counted everywhere it is drawn (on the pipe or not).
  */
-export function findHeads(segs: Segment[], pipe: Segment[], avoid: Box[] = []): HeadGroup[] {
+export function findHeads(segs: Segment[], pipe: Segment[], avoid: Box[] = [], already: Pt[] = []): HeadGroup[] {
   const grid = new Grid<Segment>(24);
   for (const s of pipe) grid.add((s.x1 + s.x2) / 2, (s.y1 + s.y2) / 2, s);
   const candidates = headCandidates(segs, avoid).filter((c) => {
@@ -385,6 +456,7 @@ export function findHeads(segs: Segment[], pipe: Segment[], avoid: Box[] = []): 
   });
   const inside = (x: number, y: number) => avoid.some(([x0, y0, x1, y1]) => x >= x0 && x <= x1 && y >= y0 && y <= y1);
   const taken = new Grid<Pt>(16);
+  for (const p of already) taken.add(p[0], p[1], p);
   const isTaken = (p: Pt) => taken.near(p[0], p[1]).some((q) => len(p, q) <= 5);
   const groups: HeadGroup[] = [];
   for (const c of candidates) {
@@ -417,15 +489,161 @@ export function findHeads(segs: Segment[], pipe: Segment[], avoid: Box[] = []): 
   return groups;
 }
 
-/** Everything on a sprinkler sheet: the pipe network and the heads, or null when there is no pipe to find. */
-export function readSprinklerSheet(segs: Segment[], texts: PageText[], sheet: { width: number; height: number }, avoid: Box[] = []): { network: PipeNetwork; heads: HeadGroup[] } | null {
+const inBoxes = (boxes: Box[], [x, y]: Pt) => boxes.some(([x0, y0, x1, y1]) => x >= x0 && x <= x1 && y >= y0 && y <= y1);
+
+/** Copies of the symbol drawn in `box`, one per place, leaving out those in `avoid` or already taken. */
+function copiesOf(segs: Segment[], box: Box, avoid: Box[], isTaken: (p: Pt) => boolean): { sample: SymbolSample; at: Pt[] } | null {
+  const sample = sampleSymbol(segs, box);
+  if (!sample) return null;
+  const xs = sample.lines.flatMap((l) => [l.x1, l.x2]);
+  const ys = sample.lines.flatMap((l) => [l.y1, l.y2]);
+  const size = Math.max(1, Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys));
+  const at: Pt[] = [];
+  for (const m of matchSymbol(sample, segs)) {
+    const p = m.at;
+    if (inBoxes(avoid, p) || isTaken(p) || at.some((q) => len(p, q) < size)) continue;
+    at.push(p);
+  }
+  return { sample, at };
+}
+
+/**
+ * Heads named on the sheet: the symbol a note's leader points at ("UPRIGHT SPRINKLER HEAD
+ * (TYP)") and the symbol drawn beside a legend line naming a head, each counted wherever it
+ * is drawn outside the legends and title block. Legend lines told apart only by a short tag
+ * drawn with the symbol (✱ R relocated, ✱ NEW) each take the copies with that tag beside them;
+ * the line without a tag takes the rest.
+ */
+export function labelledHeads(segs: Segment[], texts: PageText[], sheet: { width: number; height: number }, avoid: Box[] = []): HeadGroup[] {
+  const legends = findLegends(texts, segs, sheet.width, sheet.height, avoid);
+  const off = [...avoid, ...legends.map((l) => l.box)];
+  const taken = new Grid<Pt>(16);
+  const isTaken = (p: Pt) => taken.near(p[0], p[1]).some((q) => len(p, q) <= 5);
+  const groups: HeadGroup[] = [];
+  const keep = (g: HeadGroup) => {
+    if (!g.at.length) return;
+    for (const p of g.at) taken.add(p[0], p[1], p);
+    groups.push(g);
+  };
+
+  // Legend lines naming a head, tagged ones first.
+  const rows = legends.flatMap((l) => l.rows.filter((r) => r.graphic && isHeadLabel(r.label)).map((r) => ({ legend: l, row: r })));
+  rows.sort((a, b) => Number(!!b.row.tag) - Number(!!a.row.tag));
+  const ink = visibleInk(segs);
+  for (const { row } of rows) {
+    const g = row.graphic!;
+    const found = copiesOf(ink, [g[0] - 0.5, g[1] - 0.5, g[2] + 0.5, g[3] + 0.5], off, isTaken);
+    if (!found) continue;
+    let at = found.at;
+    const tagged = (p: Pt, tag: string) => texts.some((t) => t.str.trim().toUpperCase() === tag && Math.hypot(t.cx - p[0], t.cy - p[1]) <= found.sample.span + 4 * t.h);
+    if (row.tag) at = at.filter((p) => tagged(p, row.tag!.toUpperCase()));
+    else {
+      // Copies tagged for another line of the legend are not this one's.
+      const others = rows.map((r) => r.row.tag?.toUpperCase()).filter((t): t is string => !!t);
+      at = at.filter((p) => !others.some((tag) => tagged(p, tag)));
+    }
+    keep({ shape: 'other', sample: found.sample, at, named: headNameOf(row.label), label: row.label });
+  }
+
+  // Notes with a leader to a head.
+  const notes = texts.filter((t) => isHeadLabel(t.str) && t.str.trim().split(/\s+/).length <= 8 && !inBoxes(off, [t.cx, t.cy]));
+  if (notes.length) {
+    const cands = headCandidates(segs, avoid);
+    const lines = segs.filter((s) => !s.filled && !s.curve && segLen(s) > 0.5);
+    const grid = new Grid<Segment>(16);
+    for (const s of lines) {
+      grid.add(s.x1, s.y1, s);
+      if (Math.floor(s.x1 / 16) !== Math.floor(s.x2 / 16) || Math.floor(s.y1 / 16) !== Math.floor(s.y2 / 16)) grid.add(s.x2, s.y2, s);
+    }
+    for (const t of notes) {
+      // The biggest head-sized shape at the leader's tip (the ring round a dot, not the dot).
+      const hits = leaderTips(t, grid).flatMap((tip) => cands.filter((c) => len(c.at, tip) <= (c.box[2] - c.box[0]) / 2 + Math.max(3, t.h)));
+      const c = hits.sort((a, b) => b.box[2] - b.box[0] - (a.box[2] - a.box[0]))[0];
+      if (!c || isTaken(c.at)) continue;
+      const found = copiesOf(segs, [c.box[0] - 1, c.box[1] - 1, c.box[2] + 1, c.box[3] + 1], off, isTaken);
+      if (!found) continue;
+      keep({ shape: shapeOf(found.sample, segs, c.box), sample: found.sample, at: found.at, named: headNameOf(t.str), label: t.str.trim() });
+    }
+  }
+  return groups;
+}
+
+/**
+ * On a sprinkler plan with no pipe drawn and no head named: the head-sized circle or
+ * triangle drawn most often, when it is drawn at least `min` times.
+ */
+function repeatedHeads(segs: Segment[], avoid: Box[], min = 6): HeadGroup[] {
+  // Shapes of one size drawn at least `min` times are worth matching; one of each, biggest first.
+  const bySize = new Map<string, { at: Pt; box: Box }[]>();
+  for (const c of headCandidates(segs, avoid)) {
+    const k = `${Math.round((c.box[2] - c.box[0]) * 2)}|${Math.round((c.box[3] - c.box[1]) * 2)}`;
+    (bySize.get(k) ?? bySize.set(k, []).get(k)!).push(c);
+  }
+  const cands = [...bySize.values()]
+    .filter((g) => g.length >= min)
+    .map((g) => g[0])
+    .sort((a, b) => b.box[2] - b.box[0] - (a.box[2] - a.box[0]));
+  const taken = new Grid<Pt>(16);
+  const isTaken = (p: Pt) => taken.near(p[0], p[1]).some((q) => len(p, q) <= 5);
+  let best: HeadGroup | null = null;
+  for (const c of cands) {
+    if (isTaken(c.at)) continue;
+    const found = copiesOf(segs, [c.box[0] - 1, c.box[1] - 1, c.box[2] + 1, c.box[3] + 1], avoid, isTaken);
+    taken.add(c.at[0], c.at[1], c.at);
+    if (!found) continue;
+    for (const p of found.at) taken.add(p[0], p[1], p);
+    if (!best || found.at.length > best.at.length) best = { shape: shapeOf(found.sample, segs, c.box), sample: found.sample, at: found.at };
+  }
+  return best && best.at.length >= min ? [best] : [];
+}
+
+/** Whether a sheet's text mentions sprinklers anywhere (a note, a legend line, a leader). */
+export const mentionsSprinklers = (texts: PageText[]) => texts.some((t) => /\bSPRINKLER|\bSPKR\b/i.test(t.str));
+
+/**
+ * Everything on a sprinkler sheet: the heads, and the pipe network when pipe is drawn, or null
+ * when there are no heads (pipe alone, with no head on it, is not a sprinkler layout).
+ *
+ * Heads are the symbols a note or legend names as sprinkler heads, and the circles and
+ * triangles the pipe runs to. The pipe is the pen whose lines run to the heads: a pen reaching
+ * only a few of them (walls passing by) is not pipe, and then no pipe is taken off.
+ * `plan`: the sheet is titled a sprinkler plan, so heads may be found from the pipe alone and,
+ * with no pipe and no head named, the head-sized symbol drawn most often is taken as the heads.
+ * On any other sheet only heads a note or legend names are taken.
+ */
+export function readSprinklerSheet(
+  segs: Segment[],
+  texts: PageText[],
+  sheet: { width: number; height: number },
+  avoid: Box[] = [],
+  opts: { plan?: boolean } = {},
+): { network: PipeNetwork | null; heads: HeadGroup[] } | null {
+  const labelled = labelledHeads(segs, texts, sheet, avoid);
+  // On a sheet not titled a sprinkler plan, circles on lines are too common to be heads unless a note or legend names them.
+  if (!opts.plan && !labelled.length) return null;
+  let heads = labelled;
+  let network: PipeNetwork | null = null;
   const candidates = headCandidates(segs, avoid).map((c) => c.at);
   const style = pipeStyle(segs, candidates, sheet, avoid);
-  if (!style) return null;
-  const pipe = linesOfStyle(segs, style, sheet, avoid);
-  const heads = findHeads(segs, pipe, avoid);
-  const network = sprinklerNetwork(segs, texts, heads.flatMap((g) => g.at), style, sheet, avoid);
-  return { network, heads };
+  if (style) {
+    const pipe = linesOfStyle(segs, style, sheet, avoid);
+    const piped = findHeads(segs, pipe, avoid, labelled.flatMap((g) => g.at));
+    const all = [...labelled, ...piped];
+    const grid = new Grid<Segment>(24);
+    for (const s of pipe) grid.add((s.x1 + s.x2) / 2, (s.y1 + s.y2) / 2, s);
+    const on = all.reduce((n, g) => {
+      const xs = g.sample.lines.flatMap((l) => [l.x1, l.x2]);
+      const reach = (Math.max(...xs) - Math.min(...xs)) / 2 + 3;
+      return n + g.at.filter((p) => onPipe(p, grid.near(p[0], p[1], 2), reach)).length;
+    }, 0);
+    const total = all.reduce((n, g) => n + g.at.length, 0);
+    if (piped.length && on >= total * 0.5) {
+      heads = all;
+      network = sprinklerNetwork(segs, texts, all.flatMap((g) => g.at), style, sheet, avoid);
+    }
+  }
+  if (!heads.length && opts.plan) heads = repeatedHeads(segs, avoid);
+  return heads.length ? { network, heads } : null;
 }
 
 /** Pieces of one size joined end to end into runs (a measurement each), broken at fittings. */
