@@ -8,11 +8,23 @@ const os = require('node:os');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const folder = require('./folder.cjs');
+const mcp = require('./mcp.cjs');
 
 const DIST = path.join(__dirname, '..', 'dist');
 // Tests run two copies side by side, as two computers, each with its own profile.
 if (process.env.TAKEOFF_USER_DATA) app.setPath('userData', process.env.TAKEOFF_USER_DATA);
 const FOLDER_NAME = 'Takeoff AI';
+
+// One copy at a time: a second launch (an AI app opening Takeoff AI, a double-click) brings
+// the open window forward instead of starting another, so there is one MCP server.
+const firstCopy = app.requestSingleInstanceLock();
+if (!firstCopy) app.quit();
+app.on('second-instance', () => {
+  const win = BrowserWindow.getAllWindows()[0];
+  if (!win) return;
+  if (win.isMinimized()) win.restore();
+  win.focus();
+});
 
 // A standard, secure scheme: the page gets its own origin, so its database (IndexedDB)
 // and storage persist between launches like a website's.
@@ -102,6 +114,7 @@ function registerIpc() {
     if (fsSync.existsSync(target)) await shell.trashItem(target);
   });
   ipcMain.handle('folder:reveal', () => root && shell.openPath(root));
+  ipcMain.handle('folder:writeExport', (_e, dir, filename, data) => folder.writeExport(requireRoot(), dir, filename, data));
 }
 
 function serveApp() {
@@ -157,20 +170,30 @@ function createWindow() {
     win.webContents.send('app:flush');
     setTimeout(done, 8000);
   });
+  // A reload or a crash drops the page's MCP tools until it registers them again.
+  win.webContents.on('did-start-navigation', (e) => {
+    if (e.isMainFrame && !e.isSameDocument) mcp.windowGone();
+  });
+  win.webContents.on('render-process-gone', () => mcp.windowGone());
+  win.on('closed', () => mcp.windowGone());
   void win.loadURL('app://takeoff/index.html');
   return win;
 }
 
 app.whenReady().then(async () => {
+  if (!firstCopy) return;
   const saved = (await readSettings()).projectsFolder;
   root = saved && fsSync.existsSync(saved) ? saved : null;
   serveApp();
   registerIpc();
+  await mcp.setupMcp({ read: readSettings, write: writeSettings });
   createWindow();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
 });
+
+app.on('will-quit', () => void mcp.stopMcp());
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();

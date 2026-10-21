@@ -47,6 +47,9 @@ import { canUseServiceWorker, isInstalled, onLaunchFiles, promptInstall, registe
 import { polylineLength, ringArea } from './geometry';
 import { scoringOn, setScoringOn } from './scoring';
 import { desktopApi, folderLabel } from './desktop';
+import { ConnectAiDialog } from './components/ConnectAiDialog';
+import { runTool, toolList, TOOL_DEFS, type McpContext } from './mcp/tools';
+import { renderRegion } from './mcp/render';
 import { FolderSync, type PullResult } from './folderSync';
 import { linesIn, onSheet, readNumber, readTitle, relativeBox, type Box } from './sheetNumbers';
 import { SheetNumbersDialog, type SheetNumberRow } from './components/SheetNumbersDialog';
@@ -94,6 +97,9 @@ function keepVisibility(target: Project, now: Project): Project {
   if (!target.types.some((t) => hidden.has(t.id) && !!hidden.get(t.id) !== !!t.hidden)) return target;
   return { ...target, types: target.types.map((t) => (hidden.has(t.id) ? { ...t, hidden: hidden.get(t.id) || undefined } : t)) };
 }
+
+/** The window answers MCP tool calls once, even when React runs its effects twice (development). */
+let mcpWired = false;
 
 export function App() {
   const [project, setProject] = useState<Project | null>(null);
@@ -148,7 +154,7 @@ export function App() {
   // A toast's Undo belongs to the change just made, the latest in the history.
   const setToast = useCallback((t: Toast | null) => setToastState(t?.undo ? { ...t, after: historyRev.current } : t), []);
   const [sheetFilter, setSheetFilter] = useState('');
-  const [aiDialog, setAiDialog] = useState<'assemblies' | 'settings' | 'walls' | 'rooms' | 'finishes' | 'shortcuts' | 'help' | 'library' | 'legend' | null>(null);
+  const [aiDialog, setAiDialog] = useState<'assemblies' | 'settings' | 'walls' | 'rooms' | 'finishes' | 'shortcuts' | 'help' | 'library' | 'legend' | 'connect' | null>(null);
   /** Reading a legend: the next box dragged is the legend; then its rows, for the dialog. */
   const [legendPick, setLegendPick] = useState(false);
   /** Results of a search on every sheet, waiting for the user to keep or leave out each sheet. */
@@ -181,6 +187,9 @@ export function App() {
   /** Desktop app: the shared projects folder (iCloud Drive), and its sync. */
   const [syncFolder, setSyncFolder] = useState<string | null>(null);
   const folderSync = useRef<FolderSync | null>(null);
+  /** MCP: the app as the AI's tools see it (set each render), and the calls waiting their turn. */
+  const mcpCtxRef = useRef<McpContext | null>(null);
+  const mcpQueue = useRef<Promise<unknown>>(Promise.resolve());
   /** Desktop app with no projects folder yet (or one that went missing): the setup screen. */
   const [folderSetup, setFolderSetup] = useState<{ suggested: string; iCloud: boolean; missing: string | null } | null>(null);
   /** Saves the open project and writes every waiting change to the projects folder. */
@@ -247,6 +256,26 @@ export function App() {
       }
       // The window waits for the last changes to reach the projects folder before closing.
       desktopApi?.onFlush(() => flushAllRef.current());
+      // AI apps drive the app through its MCP server: calls run here, one at a time.
+      if (desktopApi?.mcp && !mcpWired) {
+        mcpWired = true;
+        desktopApi.mcp.onCall((name, args) => {
+          const title = TOOL_DEFS.find((t) => t.name === name)?.title ?? name;
+          const run = async () => {
+            setBusy(`AI: ${title}…`);
+            try {
+              if (!mcpCtxRef.current) return { content: [{ type: 'text', text: 'Takeoff AI is still opening. Try again in a moment.' }], isError: true };
+              return await runTool(mcpCtxRef.current, name, args);
+            } finally {
+              setBusy(null);
+            }
+          };
+          const next = mcpQueue.current.then(run, run);
+          mcpQueue.current = next.catch(() => undefined);
+          return next;
+        });
+        desktopApi.mcp.register(toolList());
+      }
     })();
     registerServiceWorker((apply) =>
       setToast({ text: 'A new version of Takeoff AI is ready', undo: false, sticky: true, action: { label: 'Restart', run: apply } }),
@@ -745,6 +774,18 @@ export function App() {
   const canUndo = past.current.length > 0;
   const canRedo = future.current.length > 0;
 
+  /** Adds one drawing file to the open project: stored, split into sheets named from their title blocks, scales read. */
+  async function addDrawingData(name: string, data: ArrayBuffer) {
+    const docId = newId();
+    await savePdf(docId, data);
+    const pdf = await openPdf(data);
+    const { sheets, noText } = await sheetsOf(pdf, docId, projectRef.current?.units, (n, of) => setBusy(`Reading ${name}: sheet ${n} of ${of}`));
+    setPdfs((m) => new Map(m).set(docId, pdf));
+    commit((p) => ({ ...p, docs: [...p.docs, { id: docId, name }], sheets: [...p.sheets, ...sheets] }), 'Add drawings');
+    setSheetId((cur) => cur ?? sheets[0]?.id ?? null);
+    return { sheets, noText };
+  }
+
   async function upload(files: FileList | File[]) {
     // Desktop app: drawings added to the blank starting project make it a real job with a
     // folder of its own, so it gets its name first (offered from the file name).
@@ -759,15 +800,7 @@ export function App() {
     const byName = new Map(Array.from(files).map((f) => [f.name, f]));
     for (const file of issueOrder([...byName.keys()]).map((n) => byName.get(n)!)) {
       setBusy(`Reading ${file.name}…`);
-      const data = await file.arrayBuffer();
-      const docId = newId();
-      await savePdf(docId, data);
-      const pdf = await openPdf(data);
-      // Named from the title blocks, scales read.
-      const { sheets, noText } = await sheetsOf(pdf, docId, projectRef.current?.units, (n, of) => setBusy(`Reading ${file.name}: sheet ${n} of ${of}`));
-      setPdfs((m) => new Map(m).set(docId, pdf));
-      commit((p) => ({ ...p, docs: [...p.docs, { id: docId, name: file.name }], sheets: [...p.sheets, ...sheets] }), 'Add drawings');
-      setSheetId((cur) => cur ?? sheets[0]?.id ?? null);
+      const { sheets, noText } = await addDrawingData(file.name, await file.arrayBuffer());
       setBusy(null);
       // What is ready: scales read, and sheets the automatic tools can't read.
       const scaled = sheets.filter((x) => x.metersPerPoint).length;
@@ -904,8 +937,14 @@ export function App() {
       hint: syncFolder ? `Its drawings and takeoffs are kept in a folder with this name in ${folderLabel(syncFolder)}.` : 'The job name, e.g. Kelso Lodge.',
     });
     if (name === null) return;
+    const fresh = await createProjectNamed(name.trim() || 'Untitled project', units);
+    setToast({ text: syncFolder ? `Created ${fresh.name} in ${folderLabel(syncFolder)}` : `New ${units} project: ${fresh.name}`, undo: false });
+  }
+
+  /** Makes a new project, with the user's starting types, and opens it. */
+  async function createProjectNamed(name: string, units: Units): Promise<Project> {
     await flush();
-    const fresh = { ...newProject(units), name: name.trim() || 'Untitled project' };
+    const fresh = { ...newProject(units), name };
     // The user's own starting types, when they saved a set in these units.
     const starter = await loadStarterTypes();
     if (starter?.units === units && starter.types.length) {
@@ -915,7 +954,7 @@ export function App() {
     // Desktop app: the project's folder is made now, not on the first takeoff.
     await folderSync.current?.push(fresh.id!).catch(() => undefined);
     await openProjectState(fresh);
-    setToast({ text: syncFolder ? `Created ${fresh.name} in ${folderLabel(syncFolder)}` : `New ${units} project: ${fresh.name}`, undo: false });
+    return fresh;
   }
 
   async function switchProject(id: string) {
@@ -1094,12 +1133,38 @@ export function App() {
     setToast({ text: `Removed ${doc?.name ?? 'drawings'}`, undo: true });
   }
 
+  /** Desktop app: the open project's folder name in the projects folder (written first if needed). */
+  async function projectDir(): Promise<string | null> {
+    const sync = folderSync.current;
+    const id = projectRef.current?.id;
+    if (!sync || !id) return null;
+    await flushAllRef.current();
+    return (await sync.dirOf(id)) ?? (await sync.push(id).then(() => sync.dirOf(id)));
+  }
+
+  /** Desktop app: saves an export in the open project's Exports folder; null when it has no folder (the browser). */
+  async function saveToProject(filename: string, blob: Blob): Promise<string | null> {
+    if (!desktopApi?.writeExport) return null;
+    const dir = await projectDir().catch(() => null);
+    if (!dir) return null;
+    return desktopApi.writeExport(dir, filename, await blob.arrayBuffer());
+  }
+
+  /** Saves an export: in the project's own folder on the desktop app, as a download in the browser. */
+  async function saveOutput(filename: string, blob: Blob): Promise<'saved' | 'declined' | 'failed'> {
+    const path = await saveToProject(filename, blob).catch(() => null);
+    if (!path) return saveFile(filename, blob);
+    setToast({ text: `Saved ${filename} in this project’s Exports folder`, undo: false, action: desktopApi?.showFile ? { label: 'Show', run: () => void desktopApi!.showFile!(path) } : undefined });
+    return 'saved';
+  }
+
+  const workbookName = () => `${projectRef.current!.name.replace(/[^\w\- ]+/g, '').trim() || 'takeoff'} - takeoff.xlsx`;
+
   async function exportExcel() {
     setBusy('Building the Excel file…');
     try {
       const blob = await exportWorkbook(project!, activityRef.current, roomOf);
-      const filename = `${project!.name.replace(/[^\w\- ]+/g, '').trim() || 'takeoff'} - takeoff.xlsx`;
-      if ((await saveFile(filename, blob)) === 'failed') {
+      if ((await saveOutput(workbookName(), blob)) === 'failed') {
         await notify('The Excel file could not be saved here. Try again in a moment.');
       }
     } finally {
@@ -1216,7 +1281,7 @@ export function App() {
         return;
       }
       const filename = `${project!.name.replace(/[^\w\- ]+/g, '').trim() || 'takeoff'} - marked up.pdf`;
-      if ((await saveFile(filename, new Blob([bytes as BlobPart], { type: 'application/pdf' }))) === 'failed') {
+      if ((await saveOutput(filename, new Blob([bytes as BlobPart], { type: 'application/pdf' }))) === 'failed') {
         setToast({ text: 'The PDF could not be saved.', undo: false });
       } else if (missing.length) {
         setToast({ text: `Saved ${sheets} sheets. Left out (drawings missing): ${missing.join(', ')}`, undo: false });
@@ -1785,7 +1850,7 @@ export function App() {
     try {
       const blob = await sheetImage(page, sheet, project!);
       const name = `${project!.name} - ${sheet.name}`.replace(/[\\/:*?"<>|]+/g, '-');
-      if ((await saveFile(`${name}.png`, blob)) === 'failed') setToast({ text: 'The image could not be saved.', undo: false });
+      if ((await saveOutput(`${name}.png`, blob)) === 'failed') setToast({ text: 'The image could not be saved.', undo: false });
     } catch (e) {
       setToast({ text: `Something went wrong: ${e instanceof Error ? e.message : String(e)}`, undo: false });
     } finally {
@@ -2067,6 +2132,62 @@ export function App() {
 
   const toolDisabled = (id: Tool) => !page || (id === 'cutout' && selectedType?.kind !== 'area');
   const toolTitle = (t: (typeof TOOLS)[number]) => `${t.help} (${t.key})${t.id === 'cutout' && selectedType?.kind !== 'area' ? ' — select an area first' : ''}`;
+
+
+  // What the AI's tools (src/mcp/tools.ts) reach: the same actions as the buttons, so every
+  // change is undoable, logged and saved to the project's folder.
+  mcpCtxRef.current = {
+    project: () => projectRef.current,
+    commit,
+    undo: () => {
+      const could = past.current.length > 0;
+      undo();
+      return could;
+    },
+    listProjects,
+    openProject: async (id) => {
+      const p = await loadProjectById(id);
+      if (!p) return false;
+      await flush();
+      await openProjectState(p);
+      return true;
+    },
+    createProject: (name, units) => createProjectNamed(name, units),
+    readPdf: (path) => {
+      if (!desktopApi?.mcp) throw new Error('Adding drawings by path needs the desktop app.');
+      return desktopApi.mcp.readPdf(path);
+    },
+    addDrawing: async (name, data) => {
+      try {
+        return (await addDrawingData(name, data)).sheets;
+      } finally {
+        supersedeReissued();
+      }
+    },
+    page: async (s) => (await pdfsRef.current.get(s.docId)?.getPage(s.page)) ?? null,
+    doc: (id) => pdfsRef.current.get(id),
+    docs: () => [...pdfsRef.current.values()],
+    texts: sheetTexts,
+    access: () => setAccess(),
+    render: async (s, region, scale, withTakeoffs) => {
+      const pg = await pdfsRef.current.get(s.docId)?.getPage(s.page);
+      if (!pg) throw new Error(`${s.name}'s drawing file is not on this computer.`);
+      return renderRegion(pg, s, projectRef.current!, region, scale, withTakeoffs);
+    },
+    exportExcel: async () => {
+      const blob = await exportWorkbook(projectRef.current!, activityRef.current, roomOf);
+      const path = await saveToProject(workbookName(), blob);
+      if (!path) throw new Error('The project needs drawings or takeoffs before it has a folder to save into.');
+      return path;
+    },
+    showSheet: (id) => setSheetId(id),
+    projectFolder: async () => {
+      const dir = await projectDir().catch(() => null);
+      if (!dir || !syncFolder) return null;
+      return `${syncFolder}${desktopApi?.platform === 'win32' ? '\\' : '/'}${dir}`;
+    },
+    maxOpening: () => maxOpening,
+  };
 
   return (
     <div className="app">
@@ -3023,6 +3144,7 @@ export function App() {
                 : []),
               ...(canUseServiceWorker() && !isInstalled() ? [{ label: 'Install as an app…', onSelect: () => void installApp() }] : []),
               ...(isHosted ? [] : [{ label: 'AI settings…', onSelect: () => setAiDialog('settings') }]),
+              ...(desktopApi?.mcp ? [{ label: 'Connect AI (Claude, Codex)…', hint: 'MCP', onSelect: () => setAiDialog('connect') }] : []),
               {
                 label: project.units === 'metric' ? 'Switch to imperial (ft, SF)…' : 'Switch to metric (m, m²)…',
                 hint: `Now ${project.units}`,
@@ -3211,6 +3333,7 @@ export function App() {
       )}
       {aiDialog === 'settings' && <AiSettingsDialog onClose={() => setAiDialog(null)} />}
       {aiDialog === 'shortcuts' && <ShortcutsDialog onClose={() => setAiDialog(null)} />}
+      {aiDialog === 'connect' && desktopApi?.mcp && <ConnectAiDialog mcp={desktopApi.mcp} onClose={() => setAiDialog(null)} />}
       {aiDialog === 'help' && <QuickStartDialog onClose={() => setAiDialog(null)} />}
       {comparison && (
         <div
@@ -3223,7 +3346,7 @@ export function App() {
             <div className="panel-head">
               <h3>{comparison.name}: what changed</h3>
               <div className="button-row">
-                <button onClick={() => void saveFile(`${comparison.name} - changes.png`, comparison.blob)}>Save image</button>
+                <button onClick={() => void saveOutput(`${comparison.name} - changes.png`, comparison.blob)}>Save image</button>
                 <button
                   onClick={() => setComparison(null)}
                 >

@@ -32,3 +32,8 @@ nsis:
   oneClick: false
   perMachine: false
   allowToChangeInstallationDirectory: true
+# The stdio pipe AI apps run to reach the app's MCP server (electron/mcp-stdio.cjs), kept
+# outside the app archive so the app's binary can run it as Node.
+extraResources:
+  - from: electron/mcp-stdio.cjs
+    to: mcp-stdio.cjs

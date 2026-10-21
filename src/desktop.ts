@@ -11,6 +11,34 @@ export interface DesktopApi extends FolderApi {
   getMissingFolder(): Promise<string | null>;
   /** Runs `finish` when the window is closing; the window waits for it. */
   onFlush(finish: () => Promise<void>): void;
+  /** Saves an exported file in a project's Exports folder; resolves to its path. */
+  writeExport?(dir: string, filename: string, data: ArrayBuffer): Promise<string>;
+  /** Shows a file in Finder or Explorer. */
+  showFile?(file: string): Promise<void>;
+  /** The MCP server AI apps connect to (electron/mcp.cjs); absent in older builds. */
+  mcp?: McpBridge;
+}
+
+export interface McpInfo {
+  enabled: boolean;
+  running: boolean;
+  port: number;
+  url: string;
+  token: string;
+  /** How a command-based AI app (Claude Desktop, Codex) starts it. */
+  stdio: { command: string; args: string[]; env: Record<string, string> };
+  claudeDesktopConfig: string;
+  inClaudeDesktop: boolean;
+}
+
+export interface McpBridge {
+  register(tools: unknown[]): void;
+  onCall(run: (name: string, args: Record<string, unknown>) => Promise<unknown>): void;
+  readPdf(file: string): Promise<{ name: string; data: ArrayBuffer }>;
+  info(): Promise<McpInfo>;
+  addToClaudeDesktop(): Promise<string>;
+  setEnabled(on: boolean): Promise<boolean>;
+  newToken(): Promise<string>;
 }
 
 /** The desktop app's extras, or null in a browser. */

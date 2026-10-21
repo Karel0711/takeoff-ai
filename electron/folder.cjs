@@ -4,6 +4,7 @@
 //   <folder>/<Project name> (<id>)/project.json     { format, version, savedAt, project, activity }
 //   <folder>/<Project name> (<id>)/drawings/<docId>.pdf
 //   <folder>/<Project name> (<id>)/.versions/<time>.json   earlier project.json, every 10 minutes, the last 50
+//   <folder>/<Project name> (<id>)/Exports/<file>          Excel workbooks, marked-up PDFs, images saved from the project
 //
 // Every path is checked to stay inside the folder. Files are written to a temporary name
 // and renamed, so a sync service never picks up half a file.
@@ -128,6 +129,24 @@ async function writePdf(root, dir, docId, data) {
   await writeAtomic(pdfPath(root, dir, docId), Buffer.from(data));
 }
 
+/** A file name safe on Mac and Windows, keeping its extension. */
+function safeFileName(name) {
+  const clean = String(name || 'export')
+    .replace(/[\\/:*?"<>|\u0000-\u001f]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/^[. ]+|[. ]+$/g, '')
+    .slice(0, 120);
+  return clean || 'export';
+}
+
+/** Saves an exported file in the project's Exports folder; returns its full path. */
+async function writeExport(root, dir, filename, data) {
+  const file = inside(root, dir, 'Exports', safeFileName(filename));
+  await writeAtomic(file, Buffer.from(data));
+  return file;
+}
+
 /** Renames a project's folder (after the project is renamed), unless the new name is taken. */
 async function rename(root, from, to) {
   const target = inside(root, to);
@@ -140,4 +159,4 @@ async function rename(root, from, to) {
   }
 }
 
-module.exports = { inside, dirFor, list, readProject, writeProject, hasPdf, readPdf, writePdf, rename };
+module.exports = { inside, dirFor, list, readProject, writeProject, hasPdf, readPdf, writePdf, writeExport, safeFileName, rename };

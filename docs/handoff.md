@@ -4,6 +4,14 @@ Where the project stands, for picking it up in a new session.
 
 ## Status
 
+- **MCP / Connect AI (desktop, 2026-10-21):** the desktop app serves MCP on 127.0.0.1:47821
+  (`electron/mcpServer.cjs` transport, `electron/mcp.cjs` glue, `electron/mcp-stdio.cjs` pipe for
+  command-based clients); tools in `src/mcp/tools.ts` run through the window's `commit`. Checked
+  end to end against the real app (Electron under xvfb, through the stdio pipe): create project,
+  add the sample set, rooms 5/5, walls EW1/W1, doors 5, ceilings, image, quantities, Excel saved to
+  `<project>/Exports/`, a change made just before a hard kill was in project.json and reopened.
+  Plan: Takeoff AI stays internal, released free on LinkedIn as a download; users bring their own
+  AI subscription through MCP (no hosting, no API keys of ours).
 - **Phase 1 (done):** manual takeoff. PDF sets split into sheets, sheet numbers
   and scales detected, area/linear/count tools, formula assemblies, Excel export,
   local persistence.

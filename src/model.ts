@@ -134,8 +134,8 @@ export interface Measurement {
   points: Pt[];
   /** Cutouts subtracted from an area measurement. */
   holes: Pt[][];
-  /** Made by the automatic wall or room takeoff, so a re-run can replace it. */
-  source?: 'walls' | 'rooms' | 'legend' | 'sprinklers' | 'ceilings' | 'symbols' | 'windows';
+  /** Made by the automatic wall or room takeoff, so a re-run can replace it; 'ai' was added by an AI over MCP, to review. */
+  source?: 'walls' | 'rooms' | 'legend' | 'sprinklers' | 'ceilings' | 'symbols' | 'windows' | 'ai';
   /** A name for this takeoff, e.g. the room it covers ("112 RECEIVING & GEN. STORAGE"). */
   label?: string;
   /**

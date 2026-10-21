@@ -207,6 +207,7 @@ Google Drive). Every project is a folder there:
         meta.json         name and last save, for listing
         drawings/*.pdf    the drawings as added
         .versions/*.json  earlier project.json, every 10 minutes, the last 50
+        Exports/          Excel workbooks, marked-up PDFs and sheet images saved from it
 
 **New project** asks for the job name and makes its folder at once; adding
 drawings to the blank starting project asks for a name first. Renaming a
@@ -222,6 +223,29 @@ project moves its folder to the Trash. Logic and tests: `src/folderSync.ts`,
 
 Locally: `npm run desktop` runs it; `npm run desktop:mac` / `desktop:win` build
 the installers (Mac builds need a Mac).
+
+### Connect AI (MCP): let Claude, Codex or a local model drive it
+
+The desktop app runs an MCP server on the computer's loopback address
+(`electron/mcpServer.cjs`, `electron/mcp.cjs`), so an AI app on your own
+subscription can work in Takeoff AI: open or create projects, add drawing PDFs
+by path, list sheets, read sheet text with positions, look at sheet images
+(with the takeoffs drawn on), set scales, create types, add and delete
+takeoffs, run the automatic takeoffs (rooms, walls, doors, windows, ceilings,
+sprinklers, legend symbols), read quantities and export to Excel. The tools are
+in `src/mcp/tools.ts`; each change goes through the same undoable commit as a
+click, so it shows in the window, lands in the activity log and is saved to the
+project's folder. Takeoffs an AI adds by hand are labelled **AI** so you can
+find and check them.
+
+**More › Connect AI** shows it running, adds it to Claude Desktop in one click
+(then quit and reopen Claude Desktop), and gives copy-paste setup for Claude
+Code, Codex (`~/.codex/config.toml`) and other apps. Apps that start servers as
+a command run the app's own binary on `mcp-stdio.cjs` (shipped in the app's
+Resources), which forwards to the running app and opens it if it is closed.
+Requests need a key (Connect AI › New key makes another) and are refused from
+browsers and other computers. Tests: `test/mcpServer.test.ts`,
+`test/mcpTools.test.ts`.
 
 ### Publishing it for your team
 

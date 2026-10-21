@@ -93,7 +93,7 @@ function SelectionCard({ m, project, sheet: current, onDelete, onRetype, onSelec
               {sheet?.name}
               {room ? ` · ${room}` : ''}
             </button>
-            {m.source === 'walls' ? ' · wall takeoff' : ''}
+            {m.source === 'walls' ? ' · wall takeoff' : m.source === 'ai' ? ' · added by AI, to check' : ''}
           </div>
         </div>
         <button className="icon-button" title="Deselect (Esc)" aria-label="Deselect" onClick={() => onSelect(null)}>

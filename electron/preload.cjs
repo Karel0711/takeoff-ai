@@ -20,6 +20,27 @@ contextBridge.exposeInMainWorld('takeoffDesktop', {
   getDefaultFolder: () => ipcRenderer.invoke('folder:default'),
   useDefaultFolder: () => ipcRenderer.invoke('folder:useDefault'),
   getMissingFolder: () => ipcRenderer.invoke('folder:missing'),
+  writeExport: (dir, filename, data) => ipcRenderer.invoke('folder:writeExport', dir, filename, data),
+  showFile: (file) => ipcRenderer.invoke('shell:showFile', file),
+  /** The MCP server AI apps connect to (electron/mcp.cjs). */
+  mcp: {
+    register: (tools) => ipcRenderer.send('mcp:register', tools),
+    /** `run(name, args)` answers each tool call. */
+    onCall: (run) => {
+      ipcRenderer.on('mcp:call', async (_e, { callId, name, args }) => {
+        try {
+          ipcRenderer.send('mcp:result', { callId, result: await run(name, args) });
+        } catch (err) {
+          ipcRenderer.send('mcp:result', { callId, error: err && err.message ? err.message : String(err) });
+        }
+      });
+    },
+    readPdf: (file) => ipcRenderer.invoke('mcp:readPdf', file),
+    info: () => ipcRenderer.invoke('mcp:info'),
+    addToClaudeDesktop: () => ipcRenderer.invoke('mcp:addToClaudeDesktop'),
+    setEnabled: (on) => ipcRenderer.invoke('mcp:setEnabled', on),
+    newToken: () => ipcRenderer.invoke('mcp:newToken'),
+  },
   /** Called when the window is closing: finish writing, then the window closes. */
   onFlush: (finish) => {
     ipcRenderer.on('app:flush', async () => {
