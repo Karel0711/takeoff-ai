@@ -16,8 +16,11 @@ on:
   workflow_dispatch:
 
 jobs:
+  # Each build attaches its installer straight to the release (no workflow artifacts, which
+  # count against the account's Actions storage and stopped the builds when it filled up).
   build:
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: macos-latest
@@ -28,7 +31,7 @@ jobs:
             files: release/*.exe
     runs-on: ${{ matrix.os }}
     permissions:
-      contents: read
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -42,35 +45,22 @@ jobs:
         env:
           # No signing certificate: ad-hoc on Mac (see electron-builder.yml), unsigned on Windows.
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-      - uses: actions/upload-artifact@v4
-        with:
-          name: desktop-${{ runner.os }}
-          path: ${{ matrix.files }}
-          if-no-files-found: error
+      - name: Attach to the release
+        if: github.ref == 'refs/heads/main'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: desktop-${{ github.run_number }}
+        run: |
+          cat > notes.md <<'NOTES'
+          Built from ${{ github.sha }}.
 
-  release:
-    if: github.ref == 'refs/heads/main'
-    needs: build
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          path: out
-          merge-multiple: true
-      - uses: softprops/action-gh-release@v2
-        with:
-          tag_name: desktop-${{ github.run_number }}
-          name: Takeoff AI desktop ${{ github.run_number }}
-          target_commitish: ${{ github.sha }}
-          make_latest: true
-          files: out/*
-          body: |
-            Built from ${{ github.sha }}.
+          **Mac:** download `Takeoff-AI-Mac-arm64.dmg` (Apple silicon: M1 and later) or `Takeoff-AI-Mac-x64.dmg` (Intel), open it and drag Takeoff AI to Applications. The first time, macOS says it can't check the app: open System Settings › Privacy & Security and click **Open Anyway**.
 
-            **Mac:** download `Takeoff-AI-Mac-arm64.dmg` (Apple silicon: M1 and later) or `Takeoff-AI-Mac-x64.dmg` (Intel), open it and drag Takeoff AI to Applications. The first time, macOS says it can't check the app: open System Settings › Privacy & Security and click **Open Anyway**.
+          **Windows:** download `Takeoff-AI-Windows-Setup.exe` and run it. If SmartScreen warns, click **More info › Run anyway**.
 
-            **Windows:** download `Takeoff-AI-Windows-Setup.exe` and run it. If SmartScreen warns, click **More info › Run anyway**.
-
-            In the app, **More › Keep projects in iCloud Drive…** on each computer shares projects between them.
+          In the app, **More › Keep projects in iCloud Drive…** on each computer shares projects between them. **More › Connect AI** lets Claude Desktop, Claude Code or Codex drive it on your own AI subscription.
+          NOTES
+          # Whichever build finishes first makes the release; the other adds to it.
+          gh release create "$TAG" --title "Takeoff AI desktop ${{ github.run_number }}" --target "${{ github.sha }}" --notes-file notes.md --latest || true
+          gh release upload "$TAG" ${{ matrix.files }} --clobber
