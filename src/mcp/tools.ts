@@ -68,6 +68,8 @@ export interface McpContext {
   /** The project's folder on disk, once it has one. */
   projectFolder(): Promise<string | null>;
   maxOpening(): number;
+  /** Takes off the whole set; resolves to the review and RFIs. */
+  wholeSet?(): Promise<string>;
 }
 
 const text = (t: string, structured?: Record<string, unknown>): ToolResult => ({ content: [{ type: 'text', text: t }], ...(structured ? { structuredContent: structured } : {}) });
@@ -242,6 +244,13 @@ export const TOOL_DEFS: ToolDef[] = [
       'Set scales first. Then check the result with get_sheet_image.',
     ].join(' '),
     inputSchema: obj({ kind: str('Which automation', { enum: [...AUTOMATIONS] }), sheet_id: str('Sheet, for rooms, walls, doors'), all_sheets: { type: 'boolean', description: 'doors: every sheet' } }, ['kind']),
+  },
+  {
+    name: 'take_off_whole_set',
+    title: 'Take off the whole set',
+    description:
+      'Runs every automatic takeoff over the whole drawing set in one go, as an estimator works a set: walls and rooms on each new-work floor plan, door tags on every sheet, window tags, room finishes from the schedules, ceilings on the RCPs, legend symbols and sprinklers. Added as one undoable change. Returns what each tool did, the RFIs to send (numbered) and what to check before pricing. Set scales on the floor plans first. Takes minutes on a big set.',
+    inputSchema: obj({}),
   },
   {
     name: 'get_quantities',
@@ -583,6 +592,12 @@ async function dispatch(ctx: McpContext, name: string, a: Record<string, unknown
 
     case 'run_automation':
       return automation(ctx, a);
+
+    case 'take_off_whole_set': {
+      need(ctx);
+      if (!ctx.wholeSet) throw new ToolError('This version of the app cannot take off the whole set.');
+      return text(await ctx.wholeSet());
+    }
 
     case 'get_quantities': {
       const p = need(ctx);

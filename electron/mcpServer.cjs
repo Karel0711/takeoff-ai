@@ -16,7 +16,7 @@ const MAX_BODY = 50 * 1024 * 1024;
 const INSTRUCTIONS = [
   'Takeoff AI is a construction quantity takeoff app running on this computer. You work on the project open in its window; the estimator watches and can undo anything you do.',
   'Coordinates are sheet points: PDF points (1/72 in) from the sheet\'s top-left corner. get_sheet_image tells you how its pixels map to sheet points; get_sheet_text gives every text run\'s position.',
-  'Typical flow: list_projects / open_project or create_project, add_drawings (PDF paths on this computer), list_sheets, check each plan\'s scale (set_sheet_scale), run_automation for rooms, walls, doors, windows, ceilings, sprinklers or symbols, look at the result with get_sheet_image, fix with add_takeoff / delete_takeoffs, then get_quantities and export_excel.',
+  'Typical flow: list_projects / open_project or create_project, add_drawings (PDF paths on this computer), list_sheets, check each plan\'s scale (set_sheet_scale), take_off_whole_set (or run_automation for one tool on one sheet), look at the result with get_sheet_image, fix with add_takeoff / delete_takeoffs, then get_quantities and export_excel.',
   'Takeoffs you add are labelled "AI" until the estimator reviews them. Measure only what the drawings show; say what you could not read rather than guessing.',
 ].join('\n');
 

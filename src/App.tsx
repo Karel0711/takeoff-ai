@@ -50,6 +50,7 @@ import { desktopApi, folderLabel } from './desktop';
 import { ConnectAiDialog } from './components/ConnectAiDialog';
 import { runTool, toolList, TOOL_DEFS, type McpContext } from './mcp/tools';
 import { renderRegion } from './mcp/render';
+import { reviewText, takeOffWholeSet } from './automate/wholeSet';
 import { FolderSync, type PullResult } from './folderSync';
 import { linesIn, onSheet, readNumber, readTitle, relativeBox, type Box } from './sheetNumbers';
 import { SheetNumbersDialog, type SheetNumberRow } from './components/SheetNumbersDialog';
@@ -149,6 +150,9 @@ export function App() {
   const hitTurn = useRef(0);
   const [comparison, setComparison] = useState<{ url: string; blob: Blob; name: string } | null>(null);
   const [tool, setTool] = useState<Tool>('select');
+  /** The last whole-set run's report (review and RFIs), shown in a dialog. */
+  const [wholeSetReport, setWholeSetReport] = useState<{ text: string; rfis: string } | null>(null);
+
   const [busy, setBusy] = useState<string | null>(null);
   const [toast, setToastState] = useState<Toast | null>(null);
   /** The latest chooseTool, for the keyboard handler. */
@@ -1531,6 +1535,36 @@ export function App() {
     setToast({ text: r.message, undo: true });
   }
 
+  /**
+   * Takes off the whole set in one go: every tool on every sheet it belongs on (see
+   * `src/automate/wholeSet.ts`), added as one change, then the review and RFIs. Resolves to the
+   * report's text (the AI tools return it).
+   */
+  async function takeOffEverything(): Promise<string> {
+    const p = projectRef.current!;
+    if (!p.sheets.length) throw new Error('Add the drawings first.');
+    setBusy('Whole set: reading the sheets…');
+    try {
+      const r = await takeOffWholeSet(
+        p,
+        { ...setAccess(), doc: (s) => pdfsRef.current.get(s.docId), docs: () => [...pdfsRef.current.values()] },
+        { maxOpening, progress: (t) => setBusy(t) },
+      );
+      const added = r.project.measurements.length - p.measurements.length;
+      if (r.project !== p) commit(() => r.project, 'Take off the whole set');
+      const text = reviewText(p.name, r);
+      const rfis = r.review
+        .filter((x) => x.kind === 'rfi')
+        .map((x, i) => `${i + 1}. ${x.text}`)
+        .join('\n');
+      await saveToProject(`${p.name.replace(/[^\w\- ]+/g, '').trim() || 'takeoff'} - review and RFIs.txt`, new Blob([text], { type: 'text/plain' })).catch(() => null);
+      setWholeSetReport({ text: `Added ${added} takeoffs.\n\n${text}`, rfis });
+      return `Added ${added} takeoffs.\n\n${text}`;
+    } finally {
+      setBusy(null);
+    }
+  }
+
   /** Fire sprinklers on every sprinkler plan (see `src/automate/sprinklers.ts`). */
   const automateSprinklers = () => runAutomation('Fire sprinklers', () => sprinklerTakeoff(projectRef.current!, setAccess(), sheet));
 
@@ -2212,6 +2246,7 @@ export function App() {
       return `${syncFolder}${desktopApi?.platform === 'win32' ? '\\' : '/'}${dir}`;
     },
     maxOpening: () => maxOpening,
+    wholeSet: () => takeOffEverything(),
   };
 
   return (
@@ -2976,6 +3011,13 @@ export function App() {
           <div className="automate-menu" role="menu">
             {[
               {
+                id: 'wholeset' as const,
+                icon: 'sparkle' as const,
+                title: 'Take off the whole set',
+                text: 'Every tool on every sheet in one go: walls and rooms on each plan, doors, windows, finishes, ceilings, symbols, sprinklers. Then a list of what to check and the RFIs.',
+                ready: project.sheets.length > 0,
+              },
+              {
                 id: 'assemblies' as const,
                 icon: 'sparkle' as const,
                 title: sheet.aiAssemblies ? 'Assembly types (saved)' : 'Read assembly types',
@@ -3053,7 +3095,9 @@ export function App() {
                 disabled={!a.ready}
                 onClick={() => {
                   setPopover(null);
-                  if (a.id === 'doors') void countDoorTags();
+                  if (a.id === 'wholeset')
+                    void takeOffEverything().catch((e) => setToast({ text: `Something went wrong: ${e instanceof Error ? e.message : String(e)}`, undo: false }));
+                  else if (a.id === 'doors') void countDoorTags();
                   else if (a.id === 'sprinklers') void automateSprinklers();
                   else if (a.id === 'windows') void automateWindows();
                   else if (a.id === 'symbols') void automateSymbols();
@@ -3358,6 +3402,26 @@ export function App() {
       )}
       {aiDialog === 'settings' && <AiSettingsDialog onClose={() => setAiDialog(null)} />}
       {aiDialog === 'shortcuts' && <ShortcutsDialog onClose={() => setAiDialog(null)} />}
+      {wholeSetReport && (
+        <div className="modal-backdrop" onClick={() => setWholeSetReport(null)}>
+          <div className="modal" role="dialog" aria-label="Whole set takeoff" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 720 }}>
+            <div className="panel-head">
+              <h3>Whole set takeoff</h3>
+              <button onClick={() => setWholeSetReport(null)} autoFocus>
+                Done
+              </button>
+            </div>
+            <pre style={{ whiteSpace: 'pre-wrap', fontSize: 12, maxHeight: '60vh', overflow: 'auto', margin: 0 }}>{wholeSetReport.text}</pre>
+            <div className="row-actions" style={{ marginTop: 12 }}>
+              <button disabled={!wholeSetReport.rfis} onClick={() => void navigator.clipboard.writeText(wholeSetReport.rfis).then(() => setToast({ text: 'RFIs copied', undo: false }))}>
+                Copy RFIs
+              </button>
+              <button onClick={() => void navigator.clipboard.writeText(wholeSetReport.text).then(() => setToast({ text: 'Report copied', undo: false }))}>Copy report</button>
+              <span className="muted">Undo removes everything it added.</span>
+            </div>
+          </div>
+        </div>
+      )}
       {aiDialog === 'connect' && desktopApi?.mcp && <ConnectAiDialog mcp={desktopApi.mcp} onClose={() => setAiDialog(null)} />}
       {aiDialog === 'help' && <QuickStartDialog onClose={() => setAiDialog(null)} />}
       {comparison && (
