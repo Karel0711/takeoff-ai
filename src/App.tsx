@@ -104,6 +104,8 @@ let mcpWired = false;
 export function App() {
   const [project, setProject] = useState<Project | null>(null);
   const projectRef = useRef<Project | null>(null);
+  /** Writes the activity log still waiting (set below, used before switching projects). */
+  const flushActivityRef = useRef<() => Promise<void>>(async () => undefined);
   const past = useRef<Project[]>([]);
   const future = useRef<Project[]>([]);
   const lastCommit = useRef<{ key: string; at: number; batch: string } | null>(null);
@@ -215,6 +217,8 @@ export function App() {
   // Load the saved project, its PDFs and its activity log.
   /** Opens a project: its drawings, its history, a fresh undo stack. */
   const openProjectState = useCallback(async (p: Project) => {
+    // The last project's activity, still waiting to be written, goes first.
+    await flushActivityRef.current();
     const opened = new Map<string, PDFDocumentProxy>();
     for (const doc of p.docs) {
       const data = await loadPdf(doc.id);
@@ -538,6 +542,26 @@ export function App() {
     setFocus((f) => ({ box: [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)], n: (f?.n ?? 0) + 1 }));
   };
 
+  /**
+   * The activity log is written a moment after the last change, not on every one: on a big
+   * project it is thousands of events, and writing it each keystroke made editing lag.
+   */
+  const pendingActivity = useRef<{ id: string; events: ActivityEvent[]; timer: number } | null>(null);
+  const flushActivity = useCallback(async () => {
+    const p = pendingActivity.current;
+    if (!p) return;
+    pendingActivity.current = null;
+    window.clearTimeout(p.timer);
+    await saveActivity(p.id, p.events);
+  }, []);
+  flushActivityRef.current = flushActivity;
+  const saveActivitySoon = (id: string, events: ActivityEvent[]) => {
+    const p = pendingActivity.current;
+    if (p && p.id !== id) void flushActivity();
+    else if (p) window.clearTimeout(p.timer);
+    pendingActivity.current = { id, events, timer: window.setTimeout(() => void flushActivity(), 1200) };
+  };
+
   const record = useCallback((events: ActivityEvent[], replaceBatch?: string) => {
     if (!events.length && !replaceBatch) return;
     const kept = replaceBatch ? activityRef.current.filter((e) => e.batch !== replaceBatch) : activityRef.current;
@@ -545,7 +569,7 @@ export function App() {
     activityRef.current = all;
     setActivity(all);
     const id = projectRef.current?.id;
-    if (id) void saveActivity(id, all);
+    if (id) saveActivitySoon(id, all);
   }, []);
 
   /**
@@ -885,6 +909,7 @@ export function App() {
 
   /** Saves the open project now (rather than on the autosave timer), before switching away. */
   const flush = async () => {
+    await flushActivity();
     if (projectRef.current) await saveProject(projectRef.current);
   };
   flushAllRef.current = async () => {

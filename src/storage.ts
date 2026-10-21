@@ -80,10 +80,22 @@ export const loadCurrentProject = () =>
     const index = (await get<ProjectSummary[]>(INDEX)) ?? [];
     const current = await get<string>(CURRENT);
     const id = index.some((s) => s.id === current) ? current : [...index].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0]?.id;
-    return id ? await get<Project>(projectKey(id)) : undefined;
+    return id ? known(await get<Project>(projectKey(id))) : undefined;
   }, undefined as Project | undefined);
 
-export const loadProjectById = (id: string) => safely(() => get<Project>(projectKey(id)), undefined);
+/**
+ * Project objects known to match what is stored: as loaded, or as last saved. The app never
+ * mutates a project (each change makes a new object), so saving one of these again changes
+ * nothing and is skipped without reading the stored copy back or comparing the two (both slow
+ * on a big project: thousands of takeoffs is megabytes).
+ */
+const stored = new WeakSet<Project>();
+const known = <T extends Project | undefined>(p: T): T => {
+  if (p) stored.add(p);
+  return p;
+};
+
+export const loadProjectById = (id: string) => safely(async () => known(await get<Project>(projectKey(id))), undefined);
 
 /** Told about every project saved with a change, and every project deleted (the desktop app's shared folder). */
 export interface StorageHooks {
@@ -104,13 +116,13 @@ export const setStorageHooks = (h: StorageHooks | null) => {
 export const saveProject = (project: Project, opts: { fromFolder?: string } = {}) =>
   safely(async () => {
     if (!project.id) return;
-    const index = (await get<ProjectSummary[]>(INDEX)) ?? [];
-    const old = index.find((s) => s.id === project.id);
-    const stored = old ? await get<Project>(projectKey(project.id)) : undefined;
-    const unchanged = stored !== undefined && JSON.stringify(stored) === JSON.stringify(project);
+    const unchanged = !opts.fromFolder && stored.has(project);
     if (!unchanged) {
+      const index = (await get<ProjectSummary[]>(INDEX)) ?? [];
+      const old = index.find((s) => s.id === project.id);
       await set(projectKey(project.id), project);
       await set(INDEX, [...index.filter((s) => s.id !== project.id), summarize(project, old?.createdAt, opts.fromFolder)]);
+      stored.add(project);
     }
     if (!opts.fromFolder) await set(CURRENT, project.id);
     if (!unchanged && !opts.fromFolder) hooks?.saved(project.id);
