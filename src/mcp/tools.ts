@@ -7,7 +7,7 @@ import { doorTakeoff, findDoorTagsIn } from '../automate/doors';
 import { automateWindows } from '../automate/windows';
 import { automateCeilings } from '../automate/ceilings';
 import { automateSprinklers } from '../automate/sprinklers';
-import { applyFinishes, finishRooms, readFinishes } from '../automate/finishes';
+import { applyFinishes, ceilingsFromRcps, finishRooms, readFinishes } from '../automate/finishes';
 import { symbolTakeoff, symbolTallies, defaultSymbolChoices } from '../automate/symbols';
 import { DIVISIONS, newId, type Kind, type Measurement, type Project, type Pt, type Sheet, type TakeoffType, type Units } from '../model';
 import type { PageText } from '../pageText';
@@ -709,10 +709,14 @@ async function automation(ctx: McpContext, a: Record<string, unknown>): Promise<
     }
   }
   if (!r.apply) return fail(r.message);
+  // Ceilings measured on the RCPs replace the finish schedule's ceilings, so none counts twice.
+  const made = r.apply;
+  let moved = 0;
+  const apply = kind === 'ceilings' || kind === 'finishes' ? (q: Project) => { const c = ceilingsFromRcps(made(q)); moved = c.moved; return c.project; } : made;
   const before = ctx.project()!.measurements.length;
-  ctx.commit(r.apply, `${kind[0].toUpperCase()}${kind.slice(1)} (AI)`);
+  ctx.commit(apply, `${kind[0].toUpperCase()}${kind.slice(1)} (AI)`);
   const after = ctx.project()!.measurements.length;
-  return text(`${r.message}. Takeoffs in the project: ${before} → ${after}. Check with get_sheet_image${sheet ? ` on ${sheet.name}` : ''}; the estimator can undo it.`);
+  return text(`${r.message}.${moved ? ` ${moved} rooms take their ceiling from the ceiling plans instead of the finish schedule.` : ''} Takeoffs in the project: ${before} → ${after}. Check with get_sheet_image${sheet ? ` on ${sheet.name}` : ''}; the estimator can undo it.`);
 }
 
 /** The tool list as MCP's tools/list gives it. */

@@ -1,4 +1,4 @@
-import { applyFinishes, finishRooms, readFinishes } from './finishes';
+import { applyFinishes, ceilingsFromRcps, finishRooms, levelOfSheet, readFinishes } from './finishes';
 import { automateCeilings } from './ceilings';
 import { doorTakeoff, findDoorTagsIn } from './doors';
 import type { Automation } from './result';
@@ -116,11 +116,7 @@ export async function takeOffWholeSet(
     .sort((a, b) => +(kinds.get(a.id)!.level === 'enlarged') - +(kinds.get(b.id)!.level === 'enlarged'));
   const levels = plans.filter((s) => kinds.get(s.id)!.level === 'level');
   /** The floor a plan is of, from its title ("LEVEL 1 ENLARGED FLOOR PLAN" is level 1). */
-  const levelOf = (s: Sheet) => {
-    const t = `${s.title ?? ''}`.toUpperCase();
-    const m = /\bLEVEL\s*([A-Z0-9]+)|\b(BASEMENT|CELLAR|GROUND|MAIN|MEZZANINE|FIRST|SECOND|THIRD|FOURTH|FIFTH|ROOF)\b|\b(\d+)(?:ST|ND|RD|TH)\s+FLOOR/.exec(t);
-    return m ? (m[1] ?? m[2] ?? m[3]) : null;
-  };
+  const levelOf = levelOfSheet;
   const enlargedLabels = new Map<string, { number: string; at: Pt }[]>();
   /** Room numbers tagged on the plans, and what happened to each (for telling RFIs from things to fix by hand). */
   const tagged = new Map<string, string>();
@@ -283,6 +279,14 @@ export async function takeOffWholeSet(
     await pause();
     const r = await automateCeilings(project, access, null);
     apply('ceilings', r);
+    // The RCPs' ceilings are the ceiling quantity; the finish schedule's ceiling column would count them twice.
+    const c = ceilingsFromRcps(project);
+    project = c.project;
+    if (c.moved)
+      review.push({
+        kind: 'check',
+        text: `Ceilings are measured on the ceiling plans, so ${c.moved} room${c.moved === 1 ? '' : 's'} with a ceiling in the finish schedule count it from there, not twice.${c.existing.length ? ` The schedule calls these ceilings existing: ${c.existing.slice(0, 20).join(', ')}${c.existing.length > 20 ? ` and ${c.existing.length - 20} more` : ''}. Check whether the ceiling plan areas over them are new work or existing to remain.` : ''}`,
+      });
     return r.message;
   });
 

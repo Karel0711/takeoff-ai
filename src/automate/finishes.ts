@@ -10,11 +10,14 @@ export type Finishes = Partial<Record<FinishRole, string>>;
 
 const codeOf = (name: string) => name.split(' – ')[0].trim().toUpperCase();
 
-/** The rooms finishes go on: named area takeoffs (or ones Rooms made), in room-number order. Areas a legend found are a finish already, not rooms. */
+/**
+ * The rooms finishes go on: named area takeoffs (or ones Rooms made), in room-number order. Areas a legend found are a
+ * finish already, not rooms; ceiling areas from the RCPs carry room names but are ceilings, not rooms.
+ */
 export function finishRooms(project: Project): Measurement[] {
   const areaTypeIds = new Set(project.types.filter((t) => t.kind === 'area').map((t) => t.id));
   return project.measurements
-    .filter((m) => areaTypeIds.has(m.typeId) && m.source !== 'legend' && (m.label || m.source === 'rooms'))
+    .filter((m) => areaTypeIds.has(m.typeId) && m.source !== 'legend' && m.source !== 'ceilings' && (m.label || m.source === 'rooms'))
     .sort((a, b) => (a.label ?? '').localeCompare(b.label ?? '', undefined, { numeric: true }));
 }
 
@@ -282,3 +285,64 @@ export const applyFinishes =
       }),
     };
   };
+
+/** The floor a sheet's title names ("LEVEL 2 (MAIN) FLOOR PLAN" → "2", "MAIN FLOOR RCP" → "MAIN"), or null. */
+export function levelOfSheet(s: Sheet): string | null {
+  const t = `${s.title ?? ''}`.toUpperCase();
+  const m = /\bLEVEL\s*([A-Z0-9]+)|\b(BASEMENT|CELLAR|GROUND|MAIN|MEZZANINE|FIRST|SECOND|THIRD|FOURTH|FIFTH|ROOF)\b|\b(\d+)(?:ST|ND|RD|TH)\s+FLOOR/.exec(t);
+  return m ? (m[1] ?? m[2] ?? m[3]) : null;
+}
+
+export interface RcpCeilings {
+  project: Project;
+  /** Rooms whose ceiling now comes from the RCPs instead of the finish schedule. */
+  moved: number;
+  /** Those whose schedule ceiling was existing (an EX… code), "001 CORRIDOR (EX ACT)". */
+  existing: string[];
+}
+
+/**
+ * Ceilings measured on the RCPs are the ceiling quantity: a room on a level with RCP ceilings
+ * drops the finish schedule's ceiling, so no ceiling is priced twice. Ceiling areas never
+ * carry room finishes themselves. Ceiling types the schedule made that nothing uses any more
+ * go. A project without RCP ceilings is returned as it is.
+ */
+export function ceilingsFromRcps(project: Project): RcpCeilings {
+  const sheets = new Map(project.sheets.map((s) => [s.id, s]));
+  const rcp = project.measurements.filter((m) => m.source === 'ceilings');
+  const stray = rcp.some((m) => m.finishes || m.wallShares);
+  if (!rcp.length) return { project, moved: 0, existing: [] };
+  const levels = new Set(rcp.map((m) => { const s = sheets.get(m.sheetId); return s ? levelOfSheet(s) : null; }));
+  const covered = (m: Measurement) => {
+    const s = sheets.get(m.sheetId);
+    return !!s && (levels.has(null) || levels.has(levelOfSheet(s)));
+  };
+  const rooms = new Set(finishRooms(project).filter((m) => m.finishes?.ceiling && covered(m)).map((m) => m.id));
+  if (!rooms.size && !stray) return { project, moved: 0, existing: [] };
+  const typeName = new Map(project.types.map((t) => [t.id, t.name]));
+  const dropped = new Set<string>();
+  const existing: string[] = [];
+  const measurements = project.measurements.map((m) => {
+    if (m.source === 'ceilings' && (m.finishes || m.wallShares)) {
+      const { finishes: _f, wallShares: _w, ...rest } = m;
+      for (const id of Object.values(m.finishes ?? {})) if (id) dropped.add(id);
+      for (const id of Object.keys(m.wallShares ?? {})) dropped.add(id);
+      return rest as Measurement;
+    }
+    if (!rooms.has(m.id)) return m;
+    const id = m.finishes!.ceiling!;
+    dropped.add(id);
+    const code = codeOf(typeName.get(id) ?? '');
+    if (/^EX\b|^EX[^A-Z]/.test(code)) existing.push(`${m.label ?? 'room'} (${code})`);
+    const { ceiling: _c, ...finishes } = m.finishes!;
+    return { ...m, finishes };
+  });
+  const inUse = new Set<string>();
+  for (const m of measurements) {
+    inUse.add(m.typeId);
+    for (const id of Object.values(m.finishes ?? {})) if (id) inUse.add(id);
+    for (const id of Object.keys(m.wallShares ?? {})) inUse.add(id);
+  }
+  const types = project.types.filter((t) => !dropped.has(t.id) || inUse.has(t.id));
+  return { project: { ...project, measurements, types }, moved: rooms.size, existing };
+}
