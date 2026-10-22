@@ -1,4 +1,6 @@
 import { guessDivision } from '../divisionGuess';
+import { findLegends } from '../fill/autoSymbols';
+import { findLegendAreas } from '../fill/legend';
 import { dashLines, pairParallels } from '../fill/runs';
 import { buildWallModel, fillRoom } from '../fill/roomFill';
 import { findEnclosedTags } from '../fill/typeTags';
@@ -99,6 +101,8 @@ export const isDemoPlan = (s: Sheet, texts: PageText[]) => {
   return /\bPLANS?\b/.test(t) && /DEMOLITION|\bDEMO\b|REMOVALS?/.test(t);
 };
 
+const SITE_SURFACE = /\b(ASPHALT|PAVEMENT|PAVING|PAVERS?|CONCRETE|GRASS|SOD|SEED|TOPSOIL|GRAVEL|GRANULAR|LANDSCAP\w*|MULCH|PLANTING)\b/i;
+
 const short = (text: string) => {
   const t = text.replace(/^REMOVE AND DISPOSE OF (EXISTING )?/i, '').replace(/\.\s.*$/, '').replace(/[.,;:]+$/, '');
   return t.length > 70 ? `${t.slice(0, 67)}…` : t;
@@ -129,7 +133,8 @@ export async function automateKeynotes(p: Project, access: SetAccess, maxOpening
       const heads = [s.title ?? '', ...drawingTitles(texts).slice(0, 3).map((d) => d.str)].join(' ').toUpperCase();
       // Notes on plans of the building (not a code, site or life safety plan's notes).
       const planSheet = /\bPLANS?\b/.test(heads) && !/CODE|SITE|LIFE SAFETY|KEY PLAN/.test(heads);
-      if (!notes.length && !demo) return;
+      const site = !!s.metersPerPoint && /\bSITE PLAN\b/.test(heads) && !/KEY PLAN|LOCATION/.test(heads);
+      if (!notes.length && !demo && !site) return;
       const segs = await access.segments(s);
       if (!segs) return;
       const box = titleBlockBox(texts, s.width, s.height);
@@ -168,6 +173,23 @@ export async function automateKeynotes(p: Project, access: SetAccess, maxOpening
           }
         }
       }
+      if (site) {
+        // A site plan's legend swatches (asphalt, concrete, grass): every area hatched the same way.
+        const legends = findLegends(texts, segs, s.width, s.height, box ? [box] : []);
+        for (const l of legends) {
+          const rows = l.rows.filter((r) => r.graphic && (r.kind === 'area' || SITE_SURFACE.test(r.label)));
+          for (const r of rows) r.kind = 'area';
+          findLegendAreas(rows, segs, l.box, s.width, s.height, s.metersPerPoint!);
+          for (const r of rows) {
+            // A swatch filled solid (asphalt grey): the shapes filled in its colour.
+            if (!r.areas?.length && r.graphic) r.areas = sameFill(segs, r.graphic, l.box);
+            if (!r.areas?.length) continue;
+            const name = `Site: ${r.label.replace(/\s+/g, ' ').trim()}`;
+            const id = typeFor(name, 'area', guessDivision(r.label) ?? '32 Exterior Improvements', units ? 'm²' : 'SF');
+            for (const a of r.areas) added.push({ id: newId(), sheetId: s.id, typeId: id, points: a.points, holes: [], source: 'demolition', label: r.label.slice(0, 30) });
+          }
+        }
+      }
       if (demo) {
         // Walls to demolish: drawn dashed, two lines 3" to 14" (75 to 350 mm) apart.
         const pt = (m: number) => m / s.metersPerPoint!;
@@ -187,4 +209,27 @@ export async function automateKeynotes(p: Project, access: SetAccess, maxOpening
     checks,
     apply: (q) => ({ ...q, types: [...q.types, ...fresh], measurements: [...q.measurements.filter((m) => !(m.source === 'demolition' && ids.has(m.typeId))), ...added] }),
   };
+}
+
+/** Shapes filled in the colour a legend swatch is filled with, outside the legend: their outlines and areas. */
+export function sameFill(segs: Segment[], [gx0, gy0, gx1, gy1]: [number, number, number, number], legend: [number, number, number, number]) {
+  const inBox = (x: number, y: number, b: number[]) => x >= b[0] && x <= b[2] && y >= b[1] && y <= b[3];
+  const colours = new Map<string, number>();
+  for (const g of segs) if (g.filled && g.color && !/^#(f{6}|0{6})$/i.test(g.color) && inBox(g.x1, g.y1, [gx0 - 1, gy0 - 1, gx1 + 1, gy1 + 1])) colours.set(g.color, (colours.get(g.color) ?? 0) + 1);
+  const colour = [...colours].sort((a, b) => b[1] - a[1])[0]?.[0];
+  if (!colour) return [];
+  const subs = new Map<number, Segment[]>();
+  for (const g of segs) if (g.filled && g.color === colour && g.sub !== undefined && !inBox(g.x1, g.y1, legend)) subs.set(g.sub, [...(subs.get(g.sub) ?? []), g]);
+  const out: { points: Pt[]; area: number; how: 'hatch' }[] = [];
+  for (const list of subs.values()) {
+    const points: Pt[] = [[list[0].x1, list[0].y1], ...list.map((g) => [g.x2, g.y2] as Pt)];
+    let a = 0;
+    for (let i = 0; i < points.length; i++) {
+      const [x1, y1] = points[i];
+      const [x2, y2] = points[(i + 1) % points.length];
+      a += x1 * y2 - x2 * y1;
+    }
+    if (Math.abs(a) / 2 > 50) out.push({ points, area: Math.abs(a) / 2, how: 'hatch' });
+  }
+  return out;
 }

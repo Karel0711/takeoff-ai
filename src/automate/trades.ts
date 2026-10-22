@@ -33,10 +33,11 @@ export interface TradesResult extends Automation {
   checks: string[];
 }
 
-const TRADES = /^(M|MD|MH|MP|ME|P|PD|PL|E|ED|EL|EP|FP|FA|F|T)$/;
+const TRADES = /^(M|MD|MH|MP|ME|P|PD|PL|E|ED|EL|EP|FP|FA|F|T|S|SD)$/;
 const disciplineOf = (s: Sheet): string | null => {
   const t = tradeOfNumber(s.name ?? '');
   if (!t || !TRADES.test(t)) return null;
+  if (t === 'S' || t === 'SD') return 'S';
   return t.startsWith('E') || t === 'T' ? 'E' : t.startsWith('FP') || t === 'F' || t === 'FA' ? (t === 'FA' ? 'E' : 'FP') : t.startsWith('P') ? 'P' : 'M';
 };
 
@@ -296,7 +297,7 @@ export async function automateTrades(p: Project, access: SetAccess): Promise<Tra
     const segs = (await segsOf(s)) ?? [];
     const names = await layersOf(s);
     const mpp = s.metersPerPoint!;
-    const division = d === 'E' ? '26 Electrical' : '20-25 Mechanical';
+    const division = d === 'E' ? '26 Electrical' : d === 'S' ? '05 Metals' : '20-25 Mechanical';
     for (const t of i.texts) {
       const str = t.str.trim();
       const at: Pt = [t.cx, t.cy];
@@ -322,7 +323,7 @@ export async function automateTrades(p: Project, access: SetAccess): Promise<Tra
         // A code in a sentence ("CONNECT TO CU-1") is a reference, not the item.
         if (str.split(/\s+/).length > 3) continue;
         if ((await judge(s, cat, Math.max(6, t.h * 3))) !== 'new') continue;
-        add(`${code}${it.description ? ` – ${it.description}` : ''}`, division, { sheet: s, at: cat, floor: i.floor, remove: false });
+        add(`${code}${it.description ? ` – ${it.description}` : ''}`, d === 'S' ? (guessDivision(it.description) ?? division) : division, { sheet: s, at: cat, floor: i.floor, remove: false });
       }
     }
   }
@@ -358,7 +359,7 @@ export async function automateTrades(p: Project, access: SetAccess): Promise<Tra
     if (!total) continue;
     let t = p.types.find((x) => x.kind === 'count' && x.name === c.name);
     if (!t) {
-      t = { id: newId(), name: c.name, color: PALETTE[(p.types.length + fresh.length) % PALETTE.length], kind: 'count', height: 0, division: c.division, package: c.division === '26 Electrical' ? 'Electrical sub' : 'Mechanical sub', items: [{ id: newId(), name: c.name, unit: 'ea', formula: 'N' }] };
+      t = { id: newId(), name: c.name, color: PALETTE[(p.types.length + fresh.length) % PALETTE.length], kind: 'count', height: 0, division: c.division, ...(c.division === '26 Electrical' ? { package: 'Electrical sub' } : c.division === '20-25 Mechanical' ? { package: 'Mechanical sub' } : {}), items: [{ id: newId(), name: c.name, unit: 'ea', formula: 'N' }] };
       fresh.push(t);
     }
     typeIds.push(t.id);
