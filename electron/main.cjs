@@ -138,7 +138,8 @@ function createWindow() {
     minHeight: 640,
     title: 'Takeoff AI',
     backgroundColor: '#f5f5f7',
-    webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, sandbox: true },
+    // Not throttled behind other windows: an AI drives long takeoffs while the estimator works elsewhere.
+    webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, sandbox: true, backgroundThrottling: false },
   });
   // Links (help, GitHub) open in the browser, not in the app window.
   win.webContents.setWindowOpenHandler(({ url }) => {

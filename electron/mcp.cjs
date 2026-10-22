@@ -95,7 +95,6 @@ async function recordWindow(args) {
     recorder.timer = null;
     while (recorder.busy) await new Promise((r) => setTimeout(r, 50));
     await fs.writeFile(path.join(recorder.dir, 'times.txt'), recorder.times.join('\n'));
-    win?.webContents.setBackgroundThrottling(true);
     return { content: [{ type: 'text', text: `Stopped. ${recorder.frames} frames in ${recorder.dir}` }] };
   }
   if (!win) throw new Error('The Takeoff AI window is closed.');
