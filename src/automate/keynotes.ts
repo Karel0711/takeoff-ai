@@ -102,7 +102,7 @@ export const isDemoPlan = (s: Sheet, texts: PageText[]) => {
 };
 
 /** A note removing a wall or partition (not something on one): measured as a length. */
-const WALL_NOTE = { test: (t: string) => /\b(PARTITIONS?|WALLS?)\b/i.test(t) && !/\bWITHIN\b|\bIN WALL|MOUNTED|CLIMBING|TILE|BRACKETS?|BACKSTOP|SCREEN|FIXTURE|DRAIN/i.test(t) };
+const WALL_NOTE = { test: (t: string) => /\b(PARTITIONS?|WALLS?)\b/i.test(t) && !/\bWITHIN\b|\bIN WALL|MOUNTED|CLIMBING|TILE|BRACKETS?|BACKSTOP|SCREEN|FIXTURE|DRAIN|OPENING/i.test(t) };
 
 const SITE_SURFACE = /\b(ASPHALT|PAVEMENT|PAVING|PAVERS?|CONCRETE|GRASS|SOD|SEED|TOPSOIL|GRAVEL|GRANULAR|LANDSCAP\w*|MULCH|PLANTING)\b/i;
 

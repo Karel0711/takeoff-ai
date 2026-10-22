@@ -382,11 +382,14 @@ export async function automateTrades(p: Project, access: SetAccess): Promise<Tra
   const fresh: TakeoffType[] = [];
   const added: Measurement[] = [];
   const typeIds: string[] = [];
+  const refile = new Map<string, string>();
   const sorted = [...counts.values()].sort((a, b) => a.division.localeCompare(b.division) || familyOf(a.name).localeCompare(familyOf(b.name)) || a.name.localeCompare(b.name, undefined, { numeric: true }));
   for (const c of sorted) {
     const { places, total } = perFloor(c.hits, c.unit);
     if (!total) continue;
     let t = p.types.find((x) => x.kind === 'count' && x.name === c.name);
+    // A type an earlier run made, filed under another division then: filed where it belongs now.
+    if (t && t.division !== c.division && p.measurements.every((m) => m.typeId !== t!.id || m.source === 'trades')) refile.set(t.id, c.division);
     if (!t) {
       t = { id: newId(), name: c.name, color: PALETTE[(p.types.length + fresh.length) % PALETTE.length], kind: 'count', height: 0, division: c.division, ...(c.division === '26 Electrical' ? { package: 'Electrical sub' } : c.division === '20-25 Mechanical' ? { package: 'Mechanical sub' } : {}), items: [{ id: newId(), name: c.name, unit: 'ea', formula: 'N' }] };
       fresh.push(t);
@@ -400,7 +403,10 @@ export async function automateTrades(p: Project, access: SetAccess): Promise<Tra
   return {
     message: `Counted ${added.length} mechanical and electrical items as ${typeIds.length} types`,
     checks,
-    apply: (q) => replaceRun(q, 'trades', fresh, added),
+    apply: (q) => {
+      const r = replaceRun(q, 'trades', fresh, added);
+      return refile.size ? { ...r, types: r.types.map((t) => (refile.has(t.id) ? { ...t, division: refile.get(t.id)! } : t)) } : r;
+    },
   };
 }
 
