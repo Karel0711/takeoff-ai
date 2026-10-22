@@ -64,7 +64,7 @@ const now = () => (typeof performance !== 'undefined' ? performance.now() : Date
 export async function takeOffWholeSet(
   start: Project,
   access: WholeSetAccess,
-  opts: { maxOpening: number; progress?: (text: string) => void; signal?: { stopped: boolean } },
+  opts: { maxOpening: number; progress?: (text: string) => void; signal?: { stopped: boolean }; show?: (sheetId: string) => void },
 ): Promise<WholeSetResult> {
   const t0 = now();
   let project = start;
@@ -152,6 +152,7 @@ export async function takeOffWholeSet(
           continue;
         }
         say(`Whole set: ${kind} on ${s.name} (${i + 1} of ${of.length})…`);
+        opts.show?.(s.id);
         await pause();
         try {
           const page = await access.page(s);

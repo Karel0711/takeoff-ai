@@ -1548,7 +1548,7 @@ export function App() {
       const r = await takeOffWholeSet(
         p,
         { ...setAccess(), doc: (s) => pdfsRef.current.get(s.docId), docs: () => [...pdfsRef.current.values()] },
-        { maxOpening, progress: (t) => setBusy(t) },
+        { maxOpening, progress: (t) => setBusy(t), show: (id) => setSheetId(id) },
       );
       const added = r.project.measurements.length - p.measurements.length;
       if (r.project !== p) commit(() => r.project, 'Take off the whole set');
