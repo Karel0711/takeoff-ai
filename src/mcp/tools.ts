@@ -7,6 +7,7 @@ import { doorTakeoff, findDoorTagsIn } from '../automate/doors';
 import { automateWindows } from '../automate/windows';
 import { automateCeilings } from '../automate/ceilings';
 import { automateSprinklers } from '../automate/sprinklers';
+import { applyFinishes, finishRooms, readFinishes } from '../automate/finishes';
 import { symbolTakeoff, symbolTallies, defaultSymbolChoices } from '../automate/symbols';
 import { DIVISIONS, newId, type Kind, type Measurement, type Project, type Pt, type Sheet, type TakeoffType, type Units } from '../model';
 import type { PageText } from '../pageText';
@@ -84,7 +85,7 @@ const str = (description: string, extra: Record<string, unknown> = {}) => ({ typ
 const num = (description: string) => ({ type: 'number', description });
 const point = { type: 'array', items: { type: 'number' }, minItems: 2, maxItems: 2 };
 
-export const AUTOMATIONS = ['rooms', 'walls', 'doors', 'windows', 'ceilings', 'sprinklers', 'symbols'] as const;
+export const AUTOMATIONS = ['rooms', 'walls', 'doors', 'windows', 'ceilings', 'sprinklers', 'symbols', 'finishes'] as const;
 type AutomationKind = (typeof AUTOMATIONS)[number];
 
 export const TOOL_DEFS: ToolDef[] = [
@@ -216,7 +217,7 @@ export const TOOL_DEFS: ToolDef[] = [
     name: 'add_takeoff',
     title: 'Add takeoff',
     description:
-      'Adds a takeoff on a sheet under a type, from points in sheet points. Area types: a closed outline (3+ points, not repeating the first). Linear types: a polyline (2+ points). Count types: each point counts one. Labelled "AI" (plus your label) until reviewed.',
+      'Adds a takeoff on a sheet under a type, from points in sheet points. Area types: a closed outline (3+ points, not repeating the first). Linear types: a polyline (2+ points). Count types: each point counts one. Marked as added by AI until reviewed. For a room, label it with its number and name ("032 EXIT CORRIDOR") so the finish schedule matches it.',
     inputSchema: obj(
       {
         sheet_id: str('Sheet id'),
@@ -247,6 +248,7 @@ export const TOOL_DEFS: ToolDef[] = [
       'ceilings: ceiling areas by type on every reflected ceiling plan.',
       'sprinklers: sprinkler heads on every sprinkler plan.',
       'symbols: every symbol in the set\'s legends, counted on the sheets each legend is for.',
+      'finishes: reads the room finish schedules (or finish tags) onto every room takeoff labelled with its number (run it again after adding rooms by hand).',
       'Set scales first. Then check the result with get_sheet_image.',
     ].join(' '),
     inputSchema: obj({ kind: str('Which automation', { enum: [...AUTOMATIONS] }), sheet_id: str('Sheet, for rooms, walls, doors'), all_sheets: { type: 'boolean', description: 'doors: every sheet' } }, ['kind']),
@@ -575,15 +577,17 @@ async function dispatch(ctx: McpContext, name: string, a: Record<string, unknown
       const pts = toPoints(a.points, 'points');
       const off = pts.find(([x, y]) => x < -1 || y < -1 || x > s.width + 1 || y > s.height + 1);
       if (off) throw new ToolError(`Point [${off.join(', ')}] is off the sheet (${round(s.width, 1)} × ${round(s.height, 1)} pt).`);
-      const label = ['AI', typeof a.label === 'string' ? a.label.trim() : ''].filter(Boolean).join(' · ');
+      // Marked as the AI's by its source (shown as "added by AI, to check"); the label stays the
+      // room's own ("032 EXIT CORRIDOR") so finish schedules and room lookups still match it.
+      const label = typeof a.label === 'string' && a.label.trim() ? a.label.trim() : undefined;
       let added: Measurement[];
       if (t.kind === 'count') {
-        added = pts.map((pt) => ({ id: newId(), sheetId: s.id, typeId: t.id, points: [pt], holes: [], source: 'ai' as const, label }));
+        added = pts.map((pt) => ({ id: newId(), sheetId: s.id, typeId: t.id, points: [pt], holes: [], source: 'ai' as const, ...(label ? { label } : {}) }));
       } else {
         if (t.kind === 'area' && pts.length < 3) throw new ToolError('An area takeoff needs at least 3 points.');
         if (t.kind === 'linear' && pts.length < 2) throw new ToolError('A linear takeoff needs at least 2 points.');
         const holes = Array.isArray(a.holes) && t.kind === 'area' ? a.holes.map((h, i) => toPoints(h, `holes[${i}]`)) : [];
-        added = [{ id: newId(), sheetId: s.id, typeId: t.id, points: pts, holes, source: 'ai' as const, label }];
+        added = [{ id: newId(), sheetId: s.id, typeId: t.id, points: pts, holes, source: 'ai' as const, ...(label ? { label } : {}) }];
       }
       ctx.commit((q) => ({ ...q, measurements: [...q.measurements, ...added] }), 'Takeoff (AI)');
       ctx.showSheet(s.id);
@@ -688,6 +692,13 @@ async function automation(ctx: McpContext, a: Record<string, unknown>): Promise<
     case 'sprinklers':
       r = await automateSprinklers(p, access, sheet);
       break;
+    case 'finishes': {
+      const rooms = finishRooms(p);
+      if (!rooms.length) throw new ToolError('No room takeoffs to give finishes to. Run rooms first, or add rooms labelled with their numbers.');
+      const f = await readFinishes(p, rooms, access, p.types);
+      r = { message: `${f.note}${f.unmatched ? ` Schedule lines with no room: ${f.unmatched.rows.length}; rooms with no line: ${f.unmatched.rooms.length}.` : ''}`, apply: applyFinishes(f) };
+      break;
+    }
     case 'symbols': {
       const t = await symbolTallies(p, access);
       if (!t.tallies.length) return fail(t.message ?? 'No legend symbols found.');

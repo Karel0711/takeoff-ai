@@ -104,7 +104,7 @@ describe('MCP tools', () => {
     const r = await runTool(ctx, 'add_takeoff', { sheet_id: 's1', type_id: typeId, points: [[100, 100], [100 + side, 100], [100 + side, 100 + side], [100, 100 + side]], label: '112 Receiving' });
     expect(textOf(r)).toMatch(/100 m²/);
     const m = get().measurements[0];
-    expect(m).toMatchObject({ source: 'ai', label: 'AI · 112 Receiving' });
+    expect(m).toMatchObject({ source: 'ai', label: '112 Receiving' });
     expect(shown).toContain('s1');
     const q = await runTool(ctx, 'get_quantities', {});
     const rows = (q.structuredContent as { quantities: { type: string; total: number; items: { value: number }[] }[] }).quantities;
