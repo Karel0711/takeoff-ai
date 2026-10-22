@@ -65,6 +65,69 @@ function mainWindow() {
   return BrowserWindow.getAllWindows().find((w) => !w.isDestroyed()) ?? null;
 }
 
+/**
+ * Recording the window, for a time-lapse of a takeoff: frames of the app window as the app
+ * draws it (captured from the window itself, so it records with other apps in front of it),
+ * saved as numbered JPEGs with their times, to make a video from.
+ */
+const RECORD_TOOL = {
+  name: 'record_window',
+  title: 'Record the window',
+  description:
+    'Starts or stops recording the Takeoff AI window as numbered JPEG frames (with times.txt), for a time-lapse video of a takeoff. Start before take_off_whole_set (watch: true), stop after. Records even with other apps in front.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      action: { type: 'string', enum: ['start', 'stop'] },
+      folder: { type: 'string', description: 'Where to save the frames (start). Default: ~/Movies/Takeoff AI recordings/<date time>' },
+      fps: { type: 'number', description: 'Frames a second (start), 1 to 10. Default 4.' },
+    },
+    required: ['action'],
+  },
+};
+const recorder = { timer: null, dir: null, frames: 0, busy: false, times: [] };
+
+async function recordWindow(args) {
+  const win = mainWindow();
+  if (args.action === 'stop') {
+    if (!recorder.timer) return { content: [{ type: 'text', text: 'Not recording.' }] };
+    clearInterval(recorder.timer);
+    recorder.timer = null;
+    while (recorder.busy) await new Promise((r) => setTimeout(r, 50));
+    await fs.writeFile(path.join(recorder.dir, 'times.txt'), recorder.times.join('\n'));
+    win?.webContents.setBackgroundThrottling(true);
+    return { content: [{ type: 'text', text: `Stopped. ${recorder.frames} frames in ${recorder.dir}` }] };
+  }
+  if (!win) throw new Error('The Takeoff AI window is closed.');
+  if (recorder.timer) return { content: [{ type: 'text', text: `Already recording to ${recorder.dir}` }] };
+  const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+  const dir = path.resolve((typeof args.folder === 'string' && args.folder.trim() ? args.folder : path.join(os.homedir(), 'Movies', 'Takeoff AI recordings', stamp)).replace(/^~(?=$|[\\/])/, os.homedir()));
+  await fs.mkdir(dir, { recursive: true });
+  Object.assign(recorder, { dir, frames: 0, busy: false, times: [] });
+  // Keep drawing while behind other windows.
+  win.webContents.setBackgroundThrottling(false);
+  const fps = Math.min(10, Math.max(1, Number(args.fps) || 4));
+  recorder.timer = setInterval(async () => {
+    if (recorder.busy) return;
+    recorder.busy = true;
+    try {
+      const img = await win.webContents.capturePage();
+      const name = `f_${String(recorder.frames).padStart(6, '0')}.jpg`;
+      const size = img.getSize();
+      // Full HD at most: a Retina window's frames are four times the size.
+      const out = size.width > 1920 ? img.resize({ width: 1920, quality: 'good' }) : img;
+      await fs.writeFile(path.join(dir, name), out.toJPEG(85));
+      recorder.times.push(`${Date.now()} ${name}`);
+      recorder.frames++;
+    } catch {
+      // A frame missed (window reloading): the next one comes.
+    } finally {
+      recorder.busy = false;
+    }
+  }, Math.round(1000 / fps));
+  return { content: [{ type: 'text', text: `Recording to ${dir} at ${fps} frames a second. Call record_window with action stop to end it.` }] };
+}
+
 /** Runs a tool in the window and waits for its result. */
 async function callInWindow(name, args) {
   await toolsReady();
@@ -192,8 +255,9 @@ async function start(s) {
       port: mcp.port ?? DEFAULT_PORT,
       token: mcp.token,
       version: app.getVersion(),
-      tools: toolsReady,
+      tools: async () => [...(await toolsReady()), RECORD_TOOL],
       call: (name, args) => {
+        if (name === RECORD_TOOL.name) return recordWindow(args ?? {});
         // Bring the window forward so the estimator sees what the AI is doing.
         const win = mainWindow();
         if (win && win.isMinimized()) win.restore();
