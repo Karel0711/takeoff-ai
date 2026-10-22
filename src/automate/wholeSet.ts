@@ -67,7 +67,16 @@ const now = () => (typeof performance !== 'undefined' ? performance.now() : Date
 export async function takeOffWholeSet(
   start: Project,
   access: WholeSetAccess,
-  opts: { maxOpening: number; progress?: (text: string) => void; signal?: { stopped: boolean }; show?: (sheetId: string) => void },
+  opts: {
+    maxOpening: number;
+    progress?: (text: string) => void;
+    signal?: { stopped: boolean };
+    show?: (sheetId: string) => void;
+    /** The project so far, after each tool's change: the app draws it while the run goes on. */
+    preview?: (project: Project) => void;
+    /** Watching (a demo, a recording): after each change, how long to hold on the sheets it drew on, in ms. */
+    pace?: number;
+  },
 ): Promise<WholeSetResult> {
   const t0 = now();
   let project = start;
@@ -77,11 +86,28 @@ export async function takeOffWholeSet(
   const note = (s: Sheet, text: string) => notes.set(s.id, [...(notes.get(s.id) ?? []), text]);
   const say = (text: string) => opts.progress?.(text);
   const toolOfType = new Map<string, string>();
+  // What each change drew, to show while watching: the sheets it added most to.
+  const shown: { tool: string; sheets: string[] }[] = [];
   const apply = (tool: string, r: Automation) => {
     if (!r.apply) return;
     const before = new Set(project.types.map((t) => t.id));
+    const had = new Set(project.measurements.map((m) => m.id));
     project = r.apply(project);
     for (const t of project.types) if (!before.has(t.id)) toolOfType.set(t.id, tool);
+    opts.preview?.(project);
+    if (!opts.pace) return;
+    const bySheet = new Map<string, number>();
+    for (const m of project.measurements) if (!had.has(m.id)) bySheet.set(m.sheetId, (bySheet.get(m.sheetId) ?? 0) + 1);
+    shown.push({ tool, sheets: [...bySheet].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([id]) => id) });
+  };
+  /** Watching: holds on what the last change drew, sheet by sheet. */
+  const hold = async () => {
+    const last = shown.pop();
+    if (!opts.pace || !last) return;
+    for (const id of last.sheets) {
+      opts.show?.(id);
+      await pause(opts.pace);
+    }
   };
   const run = async (tool: string, body: () => Promise<string>) => {
     if (opts.signal?.stopped) return;
@@ -171,6 +197,7 @@ export async function takeOffWholeSet(
           if (kind === 'walls') {
             const r = await automateWalls(project, page, doc, s, opts.maxOpening, others, enlarged ? taken : undefined);
             apply('walls', r);
+            await hold();
             if (enlarged) {
               // Enlarged plans of one floor often overlap: walls already taken off where they overlap count once.
               const segs = await access.segments(s);
@@ -202,6 +229,7 @@ export async function takeOffWholeSet(
           } else {
             const r = await automateRooms(project, page, s, opts.maxOpening, await projectSetTypes(doc, others).catch(() => undefined));
             apply('rooms', r);
+            await hold();
             note(s, `rooms: ${r.message}`);
             r.rooms.forEach((x, i) => {
               const nums = x.labels.map((l) => l.number);
@@ -238,6 +266,7 @@ export async function takeOffWholeSet(
     await pause();
     const r = doorTakeoff(project, await findDoorTagsIn(project, access, home, true), home, true);
     apply('doors', r);
+    await hold();
     return r.message;
   });
 
@@ -246,6 +275,7 @@ export async function takeOffWholeSet(
     await pause();
     const r = await automateWindows(project, access);
     apply('windows', r);
+    await hold();
     return r.message;
   });
 
@@ -282,6 +312,7 @@ export async function takeOffWholeSet(
     await pause();
     const r = await automateCeilings(project, access, null);
     apply('ceilings', r);
+    await hold();
     // The RCPs' ceilings are the ceiling quantity; the finish schedule's ceiling column would count them twice.
     const c = ceilingsFromRcps(project);
     project = c.project;
@@ -303,6 +334,7 @@ export async function takeOffWholeSet(
     if (!choices.length) return `${tallies.length} legend symbols, none found on the plans`;
     const r = symbolTakeoff(project, choices);
     apply('symbols', r);
+    await hold();
     // Counted on the building's plans and ceiling plans only: a code plan's rating marks, a site plan's
     // paving and a finish plan's hatch swatches are not things to price by the each.
     const counted = new Set(live.filter((s) => ['floor plan', 'RCP'].includes(kinds.get(s.id)!.kind)).map((s) => s.id));
@@ -322,6 +354,7 @@ export async function takeOffWholeSet(
     await pause();
     const r = await automateSprinklers(project, access, null);
     apply('sprinklers', r);
+    await hold();
     return r.message;
   });
 
@@ -332,6 +365,7 @@ export async function takeOffWholeSet(
     await pause();
     const r = await automateRuns(project, access);
     apply('runs', r);
+    await hold();
     for (const c of r.checks) review.push({ kind: 'check', text: c });
     return r.message;
   });
@@ -341,6 +375,7 @@ export async function takeOffWholeSet(
     await pause();
     const r = await automateTrades(project, access);
     apply('trades', r);
+    await hold();
     for (const c of r.checks) review.push({ kind: 'check', text: c });
     return r.message;
   });
@@ -350,6 +385,7 @@ export async function takeOffWholeSet(
     await pause();
     const r = await automateKeynotes(project, access, opts.maxOpening);
     apply('keynotes', r);
+    await hold();
     for (const c of r.checks) review.push({ kind: 'check', text: c });
     return r.message;
   });

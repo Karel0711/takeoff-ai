@@ -298,9 +298,10 @@ export function App() {
   const launchHandler = useRef<(files: File[]) => void>(() => {});
   useEffect(() => onLaunchFiles((files) => launchHandler.current(files)), []);
 
-  // Autosave.
+  // Autosave (not the in-progress view of a whole-set run: it is saved once, when it is done).
+  const previewing = useRef(false);
   useEffect(() => {
-    if (!project) return;
+    if (!project || previewing.current) return;
     const t = window.setTimeout(() => void saveProject(project), 400);
     return () => window.clearTimeout(t);
   }, [project]);
@@ -1548,18 +1549,31 @@ export function App() {
    * `src/automate/wholeSet.ts`), added as one change, then the review and RFIs. Resolves to the
    * report's text (the AI tools return it).
    */
-  async function takeOffEverything(): Promise<string> {
+  async function takeOffEverything(watch = false): Promise<string> {
     const p = projectRef.current!;
     if (!p.sheets.length) throw new Error('Add the drawings first.');
     setBusy('Whole set: reading the sheets…');
+    let committed = false;
     try {
       const r = await takeOffWholeSet(
         p,
         { ...setAccess(), doc: (s) => pdfsRef.current.get(s.docId), docs: () => [...pdfsRef.current.values()] },
-        { maxOpening, progress: (t) => setBusy(t), show: (id) => setSheetId(id) },
+        {
+          maxOpening,
+          progress: (t) => setBusy(t),
+          show: (id) => setSheetId(id),
+          // Each tool's takeoffs drawn as they come (shown only: the run is one change at the end).
+          preview: (q) => {
+            previewing.current = true;
+            setProject(q);
+          },
+          pace: watch ? 1800 : 0,
+        },
       );
       const added = r.project.measurements.length - p.measurements.length;
+      previewing.current = false;
       if (r.project !== p) commit(() => r.project, 'Take off the whole set');
+      committed = true;
       const text = reviewText(p.name, r);
       const rfis = r.review
         .filter((x) => x.kind === 'rfi')
@@ -1569,6 +1583,9 @@ export function App() {
       setWholeSetReport({ text: `Added ${added} takeoffs.\n\n${text}`, rfis });
       return `Added ${added} takeoffs.\n\n${text}`;
     } finally {
+      // A run that stopped part way: back to the project as it was.
+      previewing.current = false;
+      if (!committed && projectRef.current) setProject(projectRef.current);
       setBusy(null);
     }
   }
@@ -2254,7 +2271,7 @@ export function App() {
       return `${syncFolder}${desktopApi?.platform === 'win32' ? '\\' : '/'}${dir}`;
     },
     maxOpening: () => maxOpening,
-    wholeSet: () => takeOffEverything(),
+    wholeSet: (watch?: boolean) => takeOffEverything(!!watch),
   };
 
   return (

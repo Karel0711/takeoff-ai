@@ -73,7 +73,8 @@ export interface McpContext {
   projectFolder(): Promise<string | null>;
   maxOpening(): number;
   /** Takes off the whole set; resolves to the review and RFIs. */
-  wholeSet?(): Promise<string>;
+  /** `watch`: slower, holding on each sheet as its takeoffs are drawn (to watch or record it). */
+  wholeSet?(watch?: boolean): Promise<string>;
 }
 
 const text = (t: string, structured?: Record<string, unknown>): ToolResult => ({ content: [{ type: 'text', text: t }], ...(structured ? { structuredContent: structured } : {}) });
@@ -264,7 +265,7 @@ export const TOOL_DEFS: ToolDef[] = [
     title: 'Take off the whole set',
     description:
       'Runs every automatic takeoff over the whole drawing set in one go, as an estimator works a set: walls and rooms on each new-work floor plan, door tags on every sheet, window tags, room finishes from the schedules, ceilings on the RCPs, legend symbols and sprinklers, ductwork and piping off the trade plans layers, mechanical and electrical devices, fixtures and equipment, and keynotes and demolition. Added as one undoable change. Returns what each tool did, the RFIs to send (numbered) and what to check before pricing. Set scales on the floor plans first. Takes minutes on a big set.',
-    inputSchema: obj({}),
+    inputSchema: obj({ watch: { type: 'boolean', description: 'Slower: shows each sheet as its takeoffs are drawn, for watching or recording the run' } }),
   },
   {
     name: 'get_quantities',
@@ -622,7 +623,7 @@ async function dispatch(ctx: McpContext, name: string, a: Record<string, unknown
     case 'take_off_whole_set': {
       need(ctx);
       if (!ctx.wholeSet) throw new ToolError('This version of the app cannot take off the whole set.');
-      return text(await ctx.wholeSet());
+      return text(await ctx.wholeSet(a.watch === true));
     }
 
     case 'get_quantities': {
