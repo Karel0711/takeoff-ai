@@ -158,6 +158,12 @@ export const TOOL_DEFS: ToolDef[] = [
     inputSchema: obj({ sheet_ids: { type: 'array', items: { type: 'string' }, minItems: 1 }, scale: str('Scale notation') }, ['sheet_ids', 'scale']),
   },
   {
+    name: 'set_units',
+    title: 'Set units',
+    description: 'Switches the open project between metric (m, m²) and imperial (ft, SF). Takeoffs are kept on the sheet, so every quantity converts; type heights and sizes are converted too. Match the drawings: imperial scales (1/8" = 1\'-0") mean imperial.',
+    inputSchema: obj({ units: str('metric or imperial', { enum: ['metric', 'imperial'] }) }, ['units']),
+  },
+  {
     name: 'list_types',
     title: 'List takeoff types',
     description: 'Takeoff types (what each takeoff is priced as): id, name, kind (area, linear, count), height, division, assembly items with formulas.',
@@ -474,6 +480,16 @@ async function dispatch(ctx: McpContext, name: string, a: Record<string, unknown
       const set = new Set(sheets.map((s) => s.id));
       ctx.commit((q) => ({ ...q, sheets: q.sheets.map((s) => (set.has(s.id) ? { ...s, metersPerPoint: mpp, scaleLabel: label, scaleSource: 'preset' as const } : s)) }), 'Scale (AI)');
       return text(`Set ${label} on ${sheets.map((s) => s.name).join(', ')} (${equivalentScale(mpp, p.units)}).`);
+    }
+
+    case 'set_units': {
+      const p = need(ctx);
+      const units: Units = a.units === 'imperial' ? 'imperial' : a.units === 'metric' ? 'metric' : (() => { throw new ToolError('units must be metric or imperial.'); })();
+      if (p.units === units) return text(`The project is already ${units}.`);
+      const f = units === 'imperial' ? 1 / 0.3048 : 0.3048;
+      const conv = (v: number | undefined) => (v === undefined ? v : Math.round(v * f * 1000) / 1000);
+      ctx.commit((q) => ({ ...q, units, types: q.types.map((t) => ({ ...t, height: conv(t.height) ?? 0, width: conv(t.width), depth: conv(t.depth), thickness: conv(t.thickness) })) }), 'Units (AI)');
+      return text(`Project now in ${units}.${p.types.some((t) => t.items.some((i) => /\d*\.\d+|\b\d{2,}\b/.test(i.formula))) ? ' Numbers typed into material formulas were left as they are: check them.' : ''}`);
     }
 
     case 'list_types': {

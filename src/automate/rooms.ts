@@ -1,5 +1,6 @@
 import { closeWide, cutIslands, fillRoomsAsync, findRoomLabels, type FoundRoom } from '../fill/rooms';
 import { segmentsOf, wallModelFor } from '../fill/sheetWalls';
+import { toneMap, toneShare } from '../fill/shaded';
 import { newId, type Measurement, type Project, type Pt, type Sheet, type TakeoffType, type Units } from '../model';
 import { pageTexts } from '../pageText';
 import type { PDFPageProxy } from '../pdf';
@@ -140,15 +141,19 @@ export async function automateRooms(
   sheet: Sheet,
   maxOpening: number,
   set?: SetTypes,
-): Promise<Automation & { rooms: FoundRoom[] }> {
+): Promise<Automation & { rooms: FoundRoom[]; shaded?: Set<number> }> {
   if (!sheet.metersPerPoint) return { message: 'Set the sheet scale first.', rooms: [] };
   const rooms = await findRooms(page, sheet, maxOpening);
   const codes = notRoomCodes(p.types, set);
-  const picked = new Set(rooms.flatMap((r, i) => (r.points && !roomDoubt(r, codes, sheet.metersPerPoint) ? [i] : [])));
+  // Rooms under the grey tone a renovation plan puts over the areas outside the work.
+  const tone = await toneMap(page);
+  const shaded = new Set(tone ? rooms.flatMap((r, i) => (r.points && toneShare(r.points, tone) > 0.6 ? [i] : [])) : []);
+  const picked = new Set(rooms.flatMap((r, i) => (r.points && !shaded.has(i) && !roomDoubt(r, codes, sheet.metersPerPoint) ? [i] : [])));
   if (!picked.size)
     return {
       message: rooms.length ? `None of ${rooms.length} room tags closed.` : 'No room tags found on this sheet.',
       rooms,
+      shaded,
     };
   const names = new Map(rooms.map((r, i) => [i, roomName(r)]));
   const made = roomTakeoff(rooms, {
@@ -160,8 +165,9 @@ export async function automateRooms(
     units: p.units,
   });
   return {
-    message: `${picked.size} of ${rooms.length} rooms filled`,
+    message: `${picked.size} of ${rooms.length} rooms filled${shaded.size ? ` (${shaded.size} in the shaded area outside the work left out)` : ''}`,
     rooms,
+    shaded,
     apply: applyRooms(sheet.id, { ...made, replaceEarlier: true }),
   };
 }

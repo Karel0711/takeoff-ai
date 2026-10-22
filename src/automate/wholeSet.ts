@@ -8,10 +8,13 @@ import { automateSprinklers } from './sprinklers';
 import { defaultSymbolChoices, symbolTakeoff, symbolTallies } from './symbols';
 import { automateWalls, projectSetTypes } from './walls';
 import { automateWindows } from './windows';
-import type { Project, Sheet } from '../model';
+import { planShift as planShiftKnown, repeatedRuns } from './overlap';
+import { findRoomLabels } from '../fill/rooms';
+import type { Project, Pt, Sheet } from '../model';
 import type { PDFDocumentProxy } from '../pdf';
 import { classifySheet, type SheetKind } from '../sheetKind';
 import { viewTitle } from '../sheetScale';
+import { readTitleBlock } from '../titleBlock';
 
 /**
  * Take off the whole set: every automatic tool over every sheet it belongs on, the way an
@@ -88,17 +91,40 @@ export async function takeOffWholeSet(
     }
   };
 
-  const live = project.sheets.filter((s) => !s.superseded);
+  let live = project.sheets.filter((s) => !s.superseded);
   const kinds = new Map<string, SheetKind>();
+  // Titles read again: one read before a fix (a title block's two-line title read as its last
+  // line, "PLAN" for "LEVEL 1 (LOWER) DEMO PLAN") is put right, since what a sheet is decides
+  // which tools run on it.
+  const retitled = new Map<string, string>();
   for (const s of live) {
+    const texts = await access.texts(s).catch(() => []);
+    const fresh = texts.length ? (readTitleBlock(texts, s.width, s.height).title ?? viewTitle(texts)) : null;
     let title = s.title;
-    if (!title) title = viewTitle(await access.texts(s).catch(() => [])) ?? undefined;
+    if (fresh && fresh !== title && (!title || fresh.toUpperCase().includes(title.toUpperCase()))) {
+      title = fresh;
+      retitled.set(s.id, fresh);
+    }
     kinds.set(s.id, classifySheet({ name: s.name, title }));
+  }
+  if (retitled.size) {
+    project = { ...project, sheets: project.sheets.map((s) => (retitled.has(s.id) ? { ...s, title: retitled.get(s.id) } : s)) };
+    live = project.sheets.filter((s) => !s.superseded);
   }
   const plans = live
     .filter((s) => kinds.get(s.id)!.kind === 'floor plan')
     .sort((a, b) => +(kinds.get(a.id)!.level === 'enlarged') - +(kinds.get(b.id)!.level === 'enlarged'));
   const levels = plans.filter((s) => kinds.get(s.id)!.level === 'level');
+  /** The floor a plan is of, from its title ("LEVEL 1 ENLARGED FLOOR PLAN" is level 1). */
+  const levelOf = (s: Sheet) => {
+    const t = `${s.title ?? ''}`.toUpperCase();
+    const m = /\bLEVEL\s*([A-Z0-9]+)|\b(BASEMENT|CELLAR|GROUND|MAIN|MEZZANINE|FIRST|SECOND|THIRD|FOURTH|FIFTH|ROOF)\b|\b(\d+)(?:ST|ND|RD|TH)\s+FLOOR/.exec(t);
+    return m ? (m[1] ?? m[2] ?? m[3]) : null;
+  };
+  const enlargedLabels = new Map<string, { number: string; at: Pt }[]>();
+  /** Room numbers tagged on the plans, and what happened to each (for telling RFIs from things to fix by hand). */
+  const tagged = new Map<string, string>();
+  const roomKey = (n: string) => n.replace(/[\s.-]/g, '').toUpperCase();
 
   // Sheets the tools need a scale on.
   const needScale = live.filter((s) => !s.metersPerPoint && ['floor plan', 'RCP', 'finish plan'].includes(kinds.get(s.id)!.kind));
@@ -131,9 +157,13 @@ export async function takeOffWholeSet(
           const page = await access.page(s);
           if (!page) throw new Error('drawing not open');
           const enlarged = kinds.get(s.id)!.level === 'enlarged';
+          // An enlarged plan adds the wall types its floor's overall plan left to it; a floor whose
+          // overall plan tags no walls is taken off its enlarged plans whole.
+          const floor = levelOf(s);
+          const overall = new Set(plans.filter((o) => kinds.get(o.id)!.level !== 'enlarged' && (!floor || levelOf(o) === floor)).map((o) => o.id));
           const taken = new Set(
             project.types
-              .filter((t) => toolOfType.get(t.id) === 'walls' && project.measurements.some((m) => m.typeId === t.id))
+              .filter((t) => toolOfType.get(t.id) === 'walls' && project.measurements.some((m) => m.typeId === t.id && overall.has(m.sheetId)))
               .map((t) => t.name.split(' – ')[0].trim()),
           );
           const doc = access.doc(s);
@@ -141,6 +171,27 @@ export async function takeOffWholeSet(
           if (kind === 'walls') {
             const r = await automateWalls(project, page, doc, s, opts.maxOpening, others, enlarged ? taken : undefined);
             apply('walls', r);
+            if (enlarged) {
+              // Enlarged plans of one floor often overlap: walls already taken off where they overlap count once.
+              const segs = await access.segments(s);
+              const labels = segs ? findRoomLabels(await access.texts(s), segs) : [];
+              enlargedLabels.set(s.id, labels);
+              const mine = project.measurements.filter((m) => m.sheetId === s.id && m.source === 'walls');
+              const earlier = plans
+                .filter((o) => o.id !== s.id && enlargedLabels.has(o.id) && (!floor || levelOf(o) === floor))
+                .map((o) => ({ sheet: o, labels: enlargedLabels.get(o.id)!, runs: project.measurements.filter((m) => m.sheetId === o.id && m.source === 'walls') }));
+              const code = (id: string) => project.types.find((t) => t.id === id)?.name.split(' – ')[0].trim() ?? id;
+              const again = repeatedRuns(s, mine, labels, earlier, code);
+              for (const e of earlier) {
+                const shared = [...new Set(labels.map((l) => l.number).filter((n) => e.labels.some((o) => o.number === n)))];
+                if (shared.length >= 2 && !planShiftKnown(labels, e.labels))
+                  review.push({ kind: 'check', sheet: s.name, sheetId: s.id, text: `${s.name} and ${e.sheet.name} are enlarged plans of the same floor that overlap (rooms ${shared.join(', ')} are on both). Check walls tagged on both there are not counted twice.` });
+              }
+              if (again.size) {
+                project = { ...project, measurements: project.measurements.filter((m) => !again.has(m.id)) };
+                note(s, `walls: ${again.size} runs already taken off on an overlapping plan left out`);
+              }
+            }
             note(s, `walls: ${r.message}`);
             const lost = r.read?.result.unmatched ?? [];
             if (lost.length) {
@@ -152,6 +203,17 @@ export async function takeOffWholeSet(
             const r = await automateRooms(project, page, s, opts.maxOpening, await projectSetTypes(doc, others).catch(() => undefined));
             apply('rooms', r);
             note(s, `rooms: ${r.message}`);
+            r.rooms.forEach((x, i) => {
+              const nums = x.labels.map((l) => l.number);
+              const why = r.shaded?.has(i) ? `in the shaded area outside the work on ${s.name}` : !x.points ? `did not close on ${s.name}` : nums.length > 1 ? `filled as one area with ${nums.join(', ')} on ${s.name}` : '';
+              for (const n of nums) if (!tagged.has(roomKey(n)) || why === '') tagged.set(roomKey(n), why);
+            });
+            const merged = r.rooms.filter((x, i) => x.points && !r.shaded?.has(i) && x.labels.length > 1);
+            if (merged.length)
+              review.push({ kind: 'check', sheet: s.name, sheetId: s.id, text: `${sheetLabel(s)}: ${merged.map((x) => x.labels.map((l) => l.number).join(' + ')).join(', ')} filled as one area each (no wall drawn between them). Split them by hand if they are priced apart.` });
+            const shadedNums = r.rooms.filter((_, i) => r.shaded?.has(i)).map((x) => x.labels.map((l) => l.number).join('/'));
+            if (shadedNums.length)
+              review.push({ kind: 'check', sheet: s.name, sheetId: s.id, text: `${sheetLabel(s)}: rooms ${shadedNums.join(', ')} are in the shaded area (existing, outside the work) and were left out.` });
             const open = r.rooms.filter((x) => !x.points);
             if (open.length) {
               const nums = open.map((x) => x.labels.map((l) => l.number).join('/')).join(', ');
@@ -199,10 +261,18 @@ export async function takeOffWholeSet(
         kind: 'rfi',
         text: `Rooms ${r.unmatched.rooms.slice(0, 25).join(', ')}${r.unmatched.rooms.length > 25 ? ` and ${r.unmatched.rooms.length - 25} more` : ''} are on the plans but not in the room finish schedule. Please confirm their finishes.`,
       });
-    if (r.unmatched?.rows.length)
+    // A schedule line for a room tagged on a plan but not taken off is ours to fix; one tagged nowhere is a question.
+    const lines = r.unmatched?.rows ?? [];
+    const known = lines.filter((l) => tagged.has(roomKey(l.split(' ')[0])));
+    const nowhere = lines.filter((l) => !tagged.has(roomKey(l.split(' ')[0])));
+    for (const l of known) {
+      const why = tagged.get(roomKey(l.split(' ')[0]));
+      if (why && !why.startsWith('in the shaded')) review.push({ kind: 'check', text: `${l.replace(/ \([^)]*\)$/, '')}: in the finish schedule, ${why}. Take it off by hand so its finishes count.` });
+    }
+    if (nowhere.length)
       review.push({
         kind: 'rfi',
-        text: `The room finish schedule lists ${r.unmatched.rows.slice(0, 25).join(', ')}${r.unmatched.rows.length > 25 ? ` and ${r.unmatched.rows.length - 25} more` : ''}, which are not on the floor plans. Please confirm whether these rooms are in the scope.`,
+        text: `The room finish schedule lists ${nowhere.slice(0, 25).map((l) => l.replace(/ \([^)]*\)$/, '')).join(', ')}${nowhere.length > 25 ? ` and ${nowhere.length - 25} more` : ''}, which are not tagged on the floor plans. Please confirm where these rooms are and whether they are in the scope.`,
       });
     return r.note;
   });
@@ -224,6 +294,15 @@ export async function takeOffWholeSet(
     if (!choices.length) return `${tallies.length} legend symbols, none found on the plans`;
     const r = symbolTakeoff(project, choices);
     apply('symbols', r);
+    // Counted on the building's plans and ceiling plans only: a code plan's rating marks, a site plan's
+    // paving and a finish plan's hatch swatches are not things to price by the each.
+    const counted = new Set(live.filter((s) => ['floor plan', 'RCP'].includes(kinds.get(s.id)!.kind)).map((s) => s.id));
+    const symbolTypes = new Set(project.types.filter((t) => toolOfType.get(t.id) === 'symbols').map((t) => t.id));
+    const kept = project.measurements.filter((m) => !symbolTypes.has(m.typeId) || counted.has(m.sheetId));
+    const used = new Set(kept.map((m) => m.typeId));
+    project = { ...project, measurements: kept, types: project.types.filter((t) => !symbolTypes.has(t.id) || used.has(t.id)) };
+    const left = project.types.filter((t) => symbolTypes.has(t.id)).length;
+    if (!left) return 'no legend symbols on the floor plans or ceiling plans';
     const missing = tallies.length - choices.length;
     if (missing) review.push({ kind: 'check', text: `${missing} symbol${missing === 1 ? '' : 's'} in the legends were not found on any plan. Check whether they are used.` });
     return r.message;

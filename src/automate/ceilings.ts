@@ -3,6 +3,7 @@ import { newId, type Project, type Sheet, type TakeoffType } from '../model';
 import { hasCeilingPlan } from '../sheetKind';
 import { titleBlockBox } from '../titleBlock';
 import { formatQty } from '../units';
+import { toneMap, toneShare } from '../fill/shaded';
 import type { Automation } from './result';
 import { pause, perSheet, PALETTE, type SetAccess } from './set';
 
@@ -47,6 +48,10 @@ export async function automateCeilings(p: Project, access: SetAccess, current: S
       const block = titleBlockBox(texts, x.width, x.height);
       const read = readCeilingSheet(segs, texts, x, { defs, avoid: block ? [block] : [] });
       defs = mergeDefs([...defs, ...read.defs]);
+      // An untagged ceiling under the grey tone a renovation plan lays over the areas outside the work is existing: left alone.
+      const page = read.areas.some((a) => a.source !== 'tag') ? await access.page(x) : null;
+      const tone = page ? await toneMap(page) : null;
+      if (tone) read.areas = read.areas.filter((a) => a.source === 'tag' || toneShare(a.points, tone) <= 0.6);
       if (read.areas.length) found.push({ sheet: x, read });
     });
   }

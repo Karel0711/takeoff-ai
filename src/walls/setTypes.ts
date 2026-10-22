@@ -358,6 +358,10 @@ export function classifyCode(code: string, set: SetTypes, known: readonly string
   if (exact(set.wallPrefixes)) return { wall: true, confirmed: true };
   if (loose(set.otherPrefixes) && !loose(set.wallPrefixes)) return null;
   if (loose(set.wallPrefixes) && !loose(set.otherPrefixes)) return { wall: true, confirmed: true };
+  // The set's legend says what its partition tags look like ("P#  Partition / wall tag"): other
+  // codes in symbols are something else (grid bubbles x6y, screen tags SC2), except exterior,
+  // foundation and furring types a legend of partition tags often leaves out (EW1, FW2, FR1).
+  if (set.wallPrefixes.length && !/^(E|EW|EX|EXT|F|FW|FR|FN|CB|CMU|M|MW)$/i.test(base)) return null;
   if (known.length) return { wall: false, generic: true };
   return fallback(plain) ? { wall: true, confirmed: false } : { wall: false, generic: true };
 }

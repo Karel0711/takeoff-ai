@@ -153,7 +153,7 @@ export function drawingTitles(texts: PageText[], lines = textLinesOf(texts)): Dr
  * biggest text naming a plan, elevation, section, schedule or legend), the way an estimator
  * reads a sheet with no title block text.
  */
-export function viewTitle(texts: { str: string; h: number }[]): string | null {
+export function viewTitle(texts: { str: string; h: number; cx?: number; cy?: number; w?: number; angle?: number }[]): string | null {
   // Any direction: a title block's title often runs up the sheet's edge.
   // A title, not a note: no sentence ("Revise vent location on the roof plan.") or caption ("DETAIL NO.").
   const c = texts.filter((t) => {
@@ -164,7 +164,61 @@ export function viewTitle(texts: { str: string; h: number }[]): string | null {
   const top = Math.max(...c.map((t) => t.h));
   // Titles as big as each other (a plan and the legend drawn beside it): the sheet is the plan's.
   const biggest = c.filter((t) => t.h >= top * 0.98);
-  return (biggest.find((t) => /\b(PLANS?|RCP)\b/i.test(t.str) && !/\b(LEGEND|SYMBOLS|NOTES|SCHEDULE|KEY PLAN)\b/i.test(t.str)) ?? biggest[0]).str.trim();
+  const pick = biggest.find((t) => /\b(PLANS?|RCP)\b/i.test(t.str) && !/\b(LEGEND|SYMBOLS|NOTES|SCHEDULE|KEY PLAN)\b/i.test(t.str)) ?? biggest[0];
+  return stackedTitle(pick, texts);
+}
+
+/**
+ * A title set over two or three lines in a title block ("LEVEL 1 (LOWER) DEMO" over "PLAN"),
+ * whole: the lines just above it in the same size and alignment are read with it. A line further
+ * up than a line and a half is another block (the project's address).
+ */
+function stackedTitle(t: { str: string; h: number; cx?: number; cy?: number; w?: number; angle?: number }, all: { str: string; h: number; cx?: number; cy?: number; w?: number; angle?: number }[]): string {
+  if (t.cx === undefined || t.cy === undefined || t.w === undefined || Math.abs(Math.sin(t.angle ?? 0)) > 0.2) return t.str.trim();
+  // A line: the runs on its baseline joined to it with gaps of a couple of letters at most (not a title beside it).
+  const lineOf = (x: typeof t) => {
+    const row = all.filter((u) => u.cy !== undefined && u.cx !== undefined && u.w !== undefined && Math.abs(u.cy - x.cy!) < x.h * 0.4 && Math.abs(u.h - x.h) < x.h * 0.12 && Math.abs(Math.sin(u.angle ?? 0)) < 0.2);
+    const line = [x];
+    let grew = true;
+    while (grew) {
+      grew = false;
+      for (const u of row) {
+        if (line.includes(u)) continue;
+        const near = line.some((v) => Math.max(u.cx! - u.w! / 2 - (v.cx! + v.w! / 2), v.cx! - v.w! / 2 - (u.cx! + u.w! / 2)) < x.h * 2);
+        if (near) {
+          line.push(u);
+          grew = true;
+        }
+      }
+    }
+    return line;
+  };
+  const leftOf = (line: typeof all) => Math.min(...line.map((u) => u.cx! - u.w! / 2));
+  const textOf = (line: typeof all) => [...line].sort((a, b) => a.cx! - b.cx!).map((u) => u.str.trim()).join(' ');
+  let line = lineOf(t);
+  const parts = [textOf(line)];
+  const x0 = leftOf(line);
+  for (let i = 0; i < 2; i++) {
+    const cy = line[0].cy!;
+    const above = all.find(
+      (u) =>
+        u.cy !== undefined && u.cx !== undefined && u.w !== undefined &&
+        Math.abs(u.h - t.h) < t.h * 0.12 &&
+        cy - u.cy > t.h * 0.8 && cy - u.cy < t.h * 1.6 &&
+        Math.abs(u.cx - u.w / 2 - x0) < t.h * 0.8 &&
+        Math.abs(Math.sin(u.angle ?? 0)) < 0.2,
+    );
+    if (!above) break;
+    line = lineOf(above);
+    if (Math.abs(leftOf(line) - x0) > t.h * 0.8) break;
+    const str = textOf(line);
+    // A sentence or a caption is not part of a title.
+    if (/[:.]$/.test(str) || str.length > 60) break;
+    // A line that is a title of its own (a legend's, over the plan's) is not the start of this one.
+    if (VIEW_WORDS.test(str)) break;
+    parts.unshift(str);
+  }
+  return parts.join(' ').replace(/\s+/g, ' ').trim();
 }
 
 /** Why a sheet got the scale it did. */

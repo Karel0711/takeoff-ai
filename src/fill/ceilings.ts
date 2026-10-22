@@ -92,7 +92,7 @@ const HEIGHT = /^(?:\+\/-\s*|±\s*)?\+?\d{1,2}'\s*-?\s*\d{1,2}(?:\s+\d{1,2}\/\d{
 const CEILING_WORDS = /ceiling|\bclg\b|tile|panel|board|gypsum|\bgyp|\bgwb\b|\bact\b|lay-?in|acoustic|plaster|bulkhead|soffit|t-bar|suspended|drywall/i;
 const ABOVE = /^(?:above|abv\.?|\(above\))$/i;
 /** A note marking a space with no ceiling: open to below or above, a shaft. */
-const OPEN_SPACE = /\bopen\s+(?:to|into)\s+(?:below|above|level|floor)|^no\s+ceiling\b|^open\s+shaft\b/i;
+const OPEN_SPACE = /\bopen\s+(?:to|into)\s+(?:below|above|level|floor)|^open\s+(?:above|below)\b|^no\s+ceiling\b|^open\s+shaft\b/i;
 
 export const codeKey = (s: string) => s.replace(/-/g, '').toLowerCase();
 

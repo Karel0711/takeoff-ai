@@ -67,6 +67,8 @@ const ROOM_PREFIX = /^(?:RM\.?|ROOM)\s*(?=\S*\d)/i;
 const EMPTY = /^([-–—]+|N\/?A|NONE|\.|\/)$/i;
 /** An existing finish to remain: nothing to take off. */
 const EXISTING = /^(EX|EXIST\.?|EXISTING|EXG\.?)$/i;
+/** A finish column's entry that says how, not what: factory finished, painted, existing, sealed. */
+const GENERIC_FINISH = /^(FF|F\.?F\.?|FACTORY( FINISH(ED)?)?|PTD|PT|PAINT(ED)?|EX|EXIST\.?|EXISTING|SEALED|SLD|N\/?A|STAIN(ED)?|CLEAR)$/i;
 
 /** The code used most often in a cell list, first on a tie. */
 function byUse(codes: string[]): string[] {
@@ -158,13 +160,33 @@ function headerBand(texts: PageText[], anchor: PageText): { heads: Head[]; botto
   let bottom = Math.max(...heads.map((b) => b.bottom));
   // Headings of narrow columns, turned up the page, just under the lines.
   const lowest = Math.max(...lines.map((l) => l.cy));
+  // A tall header (headings written up the page under FLOOR | WALLS | CEILING) can run to a
+  // dozen letters under the group lines; its turned headings end on one line at its foot.
+  const turnedHeads: Head[] = [];
   for (const t of texts) {
-    if (!turned(t) || !isHead(t) || t.h > 1.6 * h || t.h < 0.4 * h || t.cx < x0 - 20 || t.cx > x1 + 20) continue;
+    // The last group heading (CEILING) is narrower than the columns under it: a little past it too.
+    if (!turned(t) || !isHead(t) || t.h > 1.6 * h || t.h < 0.4 * h || t.cx < x0 - 20 || t.cx > x1 + 15 * h) continue;
     const b = headBox(t);
-    if (b.top < lowest || b.top - lowest > 6 * h) continue;
+    if (b.top < lowest || b.top - lowest > 14 * h) continue;
+    turnedHeads.push(b);
+  }
+  // Only the ones ending with the others: a word further down is in the table.
+  const foot = turnedHeads.length ? Math.max(...turnedHeads.map((b) => b.bottom)) : 0;
+  for (const b of turnedHeads) {
+    if (foot - b.bottom > 3 * h) continue;
     heads.push(b);
     bottom = Math.max(bottom, b.bottom);
   }
+  // The room number and name written across at the foot of such a header, left of the finishes (NO. | ROOM NAME).
+  if (turnedHeads.length >= 3)
+    for (const t of texts) {
+      if (!level(t) || heads.some((b) => b.t === t) || t.cy < lowest + h || t.cy > foot + h || t.cx > Math.max(x1, ...turnedHeads.map((b) => b.x1)) + 15 * h || t.cx < x0 - 600) continue;
+      const k = headingOf(t.str);
+      if (k !== 'room' && k !== 'name' && k !== 'height' && k !== 'other') continue;
+      const b = headBox(t);
+      heads.push(b);
+      bottom = Math.max(bottom, b.bottom);
+    }
   return { heads, bottom };
 }
 
@@ -359,7 +381,11 @@ export function readFinishSchedule(texts: PageText[], segs?: Segment[]): FinishS
       for (const role of ['floor', 'base', 'walls', 'ceiling'] as const) {
         const cols = columns.filter((c) => c.role === role);
         for (const p of READ_ORDER[role]) {
-          const codes = byUse(cols.filter((c) => c.priority === p).flatMap(cell));
+          let codes = byUse(cols.filter((c) => c.priority === p).flatMap(cell));
+          // A finish column saying only how it is finished (FF factory finished, PTD painted) beside
+          // a material column: the floor, base or ceiling is its material (VPLK 1, ACT 1); a wall is
+          // its paint, unless it is existing.
+          if (p === 2 && codes.length && codes.every((c) => GENERIC_FINISH.test(c)) && (role !== 'walls' || codes.every((c) => !/^(PTD|PT|PAINT(ED)?)$/i.test(c))) && cols.some((c) => c.priority === 1 && byUse(cell(c)).length)) codes = [];
           // An existing finish to remain: nothing new, whatever its material.
           if (!codes.length && cols.some((c) => c.priority === p && existing.has(c))) break;
           if (!codes.length) continue;

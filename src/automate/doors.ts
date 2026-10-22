@@ -1,7 +1,7 @@
 import { findDoorTags, findRoomLabels, type DoorTag } from '../fill/rooms';
 import { newId, type Project, type Sheet, type TakeoffType } from '../model';
 import type { Automation } from './result';
-import { classifySheet } from '../sheetKind';
+import { classifySheet, tradeOfNumber } from '../sheetKind';
 import { perSheet, PALETTE, type SetAccess } from './set';
 
 const norm = (c: string) => c.toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -48,6 +48,8 @@ export async function findDoorTagsIn(p: Project, access: SetAccess, current: She
       }
       // Another sheet needs a plan's worth of door numbers, and rooms to go by unless its title says it is a floor plan.
       const plan = classifySheet(x);
+      // Doors are the architect's: a trade's plan (E2.2 lighting, M2.1 ductwork) repeats the floor plan under its own marks.
+      if (x.id !== current.id && tradeOfNumber(x.name)) return;
       if (x.id !== current.id && ((!rooms.length && !(plan.kind === 'floor plan' && plan.level === 'level')) || tags.length < 4)) return;
       found.push({ sheetId: x.id, tags });
     });
