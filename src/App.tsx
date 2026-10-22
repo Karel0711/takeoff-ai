@@ -1581,6 +1581,8 @@ export function App() {
         .join('\n');
       await saveToProject(`${p.name.replace(/[^\w\- ]+/g, '').trim() || 'takeoff'} - review and RFIs.txt`, new Blob([text], { type: 'text/plain' })).catch(() => null);
       setWholeSetReport({ text: `Added ${added} takeoffs.\n\n${text}`, rfis });
+      // Watching: the report shows a few seconds, then the sheets again.
+      if (watch) window.setTimeout(() => setWholeSetReport(null), 7000);
       return `Added ${added} takeoffs.\n\n${text}`;
     } finally {
       // A run that stopped part way: back to the project as it was.
