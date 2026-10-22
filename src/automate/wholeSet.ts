@@ -1,5 +1,8 @@
 import { applyFinishes, ceilingsFromRcps, finishRooms, levelOfSheet, readFinishes } from './finishes';
 import { automateCeilings } from './ceilings';
+import { automateKeynotes } from './keynotes';
+import { automateRuns } from './runs';
+import { automateTrades } from './trades';
 import { doorTakeoff, findDoorTagsIn } from './doors';
 import type { Automation } from './result';
 import { automateRooms } from './rooms';
@@ -12,7 +15,7 @@ import { planShift as planShiftKnown, repeatedRuns } from './overlap';
 import { findRoomLabels } from '../fill/rooms';
 import type { Project, Pt, Sheet } from '../model';
 import type { PDFDocumentProxy } from '../pdf';
-import { classifySheet, type SheetKind } from '../sheetKind';
+import { classifySheet, tradeOfNumber, type SheetKind } from '../sheetKind';
 import { viewTitle } from '../sheetScale';
 import { readTitleBlock } from '../titleBlock';
 
@@ -293,7 +296,8 @@ export async function takeOffWholeSet(
   await run('symbols', async () => {
     say('Whole set: legend symbols…');
     await pause();
-    const { tallies, message } = await symbolTallies(project, access);
+    // The trades' legends are counted by the mechanical and electrical step.
+    const { tallies, message } = await symbolTallies({ ...project, sheets: project.sheets.filter((x) => !tradeOfNumber(x.name ?? '')) }, access);
     if (!tallies.length) return message ?? 'no legends with symbols';
     const choices = defaultSymbolChoices(tallies);
     if (!choices.length) return `${tallies.length} legend symbols, none found on the plans`;
@@ -318,6 +322,35 @@ export async function takeOffWholeSet(
     await pause();
     const r = await automateSprinklers(project, access, null);
     apply('sprinklers', r);
+    return r.message;
+  });
+
+  // The trades and the demolition: ductwork and piping off the trade plans' layers, the trades'
+  // devices, fixtures and equipment, and the architect's keynotes and demolition plans.
+  await run('ductwork and piping', async () => {
+    say('Whole set: ductwork and piping…');
+    await pause();
+    const r = await automateRuns(project, access);
+    apply('runs', r);
+    for (const c of r.checks) review.push({ kind: 'check', text: c });
+    return r.message;
+  });
+
+  await run('mechanical and electrical counts', async () => {
+    say('Whole set: mechanical and electrical counts…');
+    await pause();
+    const r = await automateTrades(project, access);
+    apply('trades', r);
+    for (const c of r.checks) review.push({ kind: 'check', text: c });
+    return r.message;
+  });
+
+  await run('keynotes and demolition', async () => {
+    say('Whole set: keynotes and demolition…');
+    await pause();
+    const r = await automateKeynotes(project, access, opts.maxOpening);
+    apply('keynotes', r);
+    for (const c of r.checks) review.push({ kind: 'check', text: c });
     return r.message;
   });
 

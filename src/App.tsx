@@ -59,9 +59,13 @@ import { symbolBoxAt, visibleInk, type SymbolTally } from './fill/autoSymbols';
 import { formatQty, lengthUnit, toLength } from './units';
 import { sheetsOf } from './automate/sheets';
 import { PALETTE, type SetAccess } from './automate/set';
+import { layerNames } from './layers';
 import type { Automation } from './automate/result';
 import { automateSprinklers as sprinklerTakeoff } from './automate/sprinklers';
 import { automateCeilings as ceilingTakeoff } from './automate/ceilings';
+import { automateKeynotes as keynotesTakeoff } from './automate/keynotes';
+import { automateRuns as runsTakeoff } from './automate/runs';
+import { automateTrades as tradesTakeoff } from './automate/trades';
 import { symbolTakeoff, symbolTallies as tallySymbols } from './automate/symbols';
 import { issueOrder, reissued } from './reissue';
 import { doorTakeoff, findDoorTagsIn } from './automate/doors';
@@ -1511,6 +1515,10 @@ export function App() {
       segments: async (s) => {
         const pg = await pdfsRef.current.get(s.docId)?.getPage(s.page);
         return pg ? (keepOpen && s.id === sheet?.id ? segmentsOf(pg) : segmentsOnce(pg)) : null;
+      },
+      layers: async (s) => {
+        const d = pdfsRef.current.get(s.docId);
+        return d ? layerNames(d) : new Map();
       },
       progress: (t) => setBusy(t),
     };
@@ -3014,7 +3022,7 @@ export function App() {
                 id: 'wholeset' as const,
                 icon: 'sparkle' as const,
                 title: 'Take off the whole set',
-                text: 'Every tool on every sheet in one go: walls and rooms on each plan, doors, windows, finishes, ceilings, symbols, sprinklers. Then a list of what to check and the RFIs.',
+                text: 'Every tool on every sheet in one go: walls and rooms on each plan, doors, windows, finishes, ceilings, symbols, sprinklers, ductwork and piping, mechanical and electrical counts, keynotes and demolition. Then a list of what to check and the RFIs.',
                 ready: project.sheets.length > 0,
               },
               {
@@ -3081,6 +3089,27 @@ export function App() {
                 ready: true,
               },
               {
+                id: 'runs' as const,
+                icon: 'walls' as const,
+                title: 'Ductwork and piping',
+                text: 'Every mechanical, plumbing and electrical plan drawn with CAD layers: ductwork by size, piping and conduit by service, removals off the demolition layers.',
+                ready: true,
+              },
+              {
+                id: 'trades' as const,
+                icon: 'count' as const,
+                title: 'Mechanical and electrical counts',
+                text: 'Devices, light fixtures by type, plumbing fixtures, equipment and grilles on the trade plans, from their legends and schedules. Existing work to stay is left out.',
+                ready: true,
+              },
+              {
+                id: 'keynotes' as const,
+                icon: 'list' as const,
+                title: 'Keynotes and demolition',
+                text: 'Every keynote counted where it is tagged; on demolition plans, flooring and ceilings to remove measured by room and walls drawn dashed measured.',
+                ready: true,
+              },
+              {
                 id: 'finishes' as const,
                 icon: 'list' as const,
                 title: 'Room finishes',
@@ -3102,6 +3131,9 @@ export function App() {
                   else if (a.id === 'windows') void automateWindows();
                   else if (a.id === 'symbols') void automateSymbols();
                   else if (a.id === 'ceilings') void automateCeilings();
+                  else if (a.id === 'runs') void runAutomation('Ductwork and piping', () => runsTakeoff(projectRef.current!, setAccess()));
+                  else if (a.id === 'trades') void runAutomation('Mechanical and electrical counts', () => tradesTakeoff(projectRef.current!, setAccess()));
+                  else if (a.id === 'keynotes') void runAutomation('Keynotes and demolition', () => keynotesTakeoff(projectRef.current!, setAccess(), maxOpening));
                   else if (a.id === 'legend') {
                     setLegendPick(true);
                     setTool('symbol');

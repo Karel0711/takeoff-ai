@@ -29,6 +29,7 @@ it('whole set', async () => {
     segments: (s: (typeof sheets)[number]) => set.segments(s),
     doc: (s: (typeof sheets)[number]) => set.doc(s),
     docs: () => docs.map((d) => d.pdf),
+    layers: (s: (typeof sheets)[number]) => set.layers(s),
   };
   const t = Date.now();
   const r = await takeOffWholeSet(project, access as never, { maxOpening: 3, progress: (s) => process.stdout.write(`${s}\n`) });

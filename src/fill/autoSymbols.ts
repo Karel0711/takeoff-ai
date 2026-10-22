@@ -1,6 +1,6 @@
 import type { Pt } from '../model';
 import type { PageText } from '../pageText';
-import { legendRows, type LegendRow } from './legend';
+import { classify, legendRows, type LegendRow } from './legend';
 import { look, type LookLine } from './symbolLook';
 import { sampleSymbol, type SymbolLine, type SymbolSample } from './symbols';
 import type { Segment } from './vectors';
@@ -21,6 +21,8 @@ export interface FoundLegend {
   /** The whole legend, heading included: copies inside it are not counted. */
   box: Box;
   rows: LegendRow[];
+  /** For one column of a grid legend: the category it is under ("POWER"). */
+  group?: string;
 }
 
 /** A legend line drawn with a symbol, ready to count. */
@@ -54,7 +56,7 @@ export function isLegendHeading(str: string): boolean {
 type HLine = { at: number; a: number; b: number };
 
 /** Long axis-aligned lines, collinear pieces joined: horizontal ones by y, vertical by x. */
-function axisLines(segs: Segment[], min: number): { h: HLine[]; v: HLine[] } {
+export function axisLines(segs: Segment[], min: number): { h: HLine[]; v: HLine[] } {
   const join = (raw: HLine[]) => {
     raw.sort((p, q) => p.at - q.at || p.a - q.a);
     const out: HLine[] = [];
@@ -144,6 +146,92 @@ function labelsEnd(head: PageText, texts: PageText[], x0: number, x1: number, y1
   return bottom;
 }
 
+/**
+ * A legend drawn as a grid: one table across the sheet, columns in pairs of a narrow symbol
+ * column and a description column, each pair under a category heading ("POWER", "FIRE ALARM
+ * INITIATING"), rows ruled between. Each pair is read as a legend of its own, row by row: the
+ * ink in the symbol cell is the symbol, the words in the description cell its label.
+ */
+export function gridLegends(head: PageText, frame: Box, texts: PageText[], segs: Segment[], lines: { h: HLine[]; v: HLine[] }): FoundLegend[] {
+  const [fx0, fy0, fx1, fy1] = frame;
+  const fh = fy1 - fy0;
+  // Column rules: vertical lines inside the frame running most of its height.
+  const xs: number[] = [];
+  for (const v of lines.v) {
+    if (v.at < fx0 - 1 || v.at > fx1 + 1 || v.b - v.a < fh * 0.3 || v.b < fy0 || v.a > fy1) continue;
+    if (!xs.some((x) => Math.abs(x - v.at) < 2)) xs.push(v.at);
+  }
+  xs.sort((a, b) => a - b);
+  if (xs.length < 4) return [];
+  const inside = (t: PageText, x0: number, x1: number) => upright(t) && t.cx > x0 && t.cx < x1 && t.cy > head.cy + head.h && t.cy < fy1;
+  const wordsIn = (x0: number, x1: number) => texts.filter((t) => inside(t, x0, x1) && /[A-Za-z]{3}/.test(t.str)).length;
+  const out: FoundLegend[] = [];
+  for (let i = 0; i + 2 < xs.length; i++) {
+    const [a, b, c] = [xs[i], xs[i + 1], xs[i + 2]];
+    // A symbol column: narrow beside its description, few words in it.
+    if (b - a > (c - b) * 0.6 || b - a < 8) continue;
+    const descWords = wordsIn(b, c);
+    if (descWords < 3 || wordsIn(a, b) > descWords * 0.3) continue;
+    // Row rules across the pair.
+    const ys = lines.h
+      .filter((h) => h.a <= a + 2 && h.b >= c - 2 && h.at > head.cy && h.at <= fy1 + 1)
+      .map((h) => h.at)
+      .sort((p, q) => p - q)
+      .filter((y, k, arr) => k === 0 || y - arr[k - 1] > 2);
+    if (ys.length < 3) continue;
+    const rows: LegendRow[] = [];
+    let heading = '';
+    for (let k = 0; k + 1 < ys.length; k++) {
+      const [y0, y1] = [ys[k], ys[k + 1]];
+      const label = texts
+        .filter((t) => upright(t) && t.cx > b && t.cx < c && t.cy > y0 && t.cy < y1)
+        .sort((p, q) => p.cy - q.cy || p.cx - q.cx)
+        .map((t) => t.str.trim())
+        .join(' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+      const art = segs.filter(
+        (s) => Math.min(s.x1, s.x2) > a + 1 && Math.max(s.x1, s.x2) < b - 1 && Math.min(s.y1, s.y2) > y0 + 0.5 && Math.max(s.y1, s.y2) < y1 - 0.5,
+      );
+      // A row whose symbol is lettering alone ("OS" an occupancy sensor, "TR" tamper resistant):
+      // counted where the plans write it.
+      const lettering = texts.filter((t) => upright(t) && t.cx > a && t.cx < b && t.cy > y0 && t.cy < y1).map((t) => t.str.trim());
+      const tag = lettering.length === 1 && /^[A-Z][A-Z0-9/-]{1,5}$/.test(lettering[0]) ? lettering[0] : null;
+      if (tag && label && !/^INDICATE[SD]?\b/i.test(label) && !art.some((s) => s.width > 0 && Math.hypot(s.x2 - s.x1, s.y2 - s.y1) > (b - a) * 0.4)) {
+        rows.push({ label, graphic: null, kind: 'count', tag });
+        continue;
+      }
+      // A row with no symbol drawn: the column's category heading (the first one), or a note.
+      if (!art.length) {
+        if (!heading && !rows.length) heading = texts.filter((t) => upright(t) && t.cy > y0 && t.cy < y1 && t.cx > a && t.cx < c).map((t) => t.str.trim()).join(' ');
+        continue;
+      }
+      if (!label) continue;
+      const graphic: Box = [Math.min(...art.map((s) => Math.min(s.x1, s.x2))), Math.min(...art.map((s) => Math.min(s.y1, s.y2))), Math.max(...art.map((s) => Math.max(s.x1, s.x2))), Math.max(...art.map((s) => Math.max(s.y1, s.y2)))];
+      rows.push({ label, graphic, kind: classify(art, graphic) });
+    }
+    if (rows.length < 2) continue;
+    out.push({ heading: head.str.replace(/:\s*$/, '').trim(), box: [a, ys[0], c, ys[ys.length - 1]], rows, ...(heading ? { group: heading } : {}) });
+  }
+  return out;
+}
+
+/**
+ * The table a heading tops when no frame closes round it (its sides are the sheet border's): the
+ * rule over the heading, down to the last rule under it about as long.
+ */
+function tableUnder(head: PageText, lines: { h: HLine[]; v: HLine[] }, height: number): Box | null {
+  // The table's top rule: over the heading or just under it, much longer than the heading (not its underline).
+  const wide = (right(head) - left(head)) * 3;
+  const top = lines.h
+    .filter((l) => l.at >= head.cy - head.h * 8 && l.at <= head.cy + head.h * 3 && l.a <= left(head) + 1 && l.b >= right(head) - 1 && l.b - l.a >= wide)
+    .sort((p, q) => Math.abs(p.at - head.cy) - Math.abs(q.at - head.cy))[0];
+  if (!top) return null;
+  const long = lines.h.filter((l) => l.at > top.at && l.at < top.at + height * 0.8 && l.b - l.a >= (top.b - top.a) * 0.5 && l.a < top.b && l.b > top.a);
+  if (long.length < 3) return null;
+  return [top.a, Math.min(top.at, head.cy - head.h), top.b, Math.max(...long.map((l) => l.at))];
+}
+
 /** Every legend on a sheet, read into rows (symbols not yet counted), outside `avoid` (the title block). */
 export function findLegends(texts: PageText[], segs: Segment[], width: number, height: number, avoid: Box[] = []): FoundLegend[] {
   const heads = texts.filter((t) => upright(t) && isLegendHeading(t.str));
@@ -157,6 +245,12 @@ export function findLegends(texts: PageText[], segs: Segment[], width: number, h
     // A frame round just the legend is the legend; a sheet-high column of notes it shares is trimmed to its labels.
     if (frame && frame[2] - frame[0] <= width * 0.45 && frame[3] - frame[1] <= height * 0.6) box = frame;
     else {
+      // A table across the sheet: columns of symbols and descriptions in pairs.
+      const grid = gridLegends(head, frame ?? tableUnder(head, lines, height) ?? [0, 0, 0, 0], texts, segs, lines);
+      if (grid.length >= 2) {
+        out.push(...grid);
+        continue;
+      }
       const x0 = frame ? frame[0] : left(head) - head.h * 3;
       const x1 = frame ? frame[2] : Math.min(width, left(head) + width * 0.3);
       const end = labelsEnd(head, texts, x0, x1, frame ? frame[3] : height);
@@ -238,6 +332,8 @@ export function legendSymbols(legend: FoundLegend, texts: PageText[], segs: Segm
     const lettering = textInside(texts, g);
     if (lettering.some((t) => PLACEHOLDER.test(t.str))) continue;
     if (/\bsee\b(?!\s+also)/i.test(r.label) && /\b(sheets?|schedules?|series)\b/i.test(r.label)) continue;
+    // A line type for walls ("existing wall to remain", "new partition"): measured, not counted.
+    if (/^(EXISTING|NEW|PROPOSED|RATED|FIRE)?[\s\w-]{0,20}\b(WALLS?|PARTITIONS?)\b\s*(TO\s+(REMAIN|BE\b)|$|\(|-|,)|\b(WALLS?|PARTITIONS?)\s+TO\s+(REMAIN|BE (DEMOLISHED|REMOVED))/i.test(r.label)) continue;
     const sample = sampleSymbol(ink, g);
     if (!sample) continue;
     const label = r.label.replace(/[:,]\s*$/, '').trim();
@@ -251,7 +347,8 @@ export function legendSymbols(legend: FoundLegend, texts: PageText[], segs: Segm
     // Only lines, nothing closed (a dashed outline, a corner mark): too plain to tell from the
     // window frames and wall ends it looks like. Read a legend or a click counts those.
     if (!closedShape(sample.lines)) continue;
-    if (r.kind === 'area' && (SURFACE.test(label) || !hasCopies?.(symbol))) continue;
+    // A box with lettering in it (JB, SV, a keypad) is a symbol drawn as a box, not a hatch swatch.
+    if (r.kind === 'area' && !lettering.length && (SURFACE.test(label) || !hasCopies?.(symbol))) continue;
     out.push(symbol);
   }
   return out;

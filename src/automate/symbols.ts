@@ -52,6 +52,9 @@ export async function symbolTallies(p: Project, access: SetAccess, picked?: { sh
         const a = byId.get(x.id)!.sheet;
         const b = byId.get(from.id)!.sheet;
         if (a.metersPerPoint && b.metersPerPoint) return Math.abs(a.metersPerPoint / b.metersPerPoint - 1) <= 0.01;
+        // A legend sheet drawn to no scale (an electrical symbols sheet): its symbols are drawn about
+        // the plans' size, and a legend symbol is matched at any size in proportion anyway.
+        if (!b.metersPerPoint && a.metersPerPoint && !/\bPLANS?\b/i.test(b.title ?? '')) return true;
         // Unscaled: the scale read from its dimensions, and nothing when there are none to read.
         const want = b.metersPerPoint;
         const segs = await segsOf(x);

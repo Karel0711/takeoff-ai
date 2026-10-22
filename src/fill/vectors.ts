@@ -22,6 +22,12 @@ export interface Segment {
   color?: string;
   /** Stroked with a dash pattern (a hidden or overhead line). */
   dashed?: boolean;
+  /**
+   * The drawing layer (PDF optional content group) it is on, as the group's id: CAD-made sets
+   * keep ductwork, piping, lighting, new and existing work on layers of their own. Names come
+   * from `layerNames` (src/layers.ts).
+   */
+  layer?: string;
 }
 
 type Matrix = [number, number, number, number, number, number];
@@ -61,6 +67,13 @@ export function extractSegments(fnArray: ArrayLike<number>, argsArray: ArrayLike
   let fill = '#000000';
   let dashed = false;
   const stack: { ctm: Matrix; lineWidth: number; stroke: string; fill: string; dashed: boolean }[] = [];
+  // Marked content: the layers drawing is in (innermost last), null for content marked otherwise.
+  const marked: (string | null)[] = [];
+  let layer: string | undefined;
+  const topLayer = () => {
+    for (let k = marked.length - 1; k >= 0; k--) if (marked[k]) return marked[k]!;
+    return undefined;
+  };
 
   for (let i = 0; i < fnArray.length; i++) {
     const fn = fnArray[i];
@@ -98,6 +111,19 @@ export function extractSegments(fnArray: ArrayLike<number>, argsArray: ArrayLike
       case OPS.setLineWidth:
         lineWidth = args[0] as number;
         break;
+      case OPS.beginMarkedContentProps: {
+        const props = args[1] as { type?: string; id?: string; ids?: string[] } | null;
+        marked.push(props && props.type === 'OCG' && props.id ? String(props.id) : props && props.type === 'OCMD' && props.ids?.length ? String(props.ids[0]) : null);
+        layer = topLayer();
+        break;
+      }
+      case OPS.beginMarkedContent:
+        marked.push(null);
+        break;
+      case OPS.endMarkedContent:
+        marked.pop();
+        layer = topLayer();
+        break;
       case OPS.setGState:
         for (const [key, value] of (args[0] as [string, unknown][]) ?? []) {
           if (key === 'LW') lineWidth = value as number;
@@ -115,6 +141,7 @@ export function extractSegments(fnArray: ArrayLike<number>, argsArray: ArrayLike
         const start = out.length;
         addPath(data as ArrayLike<number>, ctm, width, filled, out, counter, stroked ? stroke : fill);
         if (stroked && dashed) for (let k = start; k < out.length; k++) out[k].dashed = true;
+        if (layer) for (let k = start; k < out.length; k++) out[k].layer = layer;
         break;
       }
     }

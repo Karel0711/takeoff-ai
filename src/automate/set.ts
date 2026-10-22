@@ -17,6 +17,8 @@ export interface SetAccess {
   texts(sheet: Sheet): Promise<PageText[]>;
   /** A sheet's linework, or null when its drawing is not open. */
   segments(sheet: Sheet): Promise<Segment[] | null>;
+  /** The names of the drawing layers a sheet's linework is on (`Segment.layer` ids → names); none for a drawing without layers. */
+  layers?(sheet: Sheet): Promise<Map<string, string>>;
   /** Progress, for a busy indicator. */
   progress?(text: string): void;
   /**

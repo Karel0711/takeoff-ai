@@ -176,8 +176,8 @@ function orderly(run: PageText[]): boolean {
  * codes of one family (EQ-1, EQ-2, …) one under another, left edges in line, each row close to
  * the one before. A plan's tags are scattered, not stacked like this.
  */
-export function codeLists(texts: PageText[]): ListedCode[] {
-  const cands = texts.filter((t) => upright(t) && ITEM_CODE.test(t.str.trim()));
+export function codeLists(texts: PageText[], accept: (code: string) => boolean = (c) => ITEM_CODE.test(c)): ListedCode[] {
+  const cands = texts.filter((t) => upright(t) && accept(t.str.trim()));
   const out: ListedCode[] = [];
   const used = new Map<PageText, number>();
   let lists = 0;

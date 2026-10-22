@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { basename } from 'node:path';
 import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import type { SetAccess } from '../src/automate/set';
+import { layerNames } from '../src/layers';
 import { sheetsOf } from '../src/automate/sheets';
 import { segmentsOf } from '../src/fill/sheetWalls';
 import type { Segment } from '../src/fill/vectors';
@@ -105,6 +106,11 @@ export class NodeSet implements SetAccess {
 
   doc(sheet: Sheet): PDFDocumentProxy | undefined {
     return this.docs.get(sheet.docId)?.pdf;
+  }
+
+  async layers(sheet: Sheet): Promise<Map<string, string>> {
+    const d = this.docs.get(sheet.docId);
+    return d ? layerNames(d.pdf) : new Map();
   }
 
   texts(sheet: Sheet): Promise<PageText[]> {

@@ -8,6 +8,9 @@ import { automateWindows } from '../automate/windows';
 import { automateCeilings } from '../automate/ceilings';
 import { automateSprinklers } from '../automate/sprinklers';
 import { applyFinishes, ceilingsFromRcps, finishRooms, readFinishes } from '../automate/finishes';
+import { automateKeynotes } from '../automate/keynotes';
+import { automateRuns } from '../automate/runs';
+import { automateTrades } from '../automate/trades';
 import { symbolTakeoff, symbolTallies, defaultSymbolChoices } from '../automate/symbols';
 import { DIVISIONS, newId, type Kind, type Measurement, type Project, type Pt, type Sheet, type TakeoffType, type Units } from '../model';
 import type { PageText } from '../pageText';
@@ -85,7 +88,7 @@ const str = (description: string, extra: Record<string, unknown> = {}) => ({ typ
 const num = (description: string) => ({ type: 'number', description });
 const point = { type: 'array', items: { type: 'number' }, minItems: 2, maxItems: 2 };
 
-export const AUTOMATIONS = ['rooms', 'walls', 'doors', 'windows', 'ceilings', 'sprinklers', 'symbols', 'finishes'] as const;
+export const AUTOMATIONS = ['rooms', 'walls', 'doors', 'windows', 'ceilings', 'sprinklers', 'symbols', 'finishes', 'ductwork_piping', 'trade_counts', 'keynotes_demolition'] as const;
 type AutomationKind = (typeof AUTOMATIONS)[number];
 
 export const TOOL_DEFS: ToolDef[] = [
@@ -249,6 +252,9 @@ export const TOOL_DEFS: ToolDef[] = [
       'sprinklers: sprinkler heads on every sprinkler plan.',
       'symbols: every symbol in the set\'s legends, counted on the sheets each legend is for.',
       'finishes: reads the room finish schedules (or finish tags) onto every room takeoff labelled with its number (run it again after adding rooms by hand).',
+      'ductwork_piping: ductwork (by size) and piping and conduit (by service) on the mechanical, plumbing and electrical plans, read off the drawing\'s CAD layers; demolition layers as removals.',
+      'trade_counts: devices, light fixtures by type, plumbing fixtures, equipment and grilles on the trade plans, from their legends and schedules.',
+      'keynotes_demolition: the architect\'s keynotes counted where tagged; on demolition plans, removals by keynote (flooring and ceilings as room areas) and walls drawn dashed.',
       'Set scales first. Then check the result with get_sheet_image.',
     ].join(' '),
     inputSchema: obj({ kind: str('Which automation', { enum: [...AUTOMATIONS] }), sheet_id: str('Sheet, for rooms, walls, doors'), all_sheets: { type: 'boolean', description: 'doors: every sheet' } }, ['kind']),
@@ -257,7 +263,7 @@ export const TOOL_DEFS: ToolDef[] = [
     name: 'take_off_whole_set',
     title: 'Take off the whole set',
     description:
-      'Runs every automatic takeoff over the whole drawing set in one go, as an estimator works a set: walls and rooms on each new-work floor plan, door tags on every sheet, window tags, room finishes from the schedules, ceilings on the RCPs, legend symbols and sprinklers. Added as one undoable change. Returns what each tool did, the RFIs to send (numbered) and what to check before pricing. Set scales on the floor plans first. Takes minutes on a big set.',
+      'Runs every automatic takeoff over the whole drawing set in one go, as an estimator works a set: walls and rooms on each new-work floor plan, door tags on every sheet, window tags, room finishes from the schedules, ceilings on the RCPs, legend symbols and sprinklers, ductwork and piping off the trade plans layers, mechanical and electrical devices, fixtures and equipment, and keynotes and demolition. Added as one undoable change. Returns what each tool did, the RFIs to send (numbered) and what to check before pricing. Set scales on the floor plans first. Takes minutes on a big set.',
     inputSchema: obj({}),
   },
   {
@@ -699,6 +705,15 @@ async function automation(ctx: McpContext, a: Record<string, unknown>): Promise<
       r = { message: `${f.note}${f.unmatched ? ` Schedule lines with no room: ${f.unmatched.rows.length}; rooms with no line: ${f.unmatched.rooms.length}.` : ''}`, apply: applyFinishes(f) };
       break;
     }
+    case 'ductwork_piping':
+      r = await automateRuns(p, access);
+      break;
+    case 'trade_counts':
+      r = await automateTrades(p, access);
+      break;
+    case 'keynotes_demolition':
+      r = await automateKeynotes(p, access, ctx.maxOpening());
+      break;
     case 'symbols': {
       const t = await symbolTallies(p, access);
       if (!t.tallies.length) return fail(t.message ?? 'No legend symbols found.');

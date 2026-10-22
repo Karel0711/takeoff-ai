@@ -210,7 +210,7 @@ export function legendRows(texts: PageText[], segs: Segment[], box: Box): Legend
 }
 
 /** A swatch (a closed box with a pattern or fill in it) is an area; a long thin graphic a line type; anything else a symbol. */
-function classify(segs: Segment[], [gx0, gy0, gx1, gy1]: Box): Kind {
+export function classify(segs: Segment[], [gx0, gy0, gx1, gy1]: Box): Kind {
   const w = gx1 - gx0;
   const h = gy1 - gy0;
   const tol = Math.max(0.6, Math.min(w, h) * 0.04);
