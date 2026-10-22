@@ -314,7 +314,7 @@ export async function automateTrades(p: Project, access: SetAccess): Promise<Tra
       const lt = lettered.get(str);
       if (lt && lt.disc === d) {
         if ((await judge(s, at, Math.max(6, t.h * 3))) !== 'new') continue;
-        add(`${lt.label} (${str})`, guessDivision(lt.label) ?? division, { sheet: s, at, floor: i.floor, remove: false });
+        add(`${lt.label} (${str})`, division, { sheet: s, at, floor: i.floor, remove: false });
         continue;
       }
       for (const { code, at: cat } of codesIn(t, TAG)) {

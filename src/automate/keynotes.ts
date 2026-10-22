@@ -169,7 +169,7 @@ export async function automateKeynotes(p: Project, access: SetAccess, maxOpening
           } else {
             if (!planSheet) continue;
             const name = `Note ${n.number} (${s.name}): ${what}`;
-            added.push({ id: newId(), sheetId: s.id, typeId: typeFor(name, 'count', guessDivision(n.text) ?? '10 Specialties', 'ea'), points: [t.at], holes: [], source: 'demolition', label: n.number });
+            added.push({ id: newId(), sheetId: s.id, typeId: typeFor(name, 'count', ['08 Openings', '20-25 Mechanical', '26 Electrical'].includes(guessDivision(n.text) ?? '') ? guessDivision(n.text)! : '10 Specialties', 'ea'), points: [t.at], holes: [], source: 'demolition', label: n.number });
           }
         }
       }
