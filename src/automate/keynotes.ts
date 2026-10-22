@@ -10,7 +10,7 @@ import type { PageText } from '../pageText';
 import { tradeOfNumber } from '../sheetKind';
 import { drawingTitles } from '../sheetScale';
 import { titleBlockBox } from '../titleBlock';
-import type { Automation } from './result';
+import { replaceRun, type Automation } from './result';
 import { pause, perSheet, PALETTE, type SetAccess } from './set';
 
 /**
@@ -101,6 +101,9 @@ export const isDemoPlan = (s: Sheet, texts: PageText[]) => {
   return /\bPLANS?\b/.test(t) && /DEMOLITION|\bDEMO\b|REMOVALS?/.test(t);
 };
 
+/** A note removing a wall or partition (not something on one): measured as a length. */
+const WALL_NOTE = { test: (t: string) => /\b(PARTITIONS?|WALLS?)\b/i.test(t) && !/\bWITHIN\b|\bIN WALL|MOUNTED|CLIMBING|TILE|BRACKETS?|BACKSTOP|SCREEN|FIXTURE|DRAIN/i.test(t) };
+
 const SITE_SURFACE = /\b(ASPHALT|PAVEMENT|PAVING|PAVERS?|CONCRETE|GRASS|SOD|SEED|TOPSOIL|GRAVEL|GRANULAR|LANDSCAP\w*|MULCH|PLANTING)\b/i;
 
 const short = (text: string) => {
@@ -138,6 +141,7 @@ export async function automateKeynotes(p: Project, access: SetAccess, maxOpening
       const segs = await access.segments(s);
       if (!segs) return;
       const box = titleBlockBox(texts, s.width, s.height);
+      const wallTags: { note: string; name: string; at: Pt }[] = [];
       const outside = ([x, y]: Pt) => !box || x < box[0] || x > box[2] || y < box[1] || y > box[3];
       if (notes.length) {
         lists++;
@@ -147,12 +151,21 @@ export async function automateKeynotes(p: Project, access: SetAccess, maxOpening
         // A model of the walls, once, for rooms to measure removals in.
         let model: ReturnType<typeof buildWallModel> | null = null;
         const filled: { note: string; points: Pt[] }[] = [];
+        const failed: { note: string; name: string; at: Pt }[] = [];
+        // Notes on new-work plans are counted only from a list headed as keynotes: a washroom
+        // legend's notes describe a detail's requirements, not items to count.
+        const keyed = texts.some((x) => /\bKEY ?NOTES?\b/i.test(x.str));
         for (const t of tags) {
           const n = byNumber.get(t.code.replace('*', ''));
           if (!n) continue;
           const what = short(n.text);
           if (demo) {
             const name = `Demo ${n.number}: ${what}`;
+            // A wall or partition to remove: measured from the dashed walls it points at (below).
+            if (WALL_NOTE.test(n.text.replace(/^REMOVE AND DISPOSE OF (EXISTING )?|^REMOVE (EXISTING )?/i, ''))) {
+              wallTags.push({ note: n.number, name, at: t.at });
+              continue;
+            }
             if (AREA.test(n.text.replace(/^REMOVE AND DISPOSE OF (EXISTING )?|^REMOVE (EXISTING )?/i, ''))) {
               model ??= buildWallModel(segs, s.metersPerPoint, { maxOpening });
               // A second tag of the note in a room already measured: the same room.
@@ -163,14 +176,22 @@ export async function automateKeynotes(p: Project, access: SetAccess, maxOpening
                 added.push({ id: newId(), sheetId: s.id, typeId: typeFor(name, 'area', '02 Existing Conditions', units ? 'm²' : 'SF'), points: r.points, holes: [], source: 'demolition', label: `${n.number}` });
                 continue;
               }
-              unfilled++;
+              failed.push({ note: n.number, name, at: t.at });
+              continue;
             }
             added.push({ id: newId(), sheetId: s.id, typeId: typeFor(`${name} (each)`, 'count', '02 Existing Conditions', 'ea'), points: [t.at], holes: [], source: 'demolition', label: n.number });
           } else {
-            if (!planSheet) continue;
+            if (!planSheet || !keyed) continue;
             const name = `Note ${n.number} (${s.name}): ${what}`;
             added.push({ id: newId(), sheetId: s.id, typeId: typeFor(name, 'count', ['08 Openings', '20-25 Mechanical', '26 Electrical'].includes(guessDivision(n.text) ?? '') ? guessDivision(n.text)! : '10 Specialties', 'ea'), points: [t.at], holes: [], source: 'demolition', label: n.number });
           }
+        }
+        // A surface note whose tag sat outside a closed room: the room its other tags measured covers
+        // it; only a note measured nowhere is counted, to measure by hand.
+        for (const f of failed) {
+          if (filled.some((x) => x.note === f.note)) continue;
+          unfilled++;
+          added.push({ id: newId(), sheetId: s.id, typeId: typeFor(`${f.name} (each, measure by hand)`, 'count', '02 Existing Conditions', 'ea'), points: [f.at], holes: [], source: 'demolition', label: f.note });
         }
       }
       if (site) {
@@ -195,19 +216,28 @@ export async function automateKeynotes(p: Project, access: SetAccess, maxOpening
         const pt = (m: number) => m / s.metersPerPoint!;
         const dashed = dashLines(segs, pt(0.5)).filter((g: Segment) => outside([g.x1, g.y1]));
         const walls = pairParallels(dashed, pt(0.075), pt(0.36), pt(0.45));
-        const id = typeFor('Demo: walls and partitions shown dashed', 'linear', '02 Existing Conditions', units ? 'm' : 'ft');
-        for (const w of walls) added.push({ id: newId(), sheetId: s.id, typeId: id, points: [w.a, w.b], holes: [], source: 'demolition', label: 'dashed wall' });
+        // Each dashed wall under the nearest wall keynote pointing at it (within 25 ft / 7.5 m), so
+        // a wall is in one line only; the rest under one line of their own.
+        for (const w of walls) {
+          const mid: Pt = [(w.a[0] + w.b[0]) / 2, (w.a[1] + w.b[1]) / 2];
+          const near = wallTags.map((t) => ({ t, d: Math.min(Math.hypot(t.at[0] - mid[0], t.at[1] - mid[1]), Math.hypot(t.at[0] - w.a[0], t.at[1] - w.a[1]), Math.hypot(t.at[0] - w.b[0], t.at[1] - w.b[1])) })).filter((x) => x.d <= pt(7.5)).sort((a, b) => a.d - b.d)[0];
+          const name = near ? near.t.name : 'Demo: other walls and partitions shown dashed';
+          const id = typeFor(name, 'linear', '02 Existing Conditions', units ? 'm' : 'ft');
+          added.push({ id: newId(), sheetId: s.id, typeId: id, points: [w.a, w.b], holes: [], source: 'demolition', label: near ? near.t.note : 'dashed wall' });
+        }
+        // A wall keynote with no dashed wall near it: counted, to measure by hand.
+        for (const t of wallTags) if (!added.some((m) => m.sheetId === s.id && m.label === t.note && m.points.length === 2)) added.push({ id: newId(), sheetId: s.id, typeId: typeFor(`${t.name} (each, measure by hand)`, 'count', '02 Existing Conditions', 'ea'), points: [t.at], holes: [], source: 'demolition', label: t.note });
       }
     });
   }
   if (!added.length) return { message: lists ? 'Keynote lists found, but no tags of their numbers on the sheets.' : 'No keynote lists or demolition plans.', checks };
   if (unfilled) checks.push(`${unfilled} demolition keynote${unfilled === 1 ? '' : 's'} for a surface (flooring, ceiling, slab) did not sit in a closed room; counted instead of measured. Measure those areas by hand.`);
-  checks.push('Demolition walls are the walls drawn dashed on the demolition plans, measured once along their length (height per the demolition notes). Overhead and hidden lines drawn dashed can be picked up too: check them on the plan.');
+  checks.push('Demolition walls are the walls drawn dashed on the demolition plans, each measured once along its length under the nearest wall keynote (height per the note). Overhead and hidden lines drawn dashed can be picked up too: check them on the plan.');
   const ids = new Set(added.map((m) => m.typeId));
   return {
     message: `Took off ${added.length} keynotes and demolition items as ${ids.size} types`,
     checks,
-    apply: (q) => ({ ...q, types: [...q.types, ...fresh], measurements: [...q.measurements.filter((m) => !(m.source === 'demolition' && ids.has(m.typeId))), ...added] }),
+    apply: (q) => replaceRun(q, 'demolition', fresh, added),
   };
 }
 

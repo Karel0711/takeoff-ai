@@ -378,3 +378,71 @@ export function dashLines(segs: Segment[], maxDash: number): Segment[] {
   }
   return out;
 }
+
+/**
+ * Runs broken where the drawing breaks them (a label laid over a pipe, a fitting, a duct size
+ * tag) joined back up: a run whose end lines up with another's start (in line within `maxOff`,
+ * the gap no longer than `maxGap`) is one run. Only runs drawn along one line join end to end;
+ * a branch meeting a run at a corner stays its own.
+ */
+export function joinRuns(runs: Pt[][], maxGap: number, maxOff: number): Pt[][] {
+  const out = runs.map((r) => r.slice());
+  const dir = (a: Pt, b: Pt): Pt => {
+    const l = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+    return [(b[0] - a[0]) / l, (b[1] - a[1]) / l];
+  };
+  // How run `p`'s last stretch continues into `q` from its first point: in line, a short gap ahead.
+  const continues = (p: Pt[], q: Pt[]): boolean => {
+    const a = p[p.length - 2];
+    const b = p[p.length - 1];
+    const c = q[0];
+    const d = q[1];
+    const u = dir(a, b);
+    const v = dir(c, d);
+    if (u[0] * v[0] + u[1] * v[1] < 0.995) return false;
+    const along = (c[0] - b[0]) * u[0] + (c[1] - b[1]) * u[1];
+    const off = Math.abs((c[0] - b[0]) * -u[1] + (c[1] - b[1]) * u[0]);
+    return along >= -maxOff && along <= maxGap && off <= maxOff;
+  };
+  // Ends on a grid a gap across, so each end only looks at the runs near it.
+  const cell = Math.max(maxGap, 1);
+  const alive = out.map(() => true);
+  const grid = new Map<string, Set<number>>();
+  const key = (p: Pt) => `${Math.floor(p[0] / cell)},${Math.floor(p[1] / cell)}`;
+  const index = (i: number) => {
+    for (const p of [out[i][0], out[i][out[i].length - 1]]) {
+      const k = key(p);
+      if (!grid.has(k)) grid.set(k, new Set());
+      grid.get(k)!.add(i);
+    }
+  };
+  const near = (p: Pt) => {
+    const [cx, cy] = [Math.floor(p[0] / cell), Math.floor(p[1] / cell)];
+    const found = new Set<number>();
+    for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) for (const i of grid.get(`${cx + dx},${cy + dy}`) ?? []) if (alive[i]) found.add(i);
+    return found;
+  };
+  out.forEach((_, i) => index(i));
+  for (let i = 0; i < out.length; i++) {
+    if (!alive[i]) continue;
+    for (let grown = true; grown; ) {
+      grown = false;
+      for (const flip of [false, true]) {
+        // Grow from its end, then (turned round) from its start.
+        const p = flip ? out[i].slice().reverse() : out[i];
+        for (const j of near(p[p.length - 1])) {
+          if (j === i) continue;
+          const q = [out[j], out[j].slice().reverse()].find((c) => continues(p, c));
+          if (!q) continue;
+          out[i] = [...p.slice(0, -1), ...q.slice(1)];
+          alive[j] = false;
+          index(i);
+          grown = true;
+          break;
+        }
+        if (grown) break;
+      }
+    }
+  }
+  return out.filter((_, i) => alive[i]);
+}

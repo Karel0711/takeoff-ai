@@ -1,11 +1,11 @@
-import { chainRuns, ductSizes, pairParallels, sizeRuns, withoutSymbols, type DuctSize } from '../fill/runs';
+import { chainRuns, ductSizes, joinRuns, pairParallels, sizeRuns, withoutSymbols, type DuctSize } from '../fill/runs';
 import type { Segment } from '../fill/vectors';
 import { layerService, layerStatus, type LayerService, type LayerStatus } from '../layers';
 import { newId, type Measurement, type Project, type Pt, type Sheet, type TakeoffType } from '../model';
 import { tradeOfNumber } from '../sheetKind';
 import { titleBlockBox } from '../titleBlock';
 import { toLength } from '../units';
-import type { Automation } from './result';
+import { replaceRun, type Automation } from './result';
 import { pause, perSheet, PALETTE, type SetAccess } from './set';
 
 /**
@@ -120,6 +120,8 @@ export async function automateRuns(p: Project, access: SetAccess): Promise<RunsR
             continue;
           }
           const sized = sizeRuns(runs, sizes, unit, metric);
+          // Stretches of one size, joined back up where a fitting or a label broke them.
+          const bySize = new Map<string, { label: string; runs: Pt[][] }>();
           runs.forEach((r, k) => {
             const size = sized[k];
             const widthIn = r.width / unit;
@@ -143,13 +145,16 @@ export async function automateRuns(p: Project, access: SetAccess): Promise<RunsR
                   ? [{ id: newId(), name: 'Sheet metal (round, πD × L)', unit: metric ? 'm²' : 'SF', formula: 'L * 3.1416 * W' }]
                   : [{ id: newId(), name: h === null ? 'Sheet metal (est. square, 4W × L)' : 'Sheet metal (2(W + D) × L)', unit: metric ? 'm²' : 'SF', formula: h === null ? 'L * 4 * W' : 'L * 2 * (W + D)' }],
             }));
-            added.push(run(s, id, [r.a, r.b], size?.text ?? `~${Math.round(widthIn)}${metric ? ' mm' : '"'}`));
+            const b = bySize.get(id) ?? { label: size?.text ?? `~${Math.round(widthIn)}${metric ? ' mm' : '"'}`, runs: [] };
+            b.runs.push([r.a, r.b]);
+            bySize.set(id, b);
           });
+          for (const [id, b] of bySize) for (const r of joinRuns(b.runs, pt(0.9), pt(0.1))) added.push(run(s, id, r, b.label));
           continue;
         }
         // Pipes and conduit: runs of a foot (0.3 m) or more.
         // Symbols on the run's layer (valves, cleanouts, an extinguisher on a "Fire" layer) are not run.
-        const chains = chainRuns(withoutSymbols(g.segs, pt(2)), pt(0.3));
+        const chains = joinRuns(chainRuns(withoutSymbols(g.segs, pt(2)), pt(0.3)), pt(0.6), pt(0.05));
         const name = remove ? `Remove: ${g.svc.label.toLowerCase()}` : g.svc.label;
         const id = typeFor(p, fresh, name, () => ({
           kind: 'linear',
@@ -172,11 +177,10 @@ export async function automateRuns(p: Project, access: SetAccess): Promise<RunsR
   const unsized = added.filter((m) => /~/.test(m.label ?? '')).length;
   if (unsized) checks.push(`${unsized} duct stretch${unsized === 1 ? '' : 'es'} had no size label near them; their width was read off the plan. Check those sizes.`);
   checks.push('Ductwork and piping are measured along the runs on the plans: risers, drops and offsets up and down are not in the lengths. Fittings are not counted.');
-  const typeIds = new Set([...fresh.map((t) => t.id), ...added.map((m) => m.typeId)]);
   return {
     message: `Measured ${added.length} runs on ${layered} trade plan${layered === 1 ? '' : 's'} as ${new Set(added.map((m) => m.typeId)).size} types`,
     checks,
-    apply: (q) => ({ ...q, types: [...q.types, ...fresh], measurements: [...q.measurements.filter((m) => !(m.source === 'runs' && typeIds.has(m.typeId))), ...added] }),
+    apply: (q) => replaceRun(q, 'runs', fresh, added),
   };
 }
 

@@ -8,7 +8,7 @@ import type { PageText } from '../pageText';
 import { drawingTitles } from '../sheetScale';
 import { tradeOfNumber } from '../sheetKind';
 import { titleBlockBox } from '../titleBlock';
-import type { Automation } from './result';
+import { replaceRun, type Automation } from './result';
 import { pause, perSheet, PALETTE, type SetAccess } from './set';
 import { symbolTallies } from './symbols';
 
@@ -86,23 +86,43 @@ const TAG = (c: string) => /^[A-Za-z]{1,4}[-.]?\d{1,3}(?:\.\d{1,2})?[A-Za-z]?$/.
 
 type Hit = { sheet: Sheet; at: Pt; floor: string; remove: boolean };
 
-/** Counts per floor, the most any one plan of that floor shows, as the places to mark. */
-function perFloor(hits: Hit[]): { places: Map<string, Pt[]>; total: number } {
+/**
+ * Counts per floor, the most any one plan of that floor shows, as the places to mark. A unit of
+ * equipment (EF-1, CU-1) is one wherever it is drawn: its tag twice on a plan close together (on
+ * the unit and in a note by it) is one, and on two floors (a roof fan on the roof plan and again on
+ * the ductwork plan below) it counts on the floor that shows most of them.
+ */
+function perFloor(hits: Hit[], unit = false): { places: Map<string, Pt[]>; total: number } {
   const byFloor = new Map<string, Map<string, Hit[]>>();
   for (const h of hits) {
     const f = byFloor.get(h.floor) ?? new Map<string, Hit[]>();
     f.set(h.sheet.id, [...(f.get(h.sheet.id) ?? []), h]);
     byFloor.set(h.floor, f);
   }
+  const once = (list: Hit[]) => {
+    if (!unit) return list;
+    // Within 20 ft (6 m) of one already kept: the same unit.
+    const r = 6 / (list[0].sheet.metersPerPoint || 0.0035);
+    const kept: Hit[] = [];
+    for (const h of list) if (!kept.some((k) => Math.hypot(k.at[0] - h.at[0], k.at[1] - h.at[1]) < r)) kept.push(h);
+    return kept;
+  };
+  const floors = [...byFloor.values()].map((sheets) => [...sheets.values()].map(once).sort((a, b) => b.length - a.length)[0]);
+  const chosen = unit ? [floors.sort((a, b) => b.length - a.length)[0]] : floors;
   const places = new Map<string, Pt[]>();
   let total = 0;
-  for (const sheets of byFloor.values()) {
-    const best = [...sheets.values()].sort((a, b) => b.length - a.length)[0];
+  for (const best of chosen) {
     total += best.length;
     places.set(best[0].sheet.id, [...(places.get(best[0].sheet.id) ?? []), ...best.map((h) => h.at)]);
   }
   return { places, total };
 }
+
+/** Schedule tags that are not units of equipment: grilles and diffusers, plumbing fixtures, drains (counted wherever drawn). */
+const MANY = /^(D|R|E|S|DG|T|G|SG|RG|EG|SD|RD|ED|WC|L|LAV|TS|SV|SH|WS|LT|FD|FFD|U|UR|MS|DF|HB|CO|FCO|TP|SK|BFP|P)$/;
+
+/** Lettering a legend gives as a modifier on another symbol (TR on a receptacle), not a device of its own. */
+const MODIFIER = /^(TAMPER[- ]?RESISTANT|GROUND[- ]?FAULT|WIRE ?GUARD|WEATHER ?PROOF|ISOLATED GROUND|SURGE PROTECTED|CEILING MOUNTED|WALL MOUNTED|EXISTING|RELOCATED|NEW|REMOVED|DEMOLISHED|EMERGENCY POWER|ABOVE COUNTER|UNSWITCHED|SWITCHED|DEDICATED)\b(?!.*\b(DETECTOR|SENSOR|SWITCH|STATION|RELAY|PANEL|CAMERA|READER|BUTTON|SPEAKER|LIGHT|FIXTURE)\b)/i;
 
 /**
  * The tag column of each schedule on a sheet: under a heading naming a schedule ("PLUMBING FIXTURE
@@ -125,10 +145,14 @@ export function scheduleTags(texts: PageText[]): { code: string; description: st
     const keys = new Map<number, PageText[]>();
     for (const t of below) for (const k of [Math.round(t.cx - t.w / 2), 10000 + Math.round(t.cx)]) keys.set(k, [...(keys.get(k) ?? []), t]);
     const col = [...keys.values()].sort((p, q) => q.length - p.length)[0];
-    if (!col || col.length < 2) continue;
+    if (!col) continue;
+    // One row (a single ERV or make-up air unit): its tag just under the heading, with a number.
+    if (col.length < 2 && !(/\d/.test(col[0].str) && col[0].cy - head.cy < head.h * 20)) continue;
     const ref = col[0];
-    const byLeft = Math.abs(col[1].cx - col[1].w / 2 - (ref.cx - ref.w / 2)) <= 1;
-    const rows = below.filter((t) => (byLeft ? Math.abs(t.cx - t.w / 2 - (ref.cx - ref.w / 2)) <= 2 : Math.abs(t.cx - ref.cx) <= 2)).sort((p, q) => p.cy - q.cy);
+    // Rows lined up on the column's left edge, or centred in it (WC-1 and L-1 in one centred column).
+    const left = ref.cx - ref.w / 2;
+    const mid = col.reduce((n, t) => n + t.cx, 0) / col.length;
+    const rows = below.filter((t) => Math.abs(t.cx - t.w / 2 - left) <= 2 || Math.abs(t.cx - mid) <= 2.5).sort((p, q) => p.cy - q.cy);
     const schedule = head.str.replace(/\s+/g, ' ').trim();
     for (const r of rows) {
       const code = r.str.trim();
@@ -223,10 +247,10 @@ export async function automateTrades(p: Project, access: SetAccess): Promise<Tra
     return segCache.get(s.id)!;
   };
 
-  type Count = { name: string; division: string; hits: Hit[] };
+  type Count = { name: string; division: string; hits: Hit[]; unit: boolean };
   const counts = new Map<string, Count>();
-  const add = (name: string, division: string, h: Hit) => {
-    const c = counts.get(name) ?? { name, division, hits: [] };
+  const add = (name: string, division: string, h: Hit, unit = false) => {
+    const c = counts.get(name) ?? { name, division, hits: [], unit };
     c.hits.push(h);
     counts.set(name, c);
   };
@@ -272,7 +296,7 @@ export async function automateTrades(p: Project, access: SetAccess): Promise<Tra
     if (!segs) continue;
     const box = titleBlockBox(i.texts, i.sheet.width, i.sheet.height);
     for (const l of findLegends(i.texts, segs, i.sheet.width, i.sheet.height, box ? [box] : []))
-      for (const r of l.rows) if (r.tag && !r.graphic && !lettered.has(r.tag) && !/^(EXISTING|EX\b|NEW\b)/i.test(r.label)) lettered.set(r.tag, { label: r.label.replace(/\s+/g, ' ').trim().slice(0, 60), disc: i.disc });
+      for (const r of l.rows) if (r.tag && !r.graphic && !lettered.has(r.tag) && !/^(EXISTING|EX\b|NEW\b)/i.test(r.label) && !MODIFIER.test(r.label.trim())) lettered.set(r.tag, { label: r.label.replace(/\s+/g, ' ').trim().slice(0, 60), disc: i.disc });
   }
 
   // 3. Items the trades' schedules list by tag, and light fixtures by type, per discipline.
@@ -323,7 +347,7 @@ export async function automateTrades(p: Project, access: SetAccess): Promise<Tra
         // A code in a sentence ("CONNECT TO CU-1") is a reference, not the item.
         if (str.split(/\s+/).length > 3) continue;
         if ((await judge(s, cat, Math.max(6, t.h * 3))) !== 'new') continue;
-        add(`${code}${it.description ? ` – ${it.description}` : ''}`, d === 'S' ? (guessDivision(it.description) ?? division) : division, { sheet: s, at: cat, floor: i.floor, remove: false });
+        add(`${code}${it.description ? ` – ${it.description}` : ''}`, d === 'S' ? (guessDivision(it.description) ?? division) : division, { sheet: s, at: cat, floor: i.floor, remove: false }, !MANY.test(familyOf(code)));
       }
     }
   }
@@ -349,13 +373,18 @@ export async function automateTrades(p: Project, access: SetAccess): Promise<Tra
     }
   }
 
+  // A mechanical device the electrical legend draws too (a thermostat, a humidistat) is counted off
+  // the mechanical plans when they show it: once, not once per trade.
+  const MECH_DEVICE = /\b(THERMOSTATS?|HUMIDISTATS?|CO2 SENSORS?|TEMPERATURE SENSORS?)\b/i;
+  const mechHas = [...counts.values()].some((c) => MECH_DEVICE.test(c.name) && c.hits.some((h) => info.get(h.sheet.id)?.disc !== 'E'));
+  if (mechHas) for (const [k, c] of counts) if (MECH_DEVICE.test(c.name) && c.hits.every((h) => info.get(h.sheet.id)?.disc === 'E')) counts.delete(k);
   if (!counts.size) return { message: 'Nothing counted on the mechanical and electrical plans.', checks };
   const fresh: TakeoffType[] = [];
   const added: Measurement[] = [];
   const typeIds: string[] = [];
   const sorted = [...counts.values()].sort((a, b) => a.division.localeCompare(b.division) || familyOf(a.name).localeCompare(familyOf(b.name)) || a.name.localeCompare(b.name, undefined, { numeric: true }));
   for (const c of sorted) {
-    const { places, total } = perFloor(c.hits);
+    const { places, total } = perFloor(c.hits, c.unit);
     if (!total) continue;
     let t = p.types.find((x) => x.kind === 'count' && x.name === c.name);
     if (!t) {
@@ -368,11 +397,10 @@ export async function automateTrades(p: Project, access: SetAccess): Promise<Tra
   checks.push(
     'Mechanical and electrical counts come from the trades\' legends, schedules and fixture type letters. Symbols drawn as text only (a switch "$") and items written as notes ("TYP. OF 4") are not counted: check the counts against the plans before relying on a sub\'s quantities.',
   );
-  const ids = new Set(typeIds);
   return {
     message: `Counted ${added.length} mechanical and electrical items as ${typeIds.length} types`,
     checks,
-    apply: (q) => ({ ...q, types: [...q.types, ...fresh], measurements: [...q.measurements.filter((m) => !(m.source === 'trades' && ids.has(m.typeId))), ...added] }),
+    apply: (q) => replaceRun(q, 'trades', fresh, added),
   };
 }
 

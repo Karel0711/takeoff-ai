@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { keynoteList } from '../src/automate/keynotes';
 import { blobs, scheduleTags } from '../src/automate/trades';
-import { chainRuns, dashLines, ductSizes, pairParallels, sizeRuns, withoutSymbols } from '../src/fill/runs';
+import { chainRuns, dashLines, ductSizes, joinRuns, pairParallels, sizeRuns, withoutSymbols } from '../src/fill/runs';
 import type { Segment } from '../src/fill/vectors';
 import { baseLayer, isBackground, layerService, layerStatus } from '../src/layers';
 import type { PageText } from '../src/pageText';
@@ -102,5 +102,33 @@ describe('schedules and keynotes', () => {
   it('finds each fixture drawn on a demolition layer once', () => {
     const fixture = (x: number, sub: number) => [seg(x, 0, x + 10, 0, { sub }), seg(x + 10, 0, x + 10, 20, { sub }), seg(x + 10, 20, x, 20, { sub }), seg(x, 20, x, 0, { sub })];
     expect(blobs([...fixture(0, 1), ...fixture(100, 2), seg(2, 2, 8, 18, { sub: 3 })], 3, 5, 60)).toHaveLength(2);
+  });
+});
+
+describe('joining runs', () => {
+  it('joins runs broken in line and leaves a branch alone', () => {
+    const joined = joinRuns(
+      [
+        [
+          [0, 0],
+          [50, 0],
+        ],
+        [
+          [55, 0],
+          [100, 0],
+        ],
+        [
+          [100, 5],
+          [100, 60],
+        ],
+      ],
+      10,
+      1,
+    );
+    expect(joined).toHaveLength(2);
+    expect(joined[0]).toEqual([
+      [0, 0],
+      [100, 0],
+    ]);
   });
 });
