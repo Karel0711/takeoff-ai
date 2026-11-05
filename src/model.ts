@@ -20,6 +20,14 @@ export interface Doc {
   name: string;
   /** The building its sheets are for (unset: read from the file name). */
   building?: string;
+  /** The drawing heading/folder this file is filed under in the sheet panel. */
+  sheetGroupId?: string;
+}
+
+/** A named heading that drawing files (docs) can be filed under in the sheet panel. */
+export interface SheetGroup {
+  id: string;
+  name: string;
 }
 
 /** Where a sheet's scale came from; 'verified' is a detected scale its dimension strings confirmed. */
@@ -69,7 +77,7 @@ export interface TakeoffType {
   name: string;
   color: string;
   kind: Kind;
-  /** Wall or room height in project length units; drives A = L × H for linear types. */
+  /** Wall or room height in project length units; drives A = L Ã H for linear types. */
   height: number;
   /** Other sizes the assembly formulas can use (W, D, T), in project length units: a footing's width and depth, a slab's thickness. */
   width?: number;
@@ -78,13 +86,13 @@ export interface TakeoffType {
   items: AssemblyItem[];
   /** Wall takeoff stops this partition type at door openings (the estimator measures it without them). */
   stopsAtDoors?: boolean;
-  /** A length type whose total is shown as its area (length × height), as wall finishes are priced. */
+  /** A length type whose total is shown as its area (length Ã height), as wall finishes are priced. */
   headline?: 'area';
   /** Estimate division the type is priced in, e.g. "09 Finishes". */
   division?: string;
   /** Subtrade package it is grouped under, e.g. "Drywall / ceiling sub". */
   package?: string;
-  /** Assembly heading as scheduled, e.g. "TYPICAL INTERIOR WALL – 1HR F.R.R.". */
+  /** Assembly heading as scheduled, e.g. "TYPICAL INTERIOR WALL â 1HR F.R.R.". */
   assemblyTitle?: string;
   /** Assembly build-up, e.g. the layers from the legend. */
   description?: string;
@@ -155,7 +163,7 @@ export interface Measurement {
   ceilingHeight?: number;
   /**
    * Walls finished more than one way (a schedule with a column per wall: tile on two walls,
-   * paint on two): the share of the room's walls each wall finish type takes, by type id. Used
+   * paint on two: the share of the room's walls each wall finish type takes, by type id. Used
    * while it includes `finishes.walls`; a wall finish picked by hand replaces it.
    */
   wallShares?: Record<string, number>;
@@ -182,6 +190,8 @@ export interface Project {
   types: TakeoffType[];
   /** Groups the takeoff types are filed in, in the order they are listed. */
   groups?: TakeoffGroup[];
+  /** Named headings that drawing files (docs) can be organised under in the sheet panel. */
+  sheetGroups?: SheetGroup[];
   measurements: Measurement[];
 }
 
@@ -201,8 +211,8 @@ export const doorHeight = (units: Units) => (units === 'metric' ? 2.1 : 7);
 export function defaultTypes(units: Units): TakeoffType[] {
   const m = units === 'metric';
   const len = m ? 'm' : 'ft';
-  const area = m ? 'm²' : 'SF';
-  // Stud spacing, board sheet area (4×8), standard wall height.
+  const area = m ? 'mÂ²' : 'SF';
+  // Stud spacing, board sheet area (4Ã8), standard wall height.
   const s610 = m ? 0.61 : 2;
   const s406 = m ? 0.406 : 1.333;
   const sheet = m ? 2.973 : 32;
@@ -217,7 +227,7 @@ export function defaultTypes(units: Units): TakeoffType[] {
   return [
     {
       id: newId(),
-      name: `W1 – Interior wall (${stud} steel stud ${at610}, ${gwb} GWB both sides)`,
+      name: `W1 â Interior wall (${stud} steel stud ${at610}, ${gwb} GWB both sides)`,
       color: '#e4572e',
       kind: 'linear',
       height: h,
@@ -228,13 +238,13 @@ export function defaultTypes(units: Units): TakeoffType[] {
         item(`${stud} steel studs`, 'ea', `ceil(L / ${s610}) + N`),
         item(`${stud} track (top + bottom)`, len, '2 * L'),
         item(`${gwb} GWB, 2 sides + 10% waste`, area, '2 * A * 1.1'),
-        item('GWB sheets 4×8', 'ea', `ceil(2 * A * 1.1 / ${sheet})`),
+        item('GWB sheets 4Ã8', 'ea', `ceil(2 * A * 1.1 / ${sheet})`),
         item('Tape & finish', area, '2 * A'),
       ],
     },
     {
       id: newId(),
-      name: `FR1 – Exterior wall furring (${furring} stud ${at406}, ${gwb} GWB)`,
+      name: `FR1 â Exterior wall furring (${furring} stud ${at406}, ${gwb} GWB)`,
       color: '#17bebb',
       kind: 'linear',
       height: h,
@@ -271,7 +281,7 @@ export function defaultTypes(units: Units): TakeoffType[] {
       package: 'Drywall & ceiling sub',
       items: [
         item('Ceiling area', area, 'A'),
-        item('Wall paint (perimeter × height, less door openings)', area, `P * H - O * ${doorHeight(units)}`),
+        item('Wall paint (perimeter Ã height, less door openings)', area, `P * H - O * ${doorHeight(units)}`),
       ],
     },
     {
@@ -290,23 +300,23 @@ export function defaultTypes(units: Units): TakeoffType[] {
 export function finishType(role: FinishRole, code: string, units: Units, color: string): TakeoffType {
   const m = units === 'metric';
   const len = m ? 'm' : 'ft';
-  const area = m ? 'm²' : 'SF';
+  const area = m ? 'mÂ²' : 'SF';
   const h = m ? 3.0 : 10;
   const base = { id: newId(), color, height: h, division: '09 Finishes' };
   switch (role) {
     case 'floor':
-      return { ...base, name: `${code} – Floor finish`, kind: 'area', package: 'Flooring sub', items: [item('Floor area', area, 'A'), item('Floor finish + 10% waste', area, 'A * 1.1')] };
+      return { ...base, name: `${code} â Floor finish`, kind: 'area', package: 'Flooring sub', items: [item('Floor area', area, 'A'), item('Floor finish + 10% waste', area, 'A * 1.1')] };
     case 'base':
-      return { ...base, name: `${code} – Base`, kind: 'linear', package: 'Flooring sub', items: [item('Base', len, 'L'), item('Base + 5% waste', len, 'L * 1.05')] };
+      return { ...base, name: `${code} â Base`, kind: 'linear', package: 'Flooring sub', items: [item('Base', len, 'L'), item('Base + 5% waste', len, 'L * 1.05')] };
     case 'walls':
-      return { ...base, name: `${code} – Wall finish`, kind: 'linear', headline: 'area', package: 'Painting sub', items: [item('Wall finish area (perimeter × height, less door openings)', area, 'A')] };
+      return { ...base, name: `${code} â Wall finish`, kind: 'linear', headline: 'area', package: 'Painting sub', items: [item('Wall finish area (perimeter Ã height, less door openings)', area, 'A')] };
     case 'ceiling':
-      return { ...base, name: `${code} – Ceiling`, kind: 'area', package: 'Drywall & ceiling sub', items: [item('Ceiling area', area, 'A'), item('Perimeter trim', len, 'P')] };
+      return { ...base, name: `${code} â Ceiling`, kind: 'area', package: 'Drywall & ceiling sub', items: [item('Ceiling area', area, 'A'), item('Perimeter trim', len, 'P')] };
   }
 }
 
 /**
- * A new, empty project. It starts with no takeoff types: you add your own, copy them from
+ * A new, empty project. It starts with no takeoff types: uou add your own, copy them from
  * another project or the trade library, or set a starting set under More (`defaultTypes`
  * is only for the sample plan and tests).
  */
