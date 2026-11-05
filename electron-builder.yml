@@ -1,7 +1,7 @@
 # Desktop app packaging (npm run desktop:mac / desktop:win; built by .github/workflows/desktop.yml).
-appId: ca.mmaconstruction.takeoffai
-productName: Takeoff AI
-copyright: MMA Construction
+appId: mu.hub.kara.takeoff
+productName: KARA Takeoff
+copyright: The Hub Real Estate
 directories:
   output: release
 # The web app is already bundled into dist; the main process needs only Electron and Node.
@@ -21,14 +21,14 @@ mac:
   hardenedRuntime: false
   gatekeeperAssess: false
 dmg:
-  artifactName: Takeoff-AI-Mac-${arch}.${ext}
+  artifactName: KARA-Takeoff-Mac-${arch}.${ext}
 win:
   target:
-    - target: nsis
+    - target: portable
       arch: [x64]
   icon: public/icon-512.png
 nsis:
-  artifactName: Takeoff-AI-Windows-Setup.${ext}
+  artifactName: KARA-Takeoff-Setup.${ext}
   oneClick: false
   perMachine: false
   allowToChangeInstallationDirectory: true
