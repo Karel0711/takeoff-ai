@@ -1,4 +1,5 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ExploreHost } from './explore/ExploreHost';
+import { Fragment, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { diffProjects, type ActivityEvent } from './activity';
 import { AiAssembliesDialog } from './components/AiAssembliesDialog';
 import { AiSettingsDialog } from './components/AiSettingsDialog';
@@ -34,11 +35,25 @@ import { checkScale, type ScaleCheck } from './scaleCheck';
 import { sheetImage } from './sheetImage';
 import { compareSheets } from './compareSheets';
 import { pageTexts, type PageText } from './pageText';
+import type { RevisionAccess } from './build/sources';
 import { readTitleBlock, titleBlockBox } from './titleBlock';
-import { middleOf, roomLocator } from './locate';
+import { middleOf } from './locate';
 import { buildingOfDoc, buildingsOf, fileLabel, onBuilding, quantitySections, type QtyGrouping } from './buildings';
 import { isHosted, saveFile } from './host';
-import { defaultTypes, newId, newProject, type Kind, type Measurement, type Project, type Pt, type Sheet, type TakeoffType, type Units } from './model';
+import { RoomFinder } from './workers/rooms';
+import { FollowBar, LinksBar, TagCard, kindColor, linkTitle } from './components/LinksPanel';
+import { DrawingMap } from './components/DrawingMap';
+import { ProjectMap } from './components/ProjectMap';
+import { SpecView, type SpecTarget } from './components/SpecView';
+import { FileManager } from './components/FileManager';
+import { addendumNumber, mergeSections, readSpec } from './spec/parse';
+import { isCombined, pageKinds, pagesOf, splitPdf } from './splitPdf';
+import { ocrTitleBlock, pageOcr, tidySetNumbers } from './ocr';
+import { withOcrText, type OcrTextOptions } from './ocrText';
+import { buildProjectMap } from './spec/links';
+import { buildGraph, definitionsOf, type DrawingGraph, type Link, type Place } from './graph/graph';
+import { entries, norm, type Entry } from './smart/index';
+import { defaultTypes, filesOf, newId, newProject, type SpecDoc, type Kind, type Measurement, type Project, type Pt, type Sheet, type TakeoffType, type Units } from './model';
 import { openPdf, type PDFDocumentProxy, type PDFPageProxy } from './pdf';
 import { measurementVars, primaryOf, primaryUnit, sheetRepeat, typeTotals, type TypeTotals } from './quantities';
 import { clearStarterTypes, deleteProject, listProjects, type ProjectSummary, loadActivity, loadCurrentProject, deletePdf, loadPdf, loadProjectById, loadStarterTypes, persistStorage, saveActivity, savePdf, saveProject, saveStarterTypes, setStorageHooks, getSyncMark, setSyncMark } from './storage';
@@ -48,10 +63,15 @@ import { polylineLength, ringArea } from './geometry';
 import { scoringOn, setScoringOn } from './scoring';
 import { desktopApi, folderLabel } from './desktop';
 import { ConnectAiDialog } from './components/ConnectAiDialog';
+import { ChatPanel } from './components/ChatPanel';
+// Build It and its 3D viewer load only when opened.
+const BuildView = lazy(() => import('./components/BuildView'));
 import { runTool, toolList, TOOL_DEFS, type McpContext } from './mcp/tools';
+import type { ModelView } from './scene3d/render';
 import { renderRegion } from './mcp/render';
 import { reviewText, takeOffWholeSet } from './automate/wholeSet';
-import { FolderSync, type PullResult } from './folderSync';
+import type { PullResult } from './folderSync';
+import { FolderRouter } from './linkedFolders';
 import { linesIn, onSheet, readNumber, readTitle, relativeBox, type Box } from './sheetNumbers';
 import { SheetNumbersDialog, type SheetNumberRow } from './components/SheetNumbersDialog';
 import { SymbolCountDialog, type SymbolChoice } from './components/SymbolCountDialog';
@@ -72,6 +92,10 @@ import { doorTakeoff, findDoorTagsIn } from './automate/doors';
 import { automateWindows as windowTakeoff } from './automate/windows';
 import { applyRooms } from './automate/rooms';
 import { applyWalls, wallLegendFor } from './automate/walls';
+
+
+/** OCR in the app: flattened sets only, and a set whose sheet takes over 90 s is left to its own text (opening never stalls). */
+const APP_OCR: OcrTextOptions = { flattenedOnly: true, timeoutMs: 90_000 };
 
 const UNDO_LIMIT = 200;
 
@@ -134,6 +158,12 @@ export function App() {
   const [page, setPage] = useState<PDFPageProxy | null>(null);
   const [activeTypeId, setActiveTypeId] = useState<string | null>(null);
   const [editingTypeId, setEditingTypeId] = useState<string | null>(null);
+  /** The type as it was when its editor opened, so Cancel can put it back. */
+  const editSnapshot = useRef<{ id: string; json: string } | null>(null);
+  useEffect(() => {
+    const t = editingTypeId ? projectRef.current?.types.find((x) => x.id === editingTypeId) : null;
+    editSnapshot.current = t ? { id: t.id, json: JSON.stringify(t) } : null;
+  }, [editingTypeId]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   /** Drawing files folded shut in the sheet list. */
   const [collapsedDocs, setCollapsedDocs] = useState<Set<string>>(new Set());
@@ -145,8 +175,15 @@ export function App() {
   const [dropOn, setDropOn] = useState<string | null>(null);
   /** Takeoffs picked together (Box select), on the open sheet. */
   const [multiIds, setMultiIds] = useState<string[]>([]);
+  /** Takeoffs to pick once the sheet they are on has opened (a type clicked in the takeoff list). */
+  const pickOnOpen = useRef<string[] | null>(null);
   // A selection belongs to its sheet.
-  useEffect(() => setMultiIds([]), [sheetId]);
+  useEffect(() => {
+    setMultiIds(pickOnOpen.current ?? []);
+    pickOnOpen.current = null;
+  }, [sheetId]);
+  /** The type picked on the left, its takeoffs shown on the drawing and in the takeoff list (view only). */
+  const [litTypeId, setLitTypeId] = useState<string | null>(null);
   const [focus, setFocus] = useState<{ id?: string; box?: [number, number, number, number]; n: number } | null>(null);
   /** Text runs per drawing page, read once for the sheet search. */
   const textCache = useRef(new Map<string, PageText[]>());
@@ -158,6 +195,30 @@ export function App() {
   const [wholeSetReport, setWholeSetReport] = useState<{ text: string; rfis: string } | null>(null);
 
   const [busy, setBusy] = useState<string | null>(null);
+  /** Linked drawings: the set read into a graph of what points at what, its links clickable on every sheet. */
+  const [linksOn, setLinksOn] = useState(false);
+  const [graphState, setGraphState] = useState<{ graph: DrawingGraph; key: string } | null>(null);
+  const graphRef = useRef<{ graph: DrawingGraph; key: string } | null>(null);
+  const graphBuilding = useRef(false);
+  /** The last link followed: where it went, and which of its places is shown. */
+  const [trail, setTrail] = useState<{ label: string; to: Place[]; i: number; entry?: Entry } | null>(null);
+  const [cardEntry, setCardEntry] = useState<Entry | null>(null);
+  const [mapOpen, setMapOpen] = useState(false);
+  /** The workspace shown: the drawings, the specification, or the map tying them together. */
+  const [view, setView] = useState<'drawings' | 'specs' | 'map' | 'build'>('drawings');
+  const [specTarget, setSpecTarget] = useState<SpecTarget | null>(null);
+  const [specReading, setSpecReading] = useState<{ name: string; page: number; of: number } | null>(null);
+  const [mapFocus, setMapFocus] = useState<{ id: string; n: number } | null>(null);
+  const specPdfs = useRef(new Map<string, Promise<PDFDocumentProxy | null>>());
+  const specInput = useRef<HTMLInputElement>(null);
+  const [filesOpen, setFilesOpen] = useState(false);
+  const [chatOpen, setChatOpen] = useState(false);
+  const [flash, setFlash] = useState<{ sheetId: string; box: Box; n: number } | null>(null);
+  /** Where you were before each link followed (Back), and where Back came from (Forward). */
+  const navBack = useRef<{ sheetId: string; box: Box }[]>([]);
+  const navFwd = useRef<{ sheetId: string; box: Box }[]>([]);
+  const navHere = useRef<{ sheetId: string; box: Box } | null>(null);
+  const [, setNavTick] = useState(0);
   const [toast, setToastState] = useState<Toast | null>(null);
   /** The latest chooseTool, for the keyboard handler. */
   const chooseToolRef = useRef<(id: Tool) => void>(() => {});
@@ -196,9 +257,12 @@ export function App() {
   const [persisted, setPersisted] = useState(false);
   /** Desktop app: the shared projects folder (iCloud Drive), and its sync. */
   const [syncFolder, setSyncFolder] = useState<string | null>(null);
-  const folderSync = useRef<FolderSync | null>(null);
+  const folderSync = useRef<FolderRouter | null>(null);
+  /** Projects opened from another folder (shared or local), by id: that folder, to say so. */
+  const [linkedFolders, setLinkedFolders] = useState<Map<string, string>>(new Map());
   /** MCP: the app as the AI's tools see it (set each render), and the calls waiting their turn. */
   const mcpCtxRef = useRef<McpContext | null>(null);
+  const [exploreOpen, setExploreOpen] = useState(false);
   const mcpQueue = useRef<Promise<unknown>>(Promise.resolve());
   /** Desktop app with no projects folder yet (or one that went missing): the setup screen. */
   const [folderSetup, setFolderSetup] = useState<{ suggested: string; iCloud: boolean; missing: string | null } | null>(null);
@@ -206,8 +270,9 @@ export function App() {
   const flushAllRef = useRef<() => Promise<void>>(async () => undefined);
   /** From now on, keeps projects in `folder` too: each save is sent there, each delete trashed there. */
   function startFolderSync(folder: string) {
-    const sync = new FolderSync(desktopApi!, { listProjects, loadProjectById, saveProject, loadActivity, saveActivity, loadPdf, savePdf, getSyncMark, setSyncMark });
+    const sync = new FolderRouter(desktopApi!, { listProjects, loadProjectById, saveProject, loadActivity, saveActivity, loadPdf, savePdf, getSyncMark, setSyncMark }, desktopApi!.linked ?? null);
     folderSync.current = sync;
+    void sync.refresh().then((list) => setLinkedFolders(new Map(list.map((e) => [e.id, e.root])))).catch(() => undefined);
     setSyncFolder(folder);
     setStorageHooks({ saved: (id) => sync.pushSoon(id), deleted: (id) => void sync.remove(id) });
   }
@@ -230,7 +295,8 @@ export function App() {
     const opened = new Map<string, PDFDocumentProxy>();
     for (const doc of p.docs) {
       const data = await loadPdf(doc.id);
-      if (data) opened.set(doc.id, await openPdf(data));
+      // Pages with no text of their own (lettering drawn as linework) are read by OCR when a tool first reads them.
+      if (data) opened.set(doc.id, withOcrText(await openPdf(data), pageOcr, APP_OCR));
     }
     const log = p.id ? await loadActivity(p.id) : [];
     past.current = [];
@@ -245,6 +311,7 @@ export function App() {
     setProject(p);
     setSheetId(p.sheets[0]?.id ?? null);
     setActiveTypeId(null);
+    setLitTypeId(null);
     setEditingTypeId(null);
     setSelectedId(null);
     setTool('select');
@@ -307,6 +374,86 @@ export function App() {
   }, [project]);
 
   const sheet = project?.sheets.find((s) => s.id === sheetId) ?? null;
+  const graphKey = project ? project.sheets.filter((s) => !s.superseded).map((s) => s.id).join(',') : '';
+  // The last reading, while a newer one (drawings added) is under way.
+  const graph = graphState ? graphState.graph : null;
+  const graphDict = useMemo(() => (graph ? entries(graph.index) : new Map<string, Entry>()), [graph]);
+  const graphByKey = useMemo(() => new Map([...graphDict.values()].map((e) => [e.key, e] as const)), [graphDict]);
+  const defsOf = useCallback((e: Entry) => (graph ? definitionsOf(e, graph) : []), [graph]);
+  const sheetLinks = linksOn && graph && sheet ? (graph.links[sheet.id] ?? []) : [];
+  // The spec tied to the drawings: built when the spec or the map is looked at.
+  const specBooks = useMemo(() => (project?.specs ?? []).flatMap((d) => (d.book ? [d.book] : [])), [project?.specs]);
+  const buildSections = useMemo(() => mergeSections(specBooks), [specBooks]);
+  // Text for Build It: a spec page's (its time requirements), a sheet's (its title block).
+  const specTextOf = useCallback(async (docId: string, page: number) => {
+    const pdf = await specPdfOf(docId);
+    if (!pdf) return '';
+    return (await pageTexts(await pdf.getPage(page)).catch(() => [])).map((t) => t.str).join(' ');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  // A region of a sheet as an image, with its takeoffs drawn (Build It's drawing blow-ups).
+  const renderSheetRegion = useCallback(async (sheetId: string, box: [number, number, number, number], scale: number) => {
+    const sh = projectRef.current?.sheets.find((x) => x.id === sheetId);
+    const pdf = sh ? pdfsRef.current.get(sh.docId) : undefined;
+    if (!sh || !pdf) throw new Error('The drawing is not on this computer.');
+    return renderRegion(await pdf.getPage(sh.page), sh, projectRef.current!, box, scale, true);
+  }, []);
+  const buildSheetLines = useCallback(async (sheetId: string) => {
+    const sh = projectRef.current?.sheets.find(s => s.id === sheetId);
+    const pdf = sh ? pdfsRef.current.get(sh.docId) : undefined;
+    if (!sh || !pdf) return [];
+    return segmentsOf(await pdf.getPage(sh.page));
+  }, []);
+  // Addendum files kept with the specifications re-issue drawing sheets (Kelso's Addendum 5
+  // carries the structural set re-issued): Build It reads those pages too.
+  const buildRevisions = useMemo<RevisionAccess>(
+    () => ({
+      pages: async (docId) => (await specPdfOf(docId))?.numPages ?? 0,
+      size: async (docId, page) => {
+        const pdf = await specPdfOf(docId);
+        if (!pdf) return null;
+        const vp = (await pdf.getPage(page)).getViewport({ scale: 1 });
+        return { width: vp.width, height: vp.height };
+      },
+      text: async (docId, page) => {
+        const pdf = await specPdfOf(docId);
+        return pdf ? pageTexts(await pdf.getPage(page)).catch(() => []) : [];
+      },
+      lines: async (docId, page) => {
+        const pdf = await specPdfOf(docId);
+        return pdf ? segmentsOf(await pdf.getPage(page)) : [];
+      },
+    }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
+  const sheetTextOf = useCallback(async (sheetId: string) => {
+    const sh = projectRef.current?.sheets.find((x) => x.id === sheetId);
+    const pdf = sh ? pdfsRef.current.get(sh.docId) : undefined;
+    if (!sh || !pdf) return [];
+    return pageTexts(await pdf.getPage(sh.page)).catch(() => []);
+  }, []);
+  // The spec and the map use the drawings' graph; Build It doesn't, so opening it doesn't read
+  // the whole set into one (that held the window up for half a minute on a big set).
+  const linkedView = view === 'specs' || view === 'map';
+  const projectMap = useMemo(
+    () => (linkedView && project && (specBooks.length || graph) ? buildProjectMap(graph, specBooks, project.sheets, graph?.specRefs ?? [], project.docs) : null),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [linkedView, graph, specBooks, project?.sheets],
+  );
+  if (import.meta.env.DEV) (window as unknown as { __pmap: unknown; __graph: unknown }).__pmap = projectMap;
+  if (import.meta.env.DEV) (window as unknown as { __pmap: unknown; __graph: unknown }).__graph = graph;
+  const sheetByNumber = useMemo(() => new Map((project?.sheets ?? []).filter((s) => !s.superseded && /\d/.test(s.name)).map((s) => [norm(s.name), s])), [project?.sheets]);
+  // The spec or the map open: the drawings are read into their graph for it (again when drawings come or go).
+  useEffect(() => {
+    if (linkedView && graphKey && !graphBuilding.current && graphRef.current?.key !== graphKey) void openLinks();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view, graphKey]);
+  // Drawings added or removed while links are on: read the set again.
+  useEffect(() => {
+    if (linksOn && !graphBuilding.current && graphRef.current?.key !== graphKey && graphKey) void openLinks();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [graphKey]);
 
   // A sheet with almost no linework is a scanned image: the automatic tools can't read it.
   const [scanned, setScanned] = useState<{ sheetId: string; dismissed: boolean } | null>(null);
@@ -471,12 +618,13 @@ export function App() {
   const [rooms, setRooms] = useState<Map<string, string | null>>(new Map());
   const roomsRef = useRef(rooms);
   roomsRef.current = rooms;
-  const locators = useRef(new Map<string, Promise<(at: Pt) => string | null>>());
+  const roomFinder = useRef<RoomFinder | null>(null);
   const placeKey = (m: Measurement) => `${m.id}:${m.points.length}:${m.points[0]?.[0]},${m.points[0]?.[1]}`;
   useEffect(() => {
     if (!project) return;
     let stop = false;
     const t = window.setTimeout(async () => {
+      roomFinder.current ??= new RoomFinder();
       const todo = new Map<string, Measurement[]>();
       for (const m of project.measurements) {
         if (roomsRef.current.has(placeKey(m))) continue;
@@ -484,26 +632,30 @@ export function App() {
         if (list) list.push(m);
         else todo.set(m.sheetId, [m]);
       }
-      for (const [sid, ms] of todo) {
+      // The open sheet first: its takeoffs are the ones on screen.
+      const order = [...todo.keys()].sort((a, b) => Number(b === sheetIdRef.current) - Number(a === sheetIdRef.current));
+      for (const sid of order) {
+        const ms = todo.get(sid)!;
         if (stop) return;
         const s = project.sheets.find((x) => x.id === sid);
         if (!s || !pdfsRef.current.get(s.docId)) continue;
         const key = `${s.docId}:${s.page}:${s.metersPerPoint ?? ''}`;
-        let loc = locators.current.get(key);
-        if (!loc) {
-          loc = (async () => {
-            const pg = await pdfsRef.current.get(s.docId)!.getPage(s.page);
-            const [segs, texts] = await Promise.all([segmentsOnce(pg), sheetTexts(s)]);
-            return roomLocator(texts, segs, s.metersPerPoint);
-          })();
-          locators.current.set(key, loc);
-          loc.catch(() => locators.current.delete(key));
-        }
-        const find = await loc.catch(() => null);
-        if (!find || stop) continue;
         const types = new Map(project.types.map((x) => [x.id, x]));
+        // The walls are found in the rooms worker, off the main thread (seconds on a busy trade plan).
+        const names = await roomFinder.current
+          .locate(
+            key,
+            async () => {
+              const pg = await pdfsRef.current.get(s.docId)!.getPage(s.page);
+              const [segs, texts] = await Promise.all([segmentsOnce(pg), sheetTexts(s)]);
+              return { texts, segs, mpp: s.metersPerPoint };
+            },
+            ms.map((m) => (m.points.length ? middleOf(m.points, types.get(m.typeId)?.kind === 'area') : null)),
+          )
+          .catch(() => null);
+        if (!names || stop) continue;
         const found = new Map(roomsRef.current);
-        for (const m of ms) found.set(placeKey(m), m.points.length ? find(middleOf(m.points, types.get(m.typeId)?.kind === 'area')) : null);
+        ms.forEach((m, i) => found.set(placeKey(m), names[i] ?? null));
         if (!stop) setRooms(found);
         await new Promise((r) => setTimeout(r, 0));
       }
@@ -549,6 +701,20 @@ export function App() {
     const xs = pts.map((p) => p[0]);
     const ys = pts.map((p) => p[1]);
     setFocus((f) => ({ box: [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)], n: (f?.n ?? 0) + 1 }));
+  };
+
+  /** Picks every takeoff of a type on a sheet and frames them, or clears them when they are already picked. */
+  const pickType = (typeId: string, sid: string) => {
+    if (!project) return;
+    const ids = project.measurements.filter((m) => m.typeId === typeId && m.sheetId === sid).map((m) => m.id);
+    setLitTypeId(null);
+    if (sid === sheetId && ids.length === multiIds.length && ids.every((id) => multiIds.includes(id))) {
+      setMultiIds([]);
+      return;
+    }
+    if (sid !== sheetId) pickOnOpen.current = ids;
+    else setMultiIds(ids);
+    showTypeOn(typeId, sid);
   };
 
   /**
@@ -647,7 +813,7 @@ export function App() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement;
-      if (t.closest('input, textarea, select, [contenteditable="true"]') || document.querySelector('.modal-backdrop, .popover')) return;
+      if (t.closest('input, textarea, select, [contenteditable="true"]') || document.querySelector('.modal-backdrop, .popover, .ex-shell')) return;
       const mod = e.metaKey || e.ctrlKey;
       if (mod && e.key.toLowerCase() === 'z') {
         e.preventDefault();
@@ -764,6 +930,43 @@ export function App() {
     }
   }
 
+  // Sets added before title blocks were read by OCR (sheets still "Page 3"): read once, by themselves.
+  // Sets OCR named before its reading of a set improved: their numbers made consistent again.
+  const ocrTried = useRef(new Set<string>());
+  useEffect(() => {
+    const p = projectRef.current;
+    if (!p || busy) return;
+    const fromOcr = new Set(activityRef.current.filter((e) => e.source === 'Name sheets from title blocks (OCR)').map((e) => `${e.name}|${/Page (\d+)/.exec(e.detail ?? '')?.[1] ?? ''}`));
+    const isOcr = (x: Sheet) => x.ocr || fromOcr.has(`${x.name}|${x.page}`);
+    const retidy = new Map<string, Sheet>();
+    for (const d of p.docs) {
+      if (ocrTried.current.has(`tidy:${d.id}`)) continue;
+      ocrTried.current.add(`tidy:${d.id}`);
+      const own = p.sheets.filter((x) => x.docId === d.id && !x.superseded && isOcr(x));
+      if (own.length < 3) continue;
+      const discipline = /electrical/i.test(d.name) ? 'E' : /mechanical|hvac/i.test(d.name) ? 'M' : /plumbing/i.test(d.name) ? 'P' : /structural/i.test(d.name) ? 'S' : /architectural/i.test(d.name) ? 'A' : undefined;
+      const numbers = tidySetNumbers(own.map((x) => ({ page: x.page, number: x.name })), discipline);
+      for (const x of own) {
+        const n = numbers.get(x.page);
+        if (n && n !== x.name) retidy.set(x.id, { ...x, name: n, ocr: true });
+      }
+    }
+    if (retidy.size) commit((q) => ({ ...q, sheets: q.sheets.map((x) => retidy.get(x.id) ?? x) }), 'Name sheets from title blocks (OCR)');
+    const due = p.docs.filter((d) => !ocrTried.current.has(d.id) && pdfs.has(d.id) && p.sheets.filter((x) => x.docId === d.id && !x.superseded).some((x) => /^Page \d+$/.test(x.name)));
+    if (!due.length) return;
+    for (const d of due) ocrTried.current.add(d.id);
+    void ocrSheetNames(due.map((d) => d.id));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project?.id, pdfs, busy]);
+
+  // The types of the takeoffs picked on the drawing or in the takeoff list, marked in the list on the left.
+  const pickedSet = new Set(selectedId ? [...multiIds, selectedId] : multiIds);
+  const linkedTypeIds = project && pickedSet.size ? [...new Set(project.measurements.filter((m) => pickedSet.has(m.id)).map((m) => m.typeId))] : [];
+  const linkedKey = linkedTypeIds.join();
+  useEffect(() => {
+    if (linkedKey) document.querySelector('.source.types .type-item.linked')?.scrollIntoView({ block: 'center' });
+  }, [linkedKey]);
+
   if (!project) return <div className="loading">Opening your project…</div>;
 
   /**
@@ -796,6 +999,7 @@ export function App() {
 
   const activeType = project.types.find((t) => t.id === activeTypeId) ?? null;
   const editingType = project.types.find((t) => t.id === editingTypeId) ?? null;
+  const editingDirty = !!editingType && editSnapshot.current?.id === editingType.id && JSON.stringify(editingType) !== editSnapshot.current.json;
   const selected = project.measurements.find((m) => m.id === selectedId) ?? null;
   const selectedType = selected ? project.types.find((t) => t.id === selected.typeId) : undefined;
   const sheetMeasurements = sheet ? project.measurements.filter((m) => m.sheetId === sheet.id) : [];
@@ -812,11 +1016,200 @@ export function App() {
     const docId = newId();
     await savePdf(docId, data);
     const pdf = await openPdf(data);
-    const { sheets, noText } = await sheetsOf(pdf, docId, projectRef.current?.units, (n, of) => setBusy(`Reading ${name}: sheet ${n} of ${of}`));
-    setPdfs((m) => new Map(m).set(docId, pdf));
+    const read = await sheetsOf(pdf, docId, projectRef.current?.units, (n, of) => setBusy(`Reading ${name}: sheet ${n} of ${of}`));
+    const { noText } = read;
+    let sheets = read.sheets;
+    // Sheets whose title block has no text (drawn as linework, or scanned): read by OCR.
+    sheets = await namedByOcr(pdf, sheets, name);
+    ocrTried.current.add(docId);
+    setPdfs((m) => new Map(m).set(docId, withOcrText(pdf, pageOcr, APP_OCR)));
     commit((p) => ({ ...p, docs: [...p.docs, { id: docId, name }], sheets: [...p.sheets, ...sheets] }), 'Add drawings');
     setSheetId((cur) => cur ?? sheets[0]?.id ?? null);
     return { sheets, noText };
+  }
+
+  /** A spec file's PDF, opened once. */
+  function specPdfOf(docId: string): Promise<PDFDocumentProxy | null> {
+    let p = specPdfs.current.get(docId);
+    if (!p) {
+      p = loadPdf(docId).then((d) => (d ? openPdf(d) : null)).catch(() => null);
+      specPdfs.current.set(docId, p);
+    }
+    return p;
+  }
+
+  /** Adds specification files: kept like drawings, each read into its sections once. */
+  async function addSpecs(files: FileList | (File | { name: string; data: ArrayBuffer })[]) {
+    const raw = [...files].filter((f) => ('data' in f ? true : /pdf$/i.test(f.type) || /\.pdf$/i.test(f.name)));
+    // A combined file added here: its drawings go to the set, the rest is read.
+    const list: { name: string; data: ArrayBuffer }[] = [];
+    for (const f of raw) {
+      const item = 'data' in f ? f : { name: f.name, data: await f.arrayBuffer() };
+      const split = 'data' in f ? null : await splitCombined(item.name, item.data);
+      if (!split) {
+        list.push(item);
+        continue;
+      }
+      if (split.drawings) {
+        setBusy(`Reading ${split.drawings.name}…`);
+        await addDrawingData(split.drawings.name, split.drawings.data);
+        setBusy(null);
+      }
+      if (split.spec) list.push(split.spec);
+    }
+    const added: SpecDoc[] = [];
+    const failed: string[] = [];
+    for (const [i, f] of list.entries()) {
+      const docId = newId();
+      const label = list.length > 1 ? `${f.name} (file ${i + 1} of ${list.length})` : f.name;
+      try {
+        const data = f.data;
+        await savePdf(docId, data);
+        const pdf = await openPdf(data);
+        specPdfs.current.set(docId, Promise.resolve(pdf));
+        setSpecReading({ name: label, page: 0, of: pdf.numPages });
+        // An addendum (by its name, or its first page): read for what it changes as well.
+        let addendum = addendumNumber(f.name);
+        if (addendum === null) {
+          const first = (await pageTexts(await pdf.getPage(1)).catch(() => [])).map((t) => t.str).join(' ');
+          if (/\baddend(um|a)\b/i.test(first) && !/specifications?\b.*\bdivision/i.test(first)) addendum = addendumNumber(first);
+        }
+        const book = await readSpec(
+          docId,
+          f.name,
+          pdf.numPages,
+          async (n) => pageTexts(await pdf.getPage(n)).catch(() => []),
+          (n) => setSpecReading({ name: label, page: n, of: pdf.numPages }),
+          addendum !== null ? { addendum } : {},
+        );
+        added.push({ id: docId, name: f.name, book });
+      } catch {
+        failed.push(f.name);
+      }
+    }
+    setSpecReading(null);
+    if (!added.length) {
+      if (failed.length) setToast({ text: `Could not read ${failed.join(', ')}`, undo: false });
+      return;
+    }
+    commit((p) => ({ ...p, specs: [...(p.specs ?? []), ...added] }), added.length === 1 ? 'Add specification' : `Add ${added.length} spec files`);
+    const sections = mergeSections(added.map((d) => d.book!));
+    const first = sections.find((x) => !x.missing && x.pages.length && !/^00|^01/.test(x.key)) ?? sections.find((x) => x.pages.length);
+    if (first) setSpecTarget({ docId: first.docId, page: first.pages[0], key: first.key, n: Date.now() });
+    const missing = sections.filter((x) => x.missing).length;
+    setToast({
+      text: `Read ${sections.length - missing} section${sections.length - missing === 1 ? '' : 's'} from ${added.length === 1 ? added[0].name : `${added.length} files`}${missing ? `; ${missing} listed as “To follow”` : ''}${failed.length ? `. Could not read ${failed.join(', ')}` : ''}.`,
+      undo: false,
+    });
+  }
+
+  function removeSpec(docId: string) {
+    removeFiles('specs', [docId]);
+  }
+
+  /** Files: renamed, reordered, removed (drawing sets with their sheets and takeoffs). */
+  function renameFile(kind: 'drawings' | 'specs', id: string, name: string) {
+    if (kind === 'drawings') commit((p) => ({ ...p, docs: p.docs.map((d) => (d.id === id ? { ...d, name } : d)) }), 'Rename drawing file');
+    else commit((p) => ({ ...p, specs: (p.specs ?? []).map((d) => (d.id === id ? { ...d, name, ...(d.book ? { book: { ...d.book, name } } : {}) } : d)) }), 'Rename spec file');
+  }
+  function reorderFiles(kind: 'drawings' | 'specs', ids: string[]) {
+    const rank = new Map(ids.map((id, i) => [id, i]));
+    const by = <T extends { id: string }>(list: T[]) => [...list].sort((a, b) => (rank.get(a.id) ?? 1e9) - (rank.get(b.id) ?? 1e9));
+    if (kind === 'specs') return commit((p) => ({ ...p, specs: by(p.specs ?? []) }), 'Reorder spec files');
+    commit((p) => {
+      const docs = by(p.docs);
+      const at = new Map(docs.map((d, i) => [d.id, i]));
+      // Sheets follow their files; within a file they keep their order.
+      const sheets = p.sheets.map((sh, i) => ({ sh, i })).sort((a, b) => (at.get(a.sh.docId) ?? 1e9) - (at.get(b.sh.docId) ?? 1e9) || a.i - b.i).map((x) => x.sh);
+      return { ...p, docs, sheets };
+    }, 'Reorder drawing files');
+  }
+  async function removeFiles(kind: 'drawings' | 'specs', ids: string[]) {
+    const p0 = projectRef.current!;
+    const gone = new Set(ids);
+    if (kind === 'specs') {
+      const names = (p0.specs ?? []).filter((d) => gone.has(d.id)).map((d) => d.name);
+      commit((p) => ({ ...p, specs: (p.specs ?? []).filter((d) => !gone.has(d.id)) }), names.length === 1 ? 'Remove specification' : `Remove ${names.length} spec files`);
+      setToast({ text: names.length === 1 ? `Removed ${names[0]}` : `Removed ${names.length} spec files`, undo: true });
+      return;
+    }
+    const sheetIds = new Set(p0.sheets.filter((x) => gone.has(x.docId)).map((x) => x.id));
+    const count = p0.measurements.filter((m) => sheetIds.has(m.sheetId)).length;
+    const names = p0.docs.filter((d) => gone.has(d.id)).map((d) => d.name);
+    if (count) {
+      const ok = await askConfirm(`Remove ${names.length === 1 ? names[0] : `${names.length} drawing files`} and ${count} takeoff${count === 1 ? '' : 's'} on ${names.length === 1 ? 'it' : 'them'}?`, { confirmLabel: 'Remove', danger: true });
+      if (!ok) return;
+    }
+    commit((p) => ({ ...p, docs: p.docs.filter((d) => !gone.has(d.id)), sheets: p.sheets.filter((x) => !gone.has(x.docId)), measurements: p.measurements.filter((m) => !sheetIds.has(m.sheetId)) }), names.length === 1 ? 'Remove drawings' : `Remove ${names.length} drawing files`);
+    if (sheetId && sheetIds.has(sheetId)) setSheetId(projectRef.current!.sheets[0]?.id ?? null);
+    setToast({ text: names.length === 1 ? `Removed ${names[0]}` : `Removed ${names.length} drawing files`, undo: true });
+  }
+  function reorderSheets(docId: string, ids: string[]) {
+    commit((p) => {
+      const queue = ids.map((id) => p.sheets.find((x) => x.id === id)!).filter(Boolean);
+      return { ...p, sheets: p.sheets.map((x) => (x.docId === docId ? (queue.shift() ?? x) : x)) };
+    }, 'Reorder sheets');
+  }
+  async function removeSheets(ids: string[]) {
+    const p0 = projectRef.current!;
+    const gone = new Set(ids);
+    const count = p0.measurements.filter((m) => gone.has(m.sheetId)).length;
+    const label = ids.length === 1 ? (p0.sheets.find((x) => x.id === ids[0])?.name ?? 'this sheet') : `${ids.length} sheets`;
+    if (count) {
+      const ok = await askConfirm(`Remove ${label} and ${count} takeoff${count === 1 ? '' : 's'} on ${ids.length === 1 ? 'it' : 'them'}?`, { confirmLabel: 'Remove', danger: true });
+      if (!ok) return;
+    }
+    commit((p) => ({ ...p, sheets: p.sheets.filter((x) => !gone.has(x.id)), measurements: p.measurements.filter((m) => !gone.has(m.sheetId)) }), `Remove ${label}`);
+    if (sheetId && gone.has(sheetId)) setSheetId(projectRef.current!.sheets[0]?.id ?? null);
+    setToast({ text: `Removed ${label}`, undo: true });
+  }
+
+  /** Sheets still called "Page N" (no text in their title block): their numbers and titles read by OCR. */
+  async function namedByOcr(pdf: PDFDocumentProxy, sheets: Sheet[], name: string): Promise<Sheet[]> {
+    const unnamed = sheets.filter((x) => /^Page \d+$/.test(x.name));
+    if (!unnamed.length) return sheets;
+    const named = new Map<string, { number?: string; title?: string }>();
+    for (const [i, x] of unnamed.entries()) {
+      setBusy(`Reading title blocks of ${name}: ${i + 1} of ${unnamed.length}`);
+      try {
+        named.set(x.id, await ocrTitleBlock(await pdf.getPage(x.page)));
+      } catch (e) {
+        setToast({ text: `Could not read the title blocks of ${name}: ${e instanceof Error ? e.message : String(e)}`, undo: false });
+        break;
+      }
+    }
+    const discipline = /electrical/i.test(name) ? 'E' : /mechanical|hvac/i.test(name) ? 'M' : /plumbing/i.test(name) ? 'P' : /structural/i.test(name) ? 'S' : /architectural/i.test(name) ? 'A' : /civil/i.test(name) ? 'C' : /landscape/i.test(name) ? 'L' : undefined;
+    const numbers = tidySetNumbers(
+      unnamed.map((x) => ({ page: x.page, number: named.get(x.id)?.number })),
+      discipline,
+    );
+    return sheets.map((x) => {
+      if (!/^Page \d+$/.test(x.name)) return x;
+      const r = named.get(x.id);
+      const number = numbers.get(x.page);
+      return number ? { ...x, name: number, ocr: true, ...(r?.title && !x.title ? { title: r.title } : {}) } : x;
+    });
+  }
+
+  /** The menu's way to the same, for sets added before OCR; also run by itself on sets that need it (`only`). */
+  async function ocrSheetNames(only?: string[]) {
+    const p = projectRef.current!;
+    const renamed = new Map<string, Sheet>();
+    try {
+      for (const d of p.docs) {
+        if (only && !only.includes(d.id)) continue;
+        const own = p.sheets.filter((x) => x.docId === d.id);
+        if (!own.some((x) => /^Page \d+$/.test(x.name))) continue;
+        const pdf = pdfsRef.current.get(d.id);
+        if (!pdf) continue;
+        for (const x of await namedByOcr(pdf, own, d.name)) if (x.name !== p.sheets.find((y) => y.id === x.id)?.name) renamed.set(x.id, x);
+      }
+    } finally {
+      setBusy(null);
+    }
+    if (!renamed.size) return only ? undefined : setToast({ text: 'No sheet numbers could be read from those title blocks.', undo: false });
+    commit((q) => ({ ...q, sheets: q.sheets.map((x) => renamed.get(x.id) ?? x) }), 'Name sheets from title blocks (OCR)');
+    setToast({ text: `Named ${renamed.size} sheet${renamed.size === 1 ? '' : 's'} from their title blocks.`, undo: true });
   }
 
   async function upload(files: FileList | File[]) {
@@ -831,9 +1224,19 @@ export function App() {
     }
     // Originals first, then addenda by number: a re-issued sheet then follows the sheet it replaces.
     const byName = new Map(Array.from(files).map((f) => [f.name, f]));
+    const specParts: { name: string; data: ArrayBuffer }[] = [];
     for (const file of issueOrder([...byName.keys()]).map((n) => byName.get(n)!)) {
       setBusy(`Reading ${file.name}…`);
-      const { sheets, noText } = await addDrawingData(file.name, await file.arrayBuffer());
+      let data = await file.arrayBuffer();
+      let name = file.name;
+      // Specification and drawings in one file: split them, the drawings here, the rest read as the spec.
+      const split = await splitCombined(name, data);
+      if (split) {
+        if (split.spec) specParts.push(split.spec);
+        if (!split.drawings) continue;
+        ({ name, data } = split.drawings);
+      }
+      const { sheets, noText } = await addDrawingData(name, data);
       setBusy(null);
       // What is ready: scales read, and sheets the automatic tools can't read.
       const scaled = sheets.filter((x) => x.metersPerPoint).length;
@@ -847,6 +1250,41 @@ export function App() {
     }
     setBusy(null);
     supersedeReissued();
+    if (specParts.length) await addSpecs(specParts);
+  }
+
+  /**
+   * A tender bound as one PDF (the project manual and the drawings together): offered to be split
+   * in two by page size, the drawings to the set and the letter-size pages to the specification.
+   * Null when the file is all one kind or the split is declined.
+   */
+  async function splitCombined(name: string, data: ArrayBuffer): Promise<{ drawings?: { name: string; data: ArrayBuffer }; spec?: { name: string; data: ArrayBuffer } } | null> {
+    let kinds;
+    try {
+      const pdf = await openPdf(data);
+      kinds = await pageKinds(pdf);
+      void pdf.destroy();
+    } catch {
+      return null;
+    }
+    if (!isCombined(kinds)) {
+      // A document, not drawings (an addendum, a spec): read it as such.
+      if (kinds.every((k) => k === 'doc') && /addend|spec|manual/i.test(name)) return { spec: { name, data } };
+      return null;
+    }
+    const docs = pagesOf(kinds, 'doc');
+    const sheets = pagesOf(kinds, 'sheet');
+    setBusy(null);
+    const ok = await askConfirm(
+      `${name} holds ${docs.length} letter-size pages (the specification and reports) and ${sheets.length} drawing sheets. Split it, the drawings into the set and the rest read as the specification?`,
+      { confirmLabel: 'Split' },
+    );
+    if (!ok) return null;
+    setBusy(`Splitting ${name}…`);
+    const base = name.replace(/\.pdf$/i, '');
+    const [dwg, spec] = await splitPdf(data, [sheets, docs]);
+    setBusy(null);
+    return { drawings: { name: `${base} - Drawings.pdf`, data: dwg }, spec: { name: `${base} - Specifications.pdf`, data: spec } };
   }
 
   /**
@@ -932,8 +1370,50 @@ export function App() {
     const id = projectRef.current?.id;
     if (!sync || !id || !desktopApi) return;
     await flushAllRef.current();
-    const dir = (await sync.dirOf(id)) ?? (await sync.push(id).then(() => sync.dirOf(id)));
-    if (dir) await desktopApi.revealProject(dir);
+    const at = await sync.whereIs(id);
+    if (at && 'root' in at) await desktopApi.linked?.reveal(at.root, at.dir);
+    else if (at) await desktopApi.revealProject(at.dir);
+  }
+
+  /** Desktop app: opens projects from a folder anyone with access can open (shared or local); they're saved back there. */
+  async function openFromFolder() {
+    const sync = folderSync.current;
+    if (!sync) return;
+    await flushAllRef.current();
+    try {
+      const res = await sync.openFromFolder();
+      if (!res) return;
+      if (!res.ids.length) {
+        setToast({ text: `No Takeoff AI projects in ${folderLabel(res.picked)}. Pick a project's folder (it holds project.json), or the folder above it.`, undo: false });
+        return;
+      }
+      setLinkedFolders(new Map((await sync.refresh()).map((e) => [e.id, e.root])));
+      await switchProject(res.ids[0]);
+      setToast({
+        text: res.inMain
+          ? `Opened ${res.names[0]} from your projects folder`
+          : `Opened ${res.names.length === 1 ? res.names[0] : `${res.names.length} projects`} from ${folderLabel(res.picked)}. Changes save back there, so everyone with that folder sees them.`,
+        undo: false,
+      });
+    } catch (e) {
+      setToast({ text: `That folder couldn’t be opened: ${e instanceof Error ? e.message : String(e)}`, undo: false });
+    }
+  }
+
+  /** Desktop app: moves the open project into a shared folder of the user's choosing, so others can open it. */
+  async function shareProjectFolder() {
+    const sync = folderSync.current;
+    const p = projectRef.current;
+    if (!sync || !p?.id) return;
+    await flushAllRef.current();
+    try {
+      const root = await sync.shareTo(p.id, p.name);
+      if (!root) return;
+      setLinkedFolders(new Map((await sync.refresh()).map((e) => [e.id, e.root])));
+      setToast({ text: `${p.name} is now kept in ${folderLabel(root)}. Anyone with that folder can open it: More › Open a project from a folder.`, undo: false, sticky: true });
+    } catch (e) {
+      setToast({ text: `The project couldn’t be moved there: ${e instanceof Error ? e.message : String(e)}`, undo: false });
+    }
   }
 
   /**
@@ -1013,7 +1493,7 @@ export function App() {
       const names = new Set((await listProjects()).map((x) => x.name));
       let name = `${p.name} (copy)`;
       for (let n = 2; names.has(name); n++) name = `${p.name} (copy ${n})`;
-      const docIds = new Map(p.docs.map((d) => [d.id, newId()]));
+      const docIds = new Map(filesOf(p).map((d) => [d.id, newId()]));
       // Storage writes don't throw (they're made safe for private windows), so each copy is
       // read back: a full disk must not leave a copy with blank sheets.
       const written: string[] = [];
@@ -1032,6 +1512,7 @@ export function App() {
         id: newId(),
         name,
         docs: p.docs.map((d) => ({ ...d, id: docIds.get(d.id)! })),
+        ...(p.specs ? { specs: p.specs.map((d) => ({ ...d, id: docIds.get(d.id)!, ...(d.book ? { book: { ...d.book, docId: docIds.get(d.id)!, sections: d.book.sections.map((x) => ({ ...x, docId: docIds.get(d.id)! })) } } : {}) })) } : {}),
         sheets: p.sheets.map((x) => ({ ...x, docId: docIds.get(x.docId) ?? x.docId })),
       };
       await saveProject(copy);
@@ -1167,21 +1648,22 @@ export function App() {
     setToast({ text: `Removed ${doc?.name ?? 'drawings'}`, undo: true });
   }
 
-  /** Desktop app: the open project's folder name in the projects folder (written first if needed). */
-  async function projectDir(): Promise<string | null> {
+  /** Desktop app: where the open project is kept (written first if needed). */
+  async function projectDir(): Promise<{ dir: string } | { root: string; dir: string } | null> {
     const sync = folderSync.current;
     const id = projectRef.current?.id;
     if (!sync || !id) return null;
     await flushAllRef.current();
-    return (await sync.dirOf(id)) ?? (await sync.push(id).then(() => sync.dirOf(id)));
+    return sync.whereIs(id);
   }
 
   /** Desktop app: saves an export in the open project's Exports folder; null when it has no folder (the browser). */
   async function saveToProject(filename: string, blob: Blob): Promise<string | null> {
     if (!desktopApi?.writeExport) return null;
-    const dir = await projectDir().catch(() => null);
-    if (!dir) return null;
-    return desktopApi.writeExport(dir, filename, await blob.arrayBuffer());
+    const at = await projectDir().catch(() => null);
+    if (!at) return null;
+    if ('root' in at) return desktopApi.linked ? desktopApi.linked.writeExport(at.root, at.dir, filename, await blob.arrayBuffer()) : null;
+    return desktopApi.writeExport(at.dir, filename, await blob.arrayBuffer());
   }
 
   /** Saves an export: in the project's own folder on the desktop app, as a download in the browser. */
@@ -1230,6 +1712,60 @@ export function App() {
     }
     commit((q) => ({ ...q, types: [...q.types, ...types] }), 'Import types');
     setToast({ text: `Copied ${types.length} type${types.length === 1 ? '' : 's'} from ${from.name}`, undo: true });
+  }
+
+  /** The sample projects: drawings (names taken off), their takeoffs and the 3D model Claude built. */
+  const SAMPLES = [
+    { name: 'Sample project #1: ski lodge', file: 'sample-1-ski-lodge.takeoff', was: [] as string[], load: () => import('./scene3d/sampleLodge') },
+    { name: 'Sample project #2: maintenance shop', file: 'sample-2-maintenance-shop.takeoff', was: ['Sample project: maintenance shop'], load: () => import('./scene3d/sample') },
+  ];
+  /** Opens a sample project: the full one (drawings, takeoffs, 3D) in the desktop app, else just its 3D model. */
+  async function openSampleModel(n: 1 | 2 = 1) {
+    const sample = SAMPLES[n - 1];
+    setBusy('Opening the sample project…');
+    try {
+      // Opened before: open that one again rather than making another (the full one if there is one).
+      const list = (await listProjects()).filter((x) => x.name === sample.name || sample.was.includes(x.name));
+      const opened = (await Promise.all(list.map((x) => loadProjectById(x.id)))).filter((p): p is Project => !!p?.sample);
+      const full = opened.find((p) => p.docs.length);
+      const existing = full ?? (desktopApi?.fetchSample ? undefined : opened.find((p) => p.scene3d));
+      if (existing) {
+        await switchProject(existing.id!);
+        if (existing.name !== sample.name) commit((p) => ({ ...p, name: sample.name }), 'Rename project');
+        setView('build');
+        return;
+      }
+      if (desktopApi?.fetchSample) {
+        setBusy('Downloading the sample project…');
+        const got = await desktopApi.fetchSample(sample.file).catch(() => null);
+        if (got) {
+          let last: Project | null = null;
+          await readProjectFiles(got, async (o) => {
+            o.project = { ...o.project, name: sample.name, sample: true };
+            for (const [id, data] of o.pdfs) await savePdf(id, data);
+            await saveProject(o.project);
+            if (o.project.id) await saveActivity(o.project.id, o.activity);
+            last = o.project;
+          });
+          // A 3D-only copy from an older version steps aside for the full one.
+          for (const p of opened) if (!p.docs.length && !p.measurements.length) await saveProject({ ...p, name: `${sample.name} (3D only)` });
+          if (last) {
+            await openProjectState(last);
+            setView('build');
+            return;
+          }
+        }
+        setToast({ text: 'The full sample could not be downloaded, so this is its 3D model only.', undo: false });
+      }
+      const { default: model } = await sample.load();
+      await createProjectNamed(sample.name, 'metric');
+      commit((p) => ({ ...p, sample: true, scene3d: model }), 'Sample project');
+      setView('build');
+    } catch (e) {
+      setToast({ text: `Something went wrong: ${e instanceof Error ? e.message : String(e)}`, undo: false });
+    } finally {
+      setBusy(null);
+    }
   }
 
   /** Adds a small generated floor plan to try the tools on. */
@@ -1506,6 +2042,86 @@ export function App() {
     } finally {
       setBusy(null);
     }
+  }
+
+  /** Turns the links on, reading the set into its graph first when it is not read yet. */
+  async function openLinks(rebuild = false): Promise<DrawingGraph | null> {
+    const p = projectRef.current;
+    if (!p?.sheets.length) return null;
+    setLinksOn(true);
+    const key = p.sheets.filter((s) => !s.superseded).map((s) => s.id).join(',');
+    const had = graphRef.current;
+    if (!rebuild && had?.key === key) return had.graph;
+    if (graphBuilding.current) return had?.graph ?? null;
+    graphBuilding.current = true;
+    setBusy('Linking the drawings: reading the set…');
+    try {
+      let g = await buildGraph(p.sheets, setAccess());
+      let at = key;
+      // Drawings still coming in while it read: read the set as it is now.
+      for (let n = 0; n < 3; n++) {
+        const q = projectRef.current!;
+        const now = q.sheets.filter((s) => !s.superseded).map((s) => s.id).join(',');
+        if (now === at) break;
+        at = now;
+        g = await buildGraph(q.sheets, setAccess());
+      }
+      setGraphState({ graph: g, key: at });
+      graphRef.current = { graph: g, key: at };
+      const n = Object.values(g.links).reduce((k, ls) => k + ls.filter((l) => l.kind !== 'definition').length, 0);
+      setToast({
+        text: n ? `Linked ${n} references across ${g.sheets.length} sheets. Click a bubble, a note, a tag or a schedule row to follow it.` : 'No references found in this set’s text. A scanned set has no text to read.',
+        undo: false,
+      });
+      return g;
+    } catch (e) {
+      setLinksOn(false);
+      setToast({ text: `Could not link the drawings: ${e instanceof Error ? e.message : String(e)}`, undo: false });
+      return null;
+    } finally {
+      graphBuilding.current = false;
+      setBusy(null);
+    }
+  }
+
+  /** Brings a place into view (its sheet opened, the spot zoomed to and flashed); `from` is remembered for Back. */
+  function goTo(place: Place, from?: { sheetId: string; box: Box }) {
+    const s = projectRef.current?.sheets.find((x) => x.id === place.sheetId);
+    if (!s) return;
+    if (from) {
+      navBack.current.push(from);
+      navFwd.current = [];
+      setNavTick((n) => n + 1);
+    }
+    const whole = place.box[2] - place.box[0] >= s.width * 0.9 && place.box[3] - place.box[1] >= s.height * 0.9;
+    const box: Box = whole ? [0, 0, s.width, s.height] : [place.box[0] - 120, place.box[1] - 80, place.box[2] + 120, place.box[3] + 80];
+    navHere.current = { sheetId: s.id, box: whole ? box : place.box };
+    if (s.id !== sheetId) setSheetId(s.id);
+    setFocus({ box, n: Date.now() });
+    if (!whole) setFlash({ sheetId: s.id, box: place.mark ?? place.box, n: Date.now() });
+  }
+
+  /** Follows a link (or a search hit): to its one place, or to the first of its places, the rest a step away. */
+  function follow(to: Place[], label: string, entry?: Entry, fromBox?: Box) {
+    if (!to.length) return;
+    const here = sheet ? { sheetId: sheet.id, box: fromBox ?? navHere.current?.box ?? ([0, 0, sheet.width, sheet.height] as Box) } : undefined;
+    setTrail({ label, to, i: 0, entry });
+    goTo(to[0], here);
+  }
+
+  function followLink(l: Link) {
+    const e = l.kind === 'tag' || l.kind === 'definition' ? graphByKey.get(l.node) : undefined;
+    follow(l.to, l.label, e, l.box);
+  }
+
+  function navigate(dir: 'back' | 'forward') {
+    const from = dir === 'back' ? navBack.current : navFwd.current;
+    const to = dir === 'back' ? navFwd.current : navBack.current;
+    const p = from.pop();
+    if (!p) return;
+    if (sheet) to.push({ sheetId: sheet.id, box: navHere.current?.sheetId === sheet.id ? navHere.current.box : [0, 0, sheet.width, sheet.height] });
+    setNavTick((n) => n + 1);
+    goTo({ sheetId: p.sheetId, box: p.box });
   }
 
   /** The open drawings, as the automations read them. `keepOpen`: the open sheet's linework is kept for the tools. */
@@ -2154,6 +2770,9 @@ export function App() {
   const chooseType = (t: TakeoffType) => {
     setActiveTypeId(t.id);
     setSelectedId(null);
+    // Its takeoffs stand out on the drawing and in the takeoff list until Esc.
+    setMultiIds([]);
+    setLitTypeId(t.id);
     if (tool === 'select' || tool === 'calibrate' || (tool === 'fill' && t.kind !== 'area') || (tool === 'symbol' && t.kind !== 'count') || (tool === 'trace' && t.kind !== 'linear') || tool === 'cutout') setTool('measure');
   };
 
@@ -2268,16 +2887,42 @@ export function App() {
     },
     showSheet: (id) => setSheetId(id),
     projectFolder: async () => {
-      const dir = await projectDir().catch(() => null);
-      if (!dir || !syncFolder) return null;
-      return `${syncFolder}${desktopApi?.platform === 'win32' ? '\\' : '/'}${dir}`;
+      const at = await projectDir().catch(() => null);
+      const sep = desktopApi?.platform === 'win32' ? '\\' : '/';
+      if (at && 'root' in at) return `${at.root}${sep}${at.dir}`;
+      if (!at || !syncFolder) return null;
+      return `${syncFolder}${sep}${at.dir}`;
     },
     maxOpening: () => maxOpening,
     wholeSet: (watch?: boolean) => takeOffEverything(!!watch),
+    smartIndex: async () => (await openLinks())?.index ?? null,
+    drawingGraph: () => openLinks(),
+    projectMap: async () => {
+      const g = await openLinks();
+      const q = projectRef.current;
+      if (!q) return null;
+      return buildProjectMap(g, (q.specs ?? []).flatMap((d) => (d.book ? [d.book] : [])), q.sheets, g?.specRefs ?? [], q.docs);
+    },
+    sheetLines: async (s) => {
+      const pdf = pdfsRef.current.get(s.docId);
+      return pdf ? segmentsOf(await pdf.getPage(s.page)) : [];
+    },
+    snapshot3d: async (scene, v) => (await import('./scene3d/render')).snapshot(scene, v as ModelView),
+    show3d: () => setView('build'),
+    showTag: (key: string) => {
+      const g = graphRef.current?.graph;
+      const e = g ? [...entries(g.index).values()].find((x) => x.key === key) : undefined;
+      if (!g || !e) return;
+      setLinksOn(true);
+      setCardEntry(e);
+      const defs = definitionsOf(e, g);
+      follow(defs.length ? defs : (g.index.places[key] ?? []), e.code, e);
+    },
   };
 
   return (
     <div className="app">
+      <ExploreHost open={exploreOpen} onOpenChange={setExploreOpen} liveProject={project} onBuild={()=>setView('build')} onOpenTakeoff={s=>{setView('drawings');follow([{sheetId:s.id,box:[0,0,s.width,s.height],label:s.name}],s.name);}} />
       <header className="titlebar">
         <input
           ref={projectFileInput}
@@ -2294,7 +2939,9 @@ export function App() {
           <div className="app-mark" aria-hidden="true">
             <svg viewBox="0 0 20 20" width="20" height="20">
               <rect x="1" y="1" width="18" height="18" rx="5" fill="var(--accent)" />
-              <path d="M5 14.5V6h4.5L15 14.5z" fill="#fff" />
+              <path d="M5.2 12.4C5.2 8.9 7.3 6.3 10 6.3s4.8 2.6 4.8 6.1z" fill="#fff" />
+              <path d="M4 12.2h11.6c.6 0 1.1.3 1.5.7l.2.3c.1.2 0 .4-.2.4H4.4c-.3 0-.5-.2-.5-.5v-.6z" fill="#fff" />
+              <path d="M15.3 3.2q0 1.6 1.6 1.6q-1.6 0-1.6 1.6q0-1.6-1.6-1.6q1.6 0 1.6-1.6z" fill="#ffc21a" />
             </svg>
           </div>
           <input
@@ -2319,9 +2966,24 @@ export function App() {
           >
             <Icon name="chevronDown" size={14} />
           </button>
+          <div className="segmented view-switch" role="tablist" aria-label="Workspace">
+            {(
+              [
+                ['drawings', 'Drawings', 'sheet'],
+                ['specs', 'Specs', 'doc'],
+                ['map', 'Map', 'graph'],
+                ['build', 'Build', 'walls'],
+              ] as const
+            ).map(([v, label, icon]) => (
+              <button key={v} role="tab" aria-label={label} aria-selected={view === v} className={view === v ? 'on' : ''} onClick={() => setView(v)} title={v === 'drawings' ? 'The drawings and the takeoff' : v === 'specs' ? 'The specification, read into its sections' : v === 'map' ? 'The spec and the drawings, tied together' : 'Build it: the building, the schedule and its construction, from the takeoff and the spec'}>
+                <Icon name={icon} size={14} />
+                <span>{label}</span>
+              </button>
+            ))}
+          </div>
         </div>
 
-        <div className="tb-center">
+        <div className={`tb-center ${view !== 'drawings' ? 'hidden-view' : ''}`}>
           <div className="segmented tools" role="toolbar" aria-label="Tools">
             {TOOLS.map((t) => (
               <button
@@ -2364,6 +3026,7 @@ export function App() {
               <Icon name="chevronDown" size={12} />
             </button>
           )}
+
         </div>
 
         <div className="tb-right">
@@ -2384,6 +3047,12 @@ export function App() {
               e.target.value = '';
             }}
           />
+          {!isHosted && (
+            <button className={`secondary chat-toggle${chatOpen ? ' on' : ''}`} onClick={() => setChatOpen((o) => !o)} title="Ask Claude about this project" aria-pressed={chatOpen}>
+              <Icon name="chat" size={16} />
+              <span className="hide-narrow">Ask</span>
+            </button>
+          )}
           <button className="secondary" onClick={() => fileInput.current?.click()} title="Add PDF drawings">
             <Icon name="upload" size={16} />
             <span className="hide-narrow">
@@ -2411,6 +3080,11 @@ export function App() {
         <section className="source sheets">
           <div className="source-head">
             <h2>Sheets</h2>
+            {project.sheets.length > 0 && (
+              <button className="link-button files-button" onClick={() => setFilesOpen(true)} title="Add, remove, rename and reorder drawing and spec files">
+                Files
+              </button>
+            )}
             {page && project.sheets.length > 0 && (
               <button className="link-button number-sheets" onClick={() => void autoNameSheets()} title="Name every sheet from its title block: sheet number, then drawing title">
                 Number sheets
@@ -2556,7 +3230,7 @@ export function App() {
                 return (
                   <li
                     key={keyPrefix + t.id}
-                    className={`type-item ${t.hidden ? 'is-hidden' : ''} ${(keyPrefix && keyPrefix !== 'unused|') || (!keyPrefix && groupOf(t) && known.has(groupOf(t)!)) ? 'in-group' : ''} ${keyPrefix.includes('|') && keyPrefix !== 'unused|' ? 'in-division' : ''}`}
+                    className={`type-item ${t.hidden ? 'is-hidden' : ''} ${linkedTypeIds.includes(t.id) ? 'linked' : ''} ${(keyPrefix && keyPrefix !== 'unused|') || (!keyPrefix && groupOf(t) && known.has(groupOf(t)!)) ? 'in-group' : ''} ${keyPrefix.includes('|') && keyPrefix !== 'unused|' ? 'in-division' : ''}`}
                     draggable
                     onDragStart={(e) => {
                       dragType.current = t.id;
@@ -2731,17 +3405,20 @@ export function App() {
           onSelect={(id) => {
             setSelectedId(id);
             setMultiIds([]);
+            setLitTypeId(null);
             if (id) setEditingTypeId(null);
           }}
           multiIds={picked.map((m) => m.id)}
+          litTypeId={litTypeId}
           onMultiSelect={(ids, add) => {
             setSelectedId(null);
+            setLitTypeId(null);
             setMultiIds((cur) => (add ? [...new Set([...cur, ...ids])] : ids));
           }}
           onDeleteMany={deleteMeasurements}
           onAdd={addMeasurement}
           onReplacePoints={(id, points, source = 'Fill room', openings) =>
-            commit((p) => ({ ...p, measurements: p.measurements.map((m) => (m.id === id ? { ...m, points, openings } : m)) }), source)
+            commit((p) => ({ ...p, measurements: p.measurements.map((m) => (m.id === id ? { ...m, points, openings, statedLength: undefined } : m)) }), source)
           }
           onMoveTakeoff={(id, points, holes) =>
             commit((p) => ({ ...p, measurements: p.measurements.map((m) => (m.id === id ? { ...m, points, holes } : m)) }), 'Move takeoff')
@@ -2761,10 +3438,80 @@ export function App() {
           onTrace={(at, reach) => void traceAt(at, reach)}
           focus={focus}
           highlights={sheet ? hitsOn(sheet.id) : undefined}
+          links={sheetLinks.length ? { items: sheetLinks, title: (l) => linkTitle(l, graph!), color: (l) => (l.tagKind ? kindColor(l.tagKind) : l.kind === 'view' ? '#8a3fc6' : '#0071e3'), onFollow: followLink } : undefined}
+          flash={flash && sheet && flash.sheetId === sheet.id ? flash : undefined}
         />
 
+        {(navBack.current.length > 0 || navFwd.current.length > 0) && (
+          <div className="nav-buttons" role="group" aria-label="Back and forward">
+            <button className="icon-button" onClick={() => navigate('back')} disabled={!navBack.current.length} title="Back to where you were" aria-label="Back">
+              <Icon name="back" size={16} />
+            </button>
+            <button className="icon-button" onClick={() => navigate('forward')} disabled={!navFwd.current.length} title="Forward" aria-label="Forward">
+              <Icon name="forward" size={16} />
+            </button>
+          </div>
+        )}
+
+        {sheet && !linksOn && (
+          <button className={`links-fab ${navBack.current.length || navFwd.current.length ? 'shifted' : ''}`} onClick={() => void openLinks()} title="Link the set: detail bubbles, sheet references, schedules and tags become clickable">
+            <Icon name="link" size={16} />
+            Links
+          </button>
+        )}
+
+        {linksOn && graph && (
+          <LinksBar graph={graph} byKey={graphByKey} defs={defsOf} onGo={(to, label, e) => follow(to, label, e)} onMap={() => setMapOpen(true)} onRebuild={() => void openLinks(true)} onClose={() => setLinksOn(false)} />
+        )}
+
+        {graph && trail && (
+          <FollowBar
+            graph={graph}
+            trail={trail}
+            onStep={(i) => {
+              setTrail({ ...trail, i });
+              goTo(trail.to[i]);
+            }}
+            onDetails={trail.entry ? () => setCardEntry(trail.entry!) : undefined}
+            onClose={() => setTrail(null)}
+          />
+        )}
+
+        {graph && cardEntry && (
+          <TagCard
+            graph={graph}
+            dict={graphDict}
+            sheets={project.sheets}
+            entry={cardEntry}
+            onPick={(e) => {
+              setCardEntry(e);
+              const d = definitionsOf(e, graph);
+              follow(d.length ? d : (graph.index.places[e.key] ?? []), e.code, e);
+            }}
+            onGo={(to, label, e) => follow(to, label, e)}
+            onClose={() => setCardEntry(null)}
+          />
+        )}
+
+        {graph && mapOpen && (
+          <DrawingMap
+            graph={graph}
+            currentSheet={sheetId}
+            onOpenSheet={(id) => {
+              setMapOpen(false);
+              const s = project.sheets.find((x) => x.id === id);
+              if (s) follow([{ sheetId: id, box: [0, 0, s.width, s.height], label: `${s.name}${s.title ? ` · ${s.title}` : ''}` }], s.name);
+            }}
+            onGo={(to, label) => {
+              setMapOpen(false);
+              follow(to, label);
+            }}
+            onClose={() => setMapOpen(false)}
+          />
+        )}
+
         {picked.length > 0 && (
-          <div className="selection-bar" role="toolbar" aria-label="Selected takeoffs">
+          <div className={`selection-bar ${linksOn ? 'below-smart' : ''}`} role="toolbar" aria-label="Selected takeoffs">
             <span className="selection-count">{picked.length} selected</span>
             <span className="selection-types">{pickedSummary(picked, project.types)}</span>
             <button onClick={() => setMultiIds([])}>Clear</button>
@@ -2791,6 +3538,16 @@ export function App() {
               <button className="link-button try-sample" onClick={() => void openSample()}>
                 No drawings handy? Try a sample plan
               </button>
+              <span className="try-sample">
+                Or tour a sample project with a 3D model built by AI:{' '}
+                <button className="link-button" onClick={() => void openSampleModel(1)}>
+                  #1 ski lodge
+                </button>{' '}
+                ·{' '}
+                <button className="link-button" onClick={() => void openSampleModel(2)}>
+                  #2 maintenance shop
+                </button>
+              </span>
               <div className="welcome-units">
                 <span>Measure in</span>
                 <div className="segmented small" role="radiogroup" aria-label="Units">
@@ -2914,6 +3671,149 @@ export function App() {
         )}
       </main>
 
+      <input
+        ref={specInput}
+        type="file"
+        accept="application/pdf"
+        multiple
+        hidden
+        onChange={(e) => {
+          if (e.target.files?.length) void addSpecs(e.target.files);
+          e.target.value = '';
+        }}
+      />
+      {chatOpen && project && (
+        <ChatPanel
+          about={`The open project: ${project.name || 'Untitled'}. ${project.sheets.filter((x) => !x.superseded).length} drawing sheets, ${mergeSections(specBooks).length} spec sections${specBooks.some((b) => b.addendum) ? `, ${specBooks.filter((b) => b.addendum).length} addenda` : ''}, ${project.measurements.length} takeoffs. Units: ${project.units}.`}
+          run={(name, args) => {
+            const go = async () => {
+              if (!mcpCtxRef.current) return { content: [{ type: 'text' as const, text: 'Takeoff AI is still opening.' }], isError: true };
+              return await runTool(mcpCtxRef.current, name, args);
+            };
+            const next = mcpQueue.current.then(go, go);
+            mcpQueue.current = next.catch(() => undefined);
+            return next;
+          }}
+          sheets={project.sheets.filter((x) => !x.superseded).map((x) => ({ id: x.id, name: x.name }))}
+          sections={mergeSections(specBooks).map((x) => ({ key: x.key, title: x.title, docId: x.docId, page: x.pages[0] ?? 1 }))}
+          onOpenSheet={(id) => {
+            setView('drawings');
+            setSheetId(id);
+          }}
+          onOpenSection={(x) => {
+            setSpecTarget({ docId: x.docId, page: x.page, key: x.key, n: Date.now() });
+            setView('specs');
+          }}
+          onSettings={() => setAiDialog('settings')}
+          onConnect={desktopApi?.mcp ? () => setAiDialog('connect') : undefined}
+          onClose={() => setChatOpen(false)}
+        />
+      )}
+      {filesOpen && (
+        <FileManager
+          docs={project.docs}
+          specs={project.specs ?? []}
+          sheets={project.sheets}
+          measurements={project.measurements}
+          onRename={renameFile}
+          onReorder={reorderFiles}
+          onRemove={(k, ids) => void removeFiles(k, ids)}
+          onReorderSheets={reorderSheets}
+          onRemoveSheets={(ids) => void removeSheets(ids)}
+          onAdd={(k) => (k === 'drawings' ? fileInput.current?.click() : specInput.current?.click())}
+          onClose={() => setFilesOpen(false)}
+        />
+      )}
+      {view === 'specs' && (
+        <div className="view-pane spec-pane">
+          <SpecView
+            specs={project.specs ?? []}
+            pdfOf={specPdfOf}
+            map={projectMap}
+            sheetByName={(n) => sheetByNumber.get(norm(n))}
+            target={specTarget}
+            reading={specReading}
+            onAdd={() => specInput.current?.click()}
+            onRemove={removeSpec}
+            onManage={() => setFilesOpen(true)}
+            onOpenDrawing={(to, label) => {
+              setView('drawings');
+              follow(to, label);
+            }}
+            onShowOnMap={(id) => {
+              setMapFocus({ id, n: Date.now() });
+              setView('map');
+            }}
+          />
+        </div>
+      )}
+      {view === 'build' && (
+        <div className="view-pane build-pane">
+          <Suspense fallback={<div className="bld-loading">Opening Build It…</div>}>
+            <BuildView
+              key={project.id}
+              project={project}
+              sections={buildSections}
+              specText={specTextOf}
+              sheetText={sheetTextOf}
+              sheetLines={buildSheetLines}
+              revisions={buildRevisions}
+              onEdits={(build) => commit((p) => ({ ...p, build }), 'Build It setup', 'build-edits')}
+              onOpenSpec={(docId, page, key) => {
+                setSpecTarget({ docId, page, key, n: Date.now() });
+                setView('specs');
+              }}
+              onOpenDrawing={(to, label) => {
+                setView('drawings');
+                follow(to, label);
+              }}
+              onSave={(name, data) => void saveFile(name, data)}
+              onOpenSample={() => void openSampleModel(1)}
+              renderSheet={renderSheetRegion}
+              onClose={() => setView('drawings')}
+            />
+          </Suspense>
+        </div>
+      )}
+      {view === 'map' && (
+        <div className="view-pane map-pane">
+          {projectMap && projectMap.nodes.length ? (
+            <ProjectMap
+              onAiSettings={isHosted ? undefined : () => setAiDialog('settings')}
+              data={projectMap}
+              focus={mapFocus}
+              onOpenSpec={(docId, page, key) => {
+                setSpecTarget({ docId, page, key, n: Date.now() });
+                setView('specs');
+              }}
+              onOpenDrawing={(to, label) => {
+                setView('drawings');
+                follow(to, label);
+              }}
+              onClose={() => setView('drawings')}
+            />
+          ) : (
+            <div className="pmap-empty">
+              <div>
+                <h2>{busy ?? 'Nothing to map yet'}</h2>
+                <p>{project.sheets.length ? 'Add the specification to tie its sections to the drawings.' : 'Add the drawings and the specification; the map ties every section to what the drawings show.'}</p>
+                <div className="pmap-empty-actions">
+                  {!project.sheets.length && (
+                    <button className="secondary" onClick={() => fileInput.current?.click()}>
+                      Add drawings
+                    </button>
+                  )}
+                  {!(project.specs ?? []).length && (
+                    <button className="primary" onClick={() => specInput.current?.click()}>
+                      Add spec PDF
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
       <aside className="inspector-pane">
         {editingType ? (
           <TypeEditor
@@ -2935,6 +3835,15 @@ export function App() {
               setEditingTypeId(copy.id);
             }}
             onClose={() => setEditingTypeId(null)}
+            dirty={editingDirty}
+            onCancel={() => {
+              const snap = editSnapshot.current;
+              if (snap && snap.id === editingType.id) {
+                const before = JSON.parse(snap.json) as TakeoffType;
+                commit((p) => ({ ...p, types: p.types.map((t) => (t.id === before.id ? before : t)) }), 'Cancel type edit');
+              }
+              setEditingTypeId(null);
+            }}
           />
         ) : (
           <Inspector
@@ -2952,6 +3861,9 @@ export function App() {
             onGrouping={chooseGrouping}
             activity={activity}
             selectedId={selectedId}
+            pickedIds={picked.map((m) => m.id)}
+            litTypeId={litTypeId}
+            onPickType={pickType}
             onSelect={setSelectedId}
             onDelete={deleteMeasurements}
             onRetype={(id, typeId) => commit((p) => ({ ...p, measurements: p.measurements.map((m) => (m.id === id ? { ...m, typeId } : m)) }), 'Change type')}
@@ -2963,6 +3875,8 @@ export function App() {
               if (!m) return;
               if (m.sheetId !== sheetId) setSheetId(m.sheetId);
               setSelectedId(id);
+              setMultiIds([]);
+              setLitTypeId(null);
               setFocus((f) => ({ id, n: (f?.n ?? 0) + 1 }));
             }}
             onRename={(id, label) =>
@@ -3018,6 +3932,18 @@ export function App() {
               setPopover(null);
               void duplicateProject();
             }}
+            onSample={(n) => {
+              setPopover(null);
+              void openSampleModel(n);
+            }}
+            onOpenFolder={
+              desktopApi?.linked && syncFolder
+                ? () => {
+                    setPopover(null);
+                    void openFromFolder();
+                  }
+                : undefined
+            }
             onSaveFile={() => {
               setPopover(null);
               void saveProjectFile();
@@ -3239,6 +4165,8 @@ export function App() {
           label="More"
           groups={[
             [
+              { label: 'Explore drawing…', hint: 'Experimental', onSelect: () => setExploreOpen(true) },
+              { label: 'Files…', hint: 'Add, remove, reorder', onSelect: () => setFilesOpen(true) },
               { label: 'History', hint: 'Every change', onSelect: () => setTab('history') },
               { label: 'Quick start', onSelect: () => setAiDialog('help') },
               { label: 'Keyboard shortcuts', onSelect: () => setAiDialog('shortcuts') },
@@ -3260,7 +4188,10 @@ export function App() {
                 ? [{ label: 'Copy takeoffs to another sheet…', hint: 'Typical floors', onSelect: () => setTimeout(() => setPopover('copy'), 0) }]
                 : []),
               ...(project.sheets.some((x) => /^Page \d+$/.test(x.name))
-                ? [{ label: 'Name sheets with AI…', hint: 'Sheets with no text', onSelect: () => void nameSheetsWithAi() }]
+                ? [
+                    { label: 'Read scanned title blocks', hint: 'OCR, offline', onSelect: () => void ocrSheetNames() },
+                    { label: 'Name sheets with AI…', hint: 'Sheets with no text', onSelect: () => void nameSheetsWithAi() },
+                  ]
                 : []),
               ...(canUseServiceWorker() && !isInstalled() ? [{ label: 'Install as an app…', onSelect: () => void installApp() }] : []),
               ...(isHosted ? [] : [{ label: 'AI settings…', onSelect: () => setAiDialog('settings') }]),
@@ -3276,6 +4207,14 @@ export function App() {
                       { label: 'Show this project’s folder', hint: 'Drawings and takeoffs', onSelect: () => void revealProjectFolder() },
                       { label: 'Show projects folder', hint: folderLabel(syncFolder), onSelect: () => void desktopApi!.revealFolder() },
                       { label: 'Change projects folder…', onSelect: () => void chooseProjectsFolder() },
+                      ...(desktopApi.linked
+                        ? [
+                            { label: 'Open a project from a folder…', hint: 'Shared or local', onSelect: () => void openFromFolder() },
+                            ...(linkedFolders.has(project.id ?? '')
+                              ? []
+                              : [{ label: 'Share this project through a folder…', hint: 'OneDrive, Dropbox…', onSelect: () => void shareProjectFolder() }]),
+                          ]
+                        : []),
                     ]
                   : [{ label: 'Keep projects in iCloud Drive…', hint: 'Other computer', onSelect: () => void chooseProjectsFolder() }]
                 : []),

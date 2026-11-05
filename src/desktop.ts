@@ -1,4 +1,5 @@
 import type { FolderApi } from './folderSync';
+import type { LinkedBridge } from './linkedFolders';
 
 /** The desktop app's extras (electron/preload.cjs). */
 export interface DesktopApi extends FolderApi {
@@ -15,8 +16,42 @@ export interface DesktopApi extends FolderApi {
   writeExport?(dir: string, filename: string, data: ArrayBuffer): Promise<string>;
   /** Shows a file in Finder or Explorer. */
   showFile?(file: string): Promise<void>;
+  /** Posts to an embeddings service with the user's key, from the app (no browser CORS). */
+  embed?(url: string, key: string, body: unknown): Promise<{ status: number; body: string }>;
   /** The MCP server AI apps connect to (electron/mcp.cjs); absent in older builds. */
   mcp?: McpBridge;
+  /** Downloads a sample project file (.takeoff) from the app's release; absent in older builds. */
+  fetchSample?(file: string): Promise<ArrayBuffer>;
+  /** Coding agents on the user's own plan, run by the app; absent in older builds. */
+  agent?: AgentBridge;
+  /** Projects opened from another folder (shared or local); absent in older builds. */
+  linked?: LinkedBridge;
+}
+
+export type AgentKey = 'claude' | 'codex';
+export interface AgentFound {
+  label: string;
+  plan: string;
+  install: string;
+  installed: boolean;
+  path: string | null;
+}
+export interface AgentEvent {
+  kind: 'start' | 'text' | 'tool' | 'error' | 'result' | 'done';
+  text: string;
+  detail?: string;
+  ok?: boolean;
+  /** The agent isn't signed in on this computer. */
+  login?: boolean;
+}
+export interface AgentBridge {
+  detect(): Promise<Record<AgentKey, AgentFound>>;
+  start(opts: { agent: AgentKey; projectName: string }): Promise<boolean>;
+  stop(): Promise<boolean>;
+  /** Opens Terminal on the agent's sign-in. */
+  signIn?(agent: AgentKey): Promise<boolean>;
+  running(): Promise<AgentKey | null>;
+  onEvent(fn: (ev: AgentEvent) => void): () => void;
 }
 
 export interface McpInfo {

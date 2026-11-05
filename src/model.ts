@@ -1,4 +1,6 @@
 import type { ExtractedAssembly } from './ai/schema';
+import type { SpecBook } from './spec/parse';
+import type { SheetView } from './sheetViews';
 
 export type Units = 'metric' | 'imperial';
 export type Kind = 'area' | 'linear' | 'count';
@@ -51,8 +53,16 @@ export interface Sheet {
   scaleSource: ScaleSource | null;
   /** Scale notations found on the sheet, offered as one-click choices. */
   scaleHints: string[];
+  /**
+   * With no sheet scale set on a sheet holding drawings at different scales: each drawing's
+   * extent and the scale noted under its title. A takeoff lying in one drawing is measured at
+   * its scale; the sheet scale, once set, wins.
+   */
+  views?: SheetView[];
   /** An older revision kept for reference after its takeoffs moved to a newer sheet. */
   superseded?: boolean;
+  /** Its number was read from its title block by OCR (so a better reading of the set may change it). */
+  ocr?: boolean;
   /** Marked finished by the estimator, to track progress through a set. */
   done?: boolean;
   /** How many times the sheet's takeoffs count, for a typical floor drawn once (unset is once). */
@@ -143,9 +153,15 @@ export interface Measurement {
   /** Cutouts subtracted from an area measurement. */
   holes: Pt[][];
   /** Made by the automatic wall or room takeoff, so a re-run can replace it; 'ai' was added by an AI over MCP, to review. */
-  source?: 'walls' | 'rooms' | 'legend' | 'sprinklers' | 'ceilings' | 'symbols' | 'windows' | 'runs' | 'trades' | 'demolition' | 'ai';
+  source?: 'walls' | 'rooms' | 'legend' | 'sprinklers' | 'ceilings' | 'symbols' | 'windows' | 'runs' | 'trades' | 'demolition' | 'foundations' | 'structure' | 'site' | 'pipes' | 'ducts' | 'envelope' | 'etags' | 'doors' | 'ai';
   /** A name for this takeoff, e.g. the room it covers ("112 RECEIVING & GEN. STORAGE"). */
   label?: string;
+  /**
+   * A run's length as the drawing writes it, in metres ("80.2m - 75mmØ HDPE SANITARY FORCEMAIN"
+   * on a civil plan): the quantity, instead of the drawn line's length. The line then only marks
+   * where the label is. Cleared when the run is redrawn by hand.
+   */
+  statedLength?: number;
   /**
    * For a filled room: how much of its outline crosses door and window openings, in sheet
    * points. Base and wall finishes leave it out. Cleared when the outline is edited by hand.
@@ -193,7 +209,23 @@ export interface Project {
   /** Named headings that drawing files (docs) can be organised under in the sheet panel. */
   sheetGroups?: SheetGroup[];
   measurements: Measurement[];
+  /** The project's specification files, each read into its sections once. */
+  specs?: SpecDoc[];
+  /** Build It: the planning assumptions and edits the user made (the generated model and schedule are kept apart). */
+  build?: import('./build/types').BuildEdits;
+  /** The 3D model an AI built from the drawings (Build It shows it); never part of the takeoff. */
+  scene3d?: import('./scene3d/scene').Scene3D;
+  /** The app's sample project (Build It opens it on the guided tour). */
+  sample?: boolean;
 }
+
+/** A specification file: its PDF is kept like a drawing's, its reading with the project. */
+export interface SpecDoc extends Doc {
+  book?: SpecBook;
+}
+
+/** Every PDF the project keeps: its drawings and its specifications. */
+export const filesOf = (p: Pick<Project, 'docs' | 'specs'>): Doc[] => [...p.docs, ...(p.specs ?? [])];
 
 export const newId = (): string => crypto.randomUUID();
 

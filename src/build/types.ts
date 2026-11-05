@@ -1,0 +1,356 @@
+import type { Pt } from '../model';
+/**
+ * Build It: the project as a proposed building and a plan to build it, from the takeoff and the
+ * specification already in the project. One shared structure links every element, activity
+ * and number back to where it came from, and says how sure it is:
+ *
+ *   documented — read from the drawings or the specification (with the page);
+ *   inferred   — worked out from documented things (a level from a sheet's title);
+ *   assumed    — a planning assumption (a default, or one the user set);
+ *   unknown    — needed and not found: shown as an issue, never filled in silently.
+ */
+
+export type Basis = 'documented' | 'inferred' | 'assumed' | 'unknown';
+
+/** Where something came from: a sheet (and a place on it), or a spec section's page. */
+export interface SourceRef {
+  kind: 'sheet' | 'spec';
+  /** Sheet id, or spec file (doc) id. */
+  id: string;
+  page: number;
+  /** Sheet name (A1.2) or section number (08 11 13). */
+  label: string;
+  /** On a sheet: the box [x0, y0, x1, y1] in sheet points. */
+  box?: [number, number, number, number];
+  /** A spec section key, to open it. */
+  section?: string;
+  /** The words the fact was read from. */
+  quote?: string;
+}
+
+export interface Level {
+  id: string;
+  name: string;
+  /** Floor elevation in metres above the lowest level. */
+  elevation: number;
+  basis: Basis;
+  /** Plan sheets placed on this level. */
+  sheets: string[];
+}
+
+export type ElementShape =
+  /** Located plan span only. A symbolic scene marker, never a physical IFC solid. */
+  | { type: 'axis'; points: [number, number][]; z: number }
+  /** Grid-located counted item. Scene marker and IFC placement only; no invented physical section. */
+  | { type: 'locator'; at: [number, number]; z: number }
+  /** A run (wall, duct, pipe): a polyline extruded to a height. */
+  | { type: 'run'; points: [number, number][]; z0: number; height: number; thickness: number; topPlane?: [number, number, number]; bottomPlane?: [number, number, number];
+      /** Source-traced cross section: lateral offset and height above z0, in metres. */
+      profile?: [number, number][];
+      /** Inferred square-turn fills shared by viewer and IFC for separate measured wall runs. */
+      cornerFills?: { at: [number, number]; incoming: [number, number]; turn: number; size: number }[];
+      openings?: {
+        elementId: string;
+        segment: number;
+        offset: number;
+        width: number;
+        sill: number;
+        height: number;
+      }[];
+    }
+  /** A surface (floor, ceiling, slab): a polygon at a height. */
+  | { type: 'surface'; ring: [number, number][]; holes: [number, number][][]; z: number; thickness: number; slope?: [number, number] }
+  /** A counted thing (door, fixture, device): a box at a point. */
+  | { type: 'point'; at: [number, number]; z: number; size: [number, number, number]; rotation?: number };
+
+export interface BuildElement {
+  /** Original plan seed; restored before rechecking derived physical geometry. */
+  physicalGeometryBaseline?: import("./physicalGeometryLifecycle").PhysicalGeometryBaseline;
+  /** Stable measurement id, or drawing:<source-key> for unaccepted source geometry. */
+  id: string;
+  name: string;
+  /** Work package (trade) it belongs to: 'partitions', 'mech-rough', … */
+  trade: string;
+  level: string | null;
+  /** Null when it can't be placed (an enlarged plan, an unscaled sheet): listed, not drawn. */
+  shape: ElementShape | null;
+  /** Registered plan envelope only; no base/top elevation or physical solid. */
+  planFootprint?: { ring: Pt[]; domain: string };
+  /** Source-derived plan trace only; no section width, elevation or physical solid. */
+  planTrace?: { points: Pt[]; domain: string };
+  /** Quantity in project units, with its unit (LF, SF, ea, m, m²). */
+  quantity: number;
+  unit: string;
+  /** Quantity used to plan production when an assembly gives a better unit than the primary takeoff. */
+  production?: { quantity: number; unit: string };
+  typeId: string;
+  typeName: string;
+  division: string;
+  measurementId: string;
+  /** Original takeoff source, so tag-derived planning does not mistake other counts for circuit tags. */
+  measurementSource?: string;
+  opening?: { width:number; height:number; sill:number };
+  origin?: "takeoff" | "building" | "drawing";
+  status?: "existing" | "new" | "demolished";
+  /** Source takeoff is retained for review, but has no verified new-work quantity in the plan. */
+  planningExcluded?: string;
+  sheetId: string;
+  /** Spec sections it is governed by (keys), with how they were linked. */
+  specs: { key: string; basis: Basis }[];
+  sources: SourceRef[];
+  placement: Basis;
+  issues: string[];
+}
+
+export interface BuildModel {
+  version: number;
+  projectType?: "new" | "renovation";
+  floorAreas?: Record<string, number>;
+  /** Roof-plan grid extent, a planning quantity rather than a measured roof covering. */
+  roofPlan?: { areaM2: number; basis: 'inferred'; source: SourceRef; why: string };
+  /** Hash of the project data it was made from (sheets, takeoffs, specs, settings). */
+  sourceHash: string;
+  units: 'metric' | 'imperial';
+  levels: Level[];
+  elements: BuildElement[];
+  /** Source-backed geometry without an accepted takeoff. Kept OUT of elements,
+   * quantities and scheduling. Entries use origin:'drawing', stable drawing: IDs,
+   * quantity:0, no production, no project type/measurement, and source evidence.
+   * Rebuilt from current evidence; never retain stale candidates after withdrawal. */
+  drawingGeometry?: BuildElement[];
+  /** Every wall read from the floor plans (measured or not), for the building view: the building
+   * as drawn, apart from the takeoff. Shown only; never counted or scheduled. */
+  planWalls?: BuildElement[];
+  /** Model-wide issues: unplaced sheets, levels not found, … */
+  issues: Issue[];
+  /** Extent of what is drawn, in metres: [minX, minY, maxX, maxY]. */
+  extent: [number, number, number, number];
+}
+
+export interface Issue {
+  id: string;
+  severity: 'info' | 'warning' | 'conflict';
+  text: string;
+  /** What it concerns: element, activity or sheet ids. */
+  refs?: string[];
+  sources?: SourceRef[];
+}
+
+/** A fact read from the specification that the plan uses (a review period, a completion date). */
+export interface SpecFact {
+  key: | "startDate"
+    | "phaseDate"
+    | 'reviewDays' | 'resubmitReviewDays' | 'substantialDate' | 'durationWeeks' | 'closeoutDays' | 'commissioningRequired';
+  value: number | string | boolean;
+  /** For a duration: working or calendar days. */
+  unit?: 'working days' | 'calendar days' | 'weeks' | 'date';
+  source: SourceRef;
+}
+
+export type ActivityKind = | 'milestone' | 'mobilize' | 'submittal' | 'review' | 'resubmittal' | 'procurement' | 'work' | 'testing' | 'commissioning' | 'closeout';
+
+export interface Dependency {
+  /** Predecessor activity id. */
+  from: string;
+  /** Finish-to-start (the default) or start-to-start. */
+  type: 'FS' | 'SS';
+  /** Working days after (FS: after it finishes; SS: after it starts). */
+  lag: number;
+  basis: Basis;
+  why: string;
+}
+
+export interface Activity {
+  /** Stable across rebuilds (so edits stay put): 'work:partitions:L1', 'sub:prep:doors'. */
+  id: string;
+  name: string;
+  kind: ActivityKind;
+  trade: string | null;
+  level: string | null;
+  /** Elements it builds (work activities). */
+  elements: string[];
+  /** Quantities by unit (work). */
+  quantities?: Record<string, number>;
+  /** Production per crew per day, by unit (work). */
+  rates?: Record<string, number>;
+  crews?: number;
+  requiredBy?: string;
+  minimumDays?: number;
+  allowanceCrewDays?: number;
+  weather?: "site" | "structure" | "roof";
+  /** Working days. */
+  duration: number;
+  /** How the duration was set: from quantity and rate, a documented period, an assumption, or by hand. */
+  durationBasis: Basis;
+  durationWhy: string;
+  deps: Dependency[];
+  specs: string[];
+  sources: SourceRef[];
+  /** Edited by the user (duration, crews or links). */
+  edited?: boolean;
+}
+
+/** Planning assumptions: each with where its value came from. */
+export interface Assumption<T = number> {
+  value: T;
+  basis: Basis;
+  why: string;
+  source?: SourceRef;
+}
+
+export interface TradeSetup {
+  /** Production per crew per day, by unit (LF, SF, ea; m, m²). */
+  rates: Record<string, number>;
+  crews: number;
+  /** Lead time from approved submittal to material on site, working days. */
+  leadDays: number;
+}
+
+/** User-entered scope that has not been taken off. No source element or geometry is implied. */
+export interface ScopeAllowance {
+  quantity: number;
+  unit: string;
+  /** Quantity installed by one crew in one working day. */
+  rate: number;
+  provisional: boolean;
+  /** Accepted gross-floor-area proxy: plan each level's share as a separate work package. */
+  distribution?: 'gfa-by-level';
+}
+
+/** An optional planning proxy, shown for user review before it enters setup. */
+export interface ScopeSuggestion {
+  key: string;
+  allowance: ScopeAllowance;
+  /** The area used for the proxy, in m²: gross floors or a measured slab footprint. */
+  referenceAreaM2: number;
+  areaBasis: 'inferred';
+  rateBasis: 'assumed';
+  why: string;
+}
+
+export interface PlanSetup {
+  start: Assumption<string>;
+  /** The finish wanted: a target, never a reason to compress work arbitrarily. */
+  target: Assumption<string | null>;
+  workDays: Assumption<number[]>;
+  holidays: Assumption<string[]>;
+  mobilizeDays: Assumption;
+  submittalPrepDays: Assumption;
+  reviewDays: Assumption;
+  resubmitRounds: Assumption;
+  resubmitReviewDays: Assumption;
+  floorToFloor: Assumption;
+  /** Different trades may work on one level at once; the same trade's crews go level by level. */
+  levelsInParallel: Assumption<boolean>;
+  /** Require a provisional weather-tight milestone before interior finish work. */
+  dryInBeforeFinishes: Assumption<boolean>;
+  testingDays: Assumption;
+  commissioningDays: Assumption;
+  closeoutDays: Assumption;
+  trades: Record<string, Assumption<TradeSetup>>;
+  /** Keyed by a Build It trade, or `foundations` for work before above-grade structure. */
+  allowances: Assumption<Record<string, ScopeAllowance>>;
+  /** Which milestone the target is for: the documented substantial performance date, or the project's finish. */
+  targetFor: 'ms:substantial' | 'ms:finish';
+}
+
+/** What the user changed: kept with the project, applied over each rebuild. */
+export interface BuildEdits {
+  setup?: Partial<Record<keyof PlanSetup, unknown>> & { trades?: Record<string, Partial<TradeSetup>>; allowances?: Record<string, ScopeAllowance> };
+  activities?: Record<string, { duration?: number; crews?: number; addDeps?: { from: string; lag?: number }[]; dropDeps?: string[] }>;
+  /** A plan sheet's level, set by hand. */
+  levels?: Record<string, string>;
+  /** Level elevations set by hand (metres). */
+  elevations?: Record<string, number>;
+  /** Schedules the user imported or made, and which one the model plays. */
+  schedules?: ScheduleEdits;
+}
+
+/** A link to an activity in the user's schedule (finish-to-start, start-to-start, …), lag in working days. */
+export interface UserLink {
+  from: string;
+  type: 'FS' | 'SS' | 'FF' | 'SF';
+  lag: number;
+}
+
+/** An activity in a schedule the user imported or built: it plays on the model through its linked elements. */
+export interface UserActivity {
+  /** 'imp:<code>' for an imported activity, 'own:<n>' for one the user made. */
+  id: string;
+  /** The ID shown and used in predecessor lists: the file's activity ID, or a number. */
+  code: string;
+  name: string;
+  /** The summary task, WBS or phase it sits under, for grouping. */
+  group?: string;
+  kind: ActivityKind;
+  trade: string | null;
+  level: string | null;
+  /** Working days (0: a milestone). */
+  duration: number;
+  /** Starts no earlier than this date (ISO): the file's start, or one the user set. */
+  start?: string;
+  /** The finish the file gave, for comparison only. */
+  finish?: string;
+  preds: UserLink[];
+  /** Model elements it builds (element ids). */
+  elements: string[];
+  /** How the elements were linked: matched by trade and words, or picked on the model by the user. */
+  linked?: 'matched' | 'picked';
+}
+
+export interface UserSchedule {
+  /** The file's name, or "My schedule". */
+  name: string;
+  format?: 'csv' | 'xlsx' | 'msp-xml' | 'xer' | 'own';
+  importedAt?: string;
+  activities: UserActivity[];
+}
+
+export interface ScheduleEdits {
+  /** Which schedule the timeline and the model follow. */
+  use: 'generated' | 'imported' | 'own';
+  imported?: UserSchedule;
+  own?: UserSchedule;
+}
+
+export interface Scheduled {
+  id: string;
+  /** Working-day indexes: starts at the start of ES, finishes at the end of EF − 1. */
+  es: number;
+  ef: number;
+  ls: number;
+  lf: number;
+  /** Total float in working days (to the earliest feasible finish). */
+  float: number;
+  start: string;
+  finish: string;
+  critical: boolean;
+  /** The predecessor that set its start. */
+  driver: string | null;
+  /** Finishes after the target allows. */
+  late: boolean;
+}
+
+export interface Feasibility {
+  changes?: string[];
+  earliestFinish: string;
+  /** Unaccelerated finish for the same target milestone and setup, before recovery changes. */
+  baselineFinish?: string;
+  target: string | null;
+  /** Working days past the target (0 when it fits). */
+  overBy: number;
+  /** The chain of activities that sets the finish, first to last. */
+  chain: { id: string; name: string; duration: number; basis: Basis; why: string; lag: number }[];
+  /** Of the chain's days: how many come from documented requirements, and how many from assumptions. */
+  documentedDays: number;
+  assumedDays: number;
+  /** What could be changed to finish sooner (editable assumptions on the chain). */
+  levers: string[];
+}
+
+export interface Schedule {
+  activities: Activity[];
+  times: Record<string, Scheduled>;
+  feasibility: Feasibility;
+  issues: Issue[];
+}
