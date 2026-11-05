@@ -1,5 +1,5 @@
 {
-  "name": "takeoff-ai",
+  "name": "kara-takeoff",
   "version": "0.1.0",
   "description": "AI-native construction takeoff tool for general contractors",
   "scripts": {
@@ -43,6 +43,6 @@
   "private": true,
   "type": "module",
   "main": "electron/main.cjs",
-  "productName": "Takeoff AI",
+  "productName": "KARA Takeoff",
   "author": "MMA Construction"
 }
