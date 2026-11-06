@@ -40,6 +40,7 @@ import { readTitleBlock, titleBlockBox } from './titleBlock';
 import { middleOf } from './locate';
 import { buildingOfDoc, buildingsOf, fileLabel, onBuilding, quantitySections, type QtyGrouping } from './buildings';
 import { isHosted, saveFile } from './host';
+import { hasAiKey } from './ai/claude';
 import { RoomFinder } from './workers/rooms';
 import { FollowBar, LinksBar, TagCard, kindColor, linkTitle } from './components/LinksPanel';
 import { DrawingMap } from './components/DrawingMap';
@@ -129,6 +130,9 @@ function keepVisibility(target: Project, now: Project): Project {
 
 /** The window answers MCP tool calls once, even when React runs its effects twice (development). */
 let mcpWired = false;
+
+/** Sample downloads that weren't there this session (not published yet): open their 3D copy instead. */
+const MISSING_SAMPLES = new Set<string>();
 
 export function App() {
   const [project, setProject] = useState<Project | null>(null);
@@ -1718,9 +1722,11 @@ export function App() {
   const SAMPLES = [
     { name: 'Sample project #1: ski lodge', file: 'sample-1-ski-lodge.takeoff', was: [] as string[], load: () => import('./scene3d/sampleLodge') },
     { name: 'Sample project #2: maintenance shop', file: 'sample-2-maintenance-shop.takeoff', was: ['Sample project: maintenance shop'], load: () => import('./scene3d/sample') },
+    { name: 'Sample project #3: waterfront restaurant repaint', file: 'sample-3-waterfront-restaurant.takeoff', was: [] as string[], load: () => import('./scene3d/sampleHarbour') },
+    { name: 'Sample project #4: residential units', file: 'sample-4-residential-units.takeoff', was: [] as string[], load: () => import('./scene3d/sampleResidential') },
   ];
   /** Opens a sample project: the full one (drawings, takeoffs, 3D) in the desktop app, else just its 3D model. */
-  async function openSampleModel(n: 1 | 2 = 1) {
+  async function openSampleModel(n: 1 | 2 | 3 | 4 = 1) {
     const sample = SAMPLES[n - 1];
     setBusy('Opening the sample project…');
     try {
@@ -1728,32 +1734,62 @@ export function App() {
       const list = (await listProjects()).filter((x) => x.name === sample.name || sample.was.includes(x.name));
       const opened = (await Promise.all(list.map((x) => loadProjectById(x.id)))).filter((p): p is Project => !!p?.sample);
       const full = opened.find((p) => p.docs.length);
-      const existing = full ?? (desktopApi?.fetchSample ? undefined : opened.find((p) => p.scene3d));
+      // The full sample (drawings, spec, takeoff, 3D): the desktop app downloads it itself; the web
+      // app gets it from its own address (/samples/, passed through from the GitHub release).
+      const web = typeof location !== 'undefined' && /^https?:$/.test(location.protocol);
+      const fetchSample = desktopApi?.fetchSample
+        ? (f: string) => desktopApi!.fetchSample!(f)
+        : web
+          ? async (f: string) => {
+              const r = await fetch(`${import.meta.env.BASE_URL}samples/${f}`);
+              if (!r.ok) throw new Error(`HTTP ${r.status}`);
+              return r.arrayBuffer();
+            }
+          : null;
+      // A sample that isn't published as a download: its 3D copy, opened again rather than made anew.
+      const missing = MISSING_SAMPLES.has(sample.file);
+      const existing = full ?? (fetchSample && !missing ? undefined : opened.find((p) => p.scene3d));
+      // The app's own copy of the sample's 3D model, when newer than the one saved (site works added, say).
+      const freshen = async (p: Project) => {
+        const { default: model } = await sample.load();
+        if ((model.updated ?? '') > (p.scene3d?.updated ?? '')) commit((q) => ({ ...q, scene3d: model }), 'Update the sample 3D model');
+      };
       if (existing) {
         await switchProject(existing.id!);
         if (existing.name !== sample.name) commit((p) => ({ ...p, name: sample.name }), 'Rename project');
+        await freshen(existing);
         setView('build');
         return;
       }
-      if (desktopApi?.fetchSample) {
-        setBusy('Downloading the sample project…');
-        const got = await desktopApi.fetchSample(sample.file).catch(() => null);
+      if (fetchSample) {
+        setBusy('Downloading the sample project: drawings, spec, takeoff and 3D model…');
+        const got = await fetchSample(sample.file).catch(() => null);
         if (got) {
           let last: Project | null = null;
+          // Not a project file (a page in its place, say): treated as not published.
           await readProjectFiles(got, async (o) => {
             o.project = { ...o.project, name: sample.name, sample: true };
             for (const [id, data] of o.pdfs) await savePdf(id, data);
             await saveProject(o.project);
             if (o.project.id) await saveActivity(o.project.id, o.activity);
             last = o.project;
-          });
+          }).catch(() => undefined);
           // A 3D-only copy from an older version steps aside for the full one.
           for (const p of opened) if (!p.docs.length && !p.measurements.length) await saveProject({ ...p, name: `${sample.name} (3D only)` });
           if (last) {
             await openProjectState(last);
+            await freshen(last);
             setView('build');
             return;
           }
+        }
+        MISSING_SAMPLES.add(sample.file);
+        const copy = opened.find((p) => p.scene3d);
+        if (copy) {
+          await switchProject(copy.id!);
+          await freshen(copy);
+          setView('build');
+          return;
         }
         setToast({ text: 'The full sample could not be downloaded, so this is its 3D model only.', undo: false });
       }
@@ -3048,9 +3084,14 @@ export function App() {
             }}
           />
           {!isHosted && (
-            <button className={`secondary chat-toggle${chatOpen ? ' on' : ''}`} onClick={() => setChatOpen((o) => !o)} title="Ask Claude about this project" aria-pressed={chatOpen}>
-              <Icon name="chat" size={16} />
-              <span className="hide-narrow">Ask</span>
+            <button
+              className={`secondary chat-toggle${chatOpen ? ' on' : ''}${hasAiKey() ? '' : ' byo'}`}
+              onClick={() => setChatOpen((o) => !o)}
+              title={hasAiKey() ? 'Ask AI about this project' : 'Connect your own AI: Claude or ChatGPT'}
+              aria-pressed={chatOpen}
+            >
+              <Icon name="sparkle" size={16} />
+              <span className="hide-narrow">{hasAiKey() ? 'Ask AI' : 'Connect AI'}</span>
             </button>
           )}
           <button className="secondary" onClick={() => fileInput.current?.click()} title="Add PDF drawings">
@@ -3546,6 +3587,14 @@ export function App() {
                 ·{' '}
                 <button className="link-button" onClick={() => void openSampleModel(2)}>
                   #2 maintenance shop
+                </button>{' '}
+                ·{' '}
+                <button className="link-button" onClick={() => void openSampleModel(3)}>
+                  #3 restaurant repaint
+                </button>{' '}
+                ·{' '}
+                <button className="link-button" onClick={() => void openSampleModel(4)}>
+                  #4 residential units
                 </button>
               </span>
               <div className="welcome-units">

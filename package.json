@@ -11,8 +11,6 @@
     "bench": "vitest run -c bench/vitest.config.ts bench/run.test.ts",
     "bench:score": "vitest run -c bench/vitest.config.ts bench/score.test.ts",
     "build:artifact": "tsc && vite build && node scripts/artifact-page.mjs",
-    "build:web": "tsc && vite build --mode web",
-    "deploy:web": "npm run build:web && wrangler pages deploy",
     "desktop": "vite build && electron .",
     "desktop:mac": "tsc && vite build && electron-builder --mac --publish never",
     "desktop:win": "tsc && vite build && electron-builder --win --publish never"
@@ -35,6 +33,7 @@
     "react-dom": "^19.3.0",
     "tesseract.js": "^7.0.0",
     "three": "^0.186.1",
+    "three-gpu-pathtracer": "0.0.27",
     "three-spritetext": "^1.10.0",
     "umap-js": "^1.4.0",
     "zod": "^4.6.7"

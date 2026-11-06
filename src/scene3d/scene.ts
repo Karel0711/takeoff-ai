@@ -19,7 +19,9 @@ export type Shape3D =
   /** A pipe, duct, rail or member between two points. */
   | { type: 'tube'; from: Pt3; to: Pt3; radius: number }
   | { type: 'cone'; at: Pt2; radius: number; z0: number; z1: number }
-  | { type: 'sphere'; at: Pt3; radius: number };
+  | { type: 'sphere'; at: Pt3; radius: number }
+  /** Ready-made triangles: v = [x, y, z, …] in metres, f = vertex indices, three per triangle (site works traced from civil drawings). */
+  | { type: 'mesh'; v: number[]; f: number[] };
 
 export interface Element3D {
   id: string;
@@ -36,6 +38,21 @@ export interface Element3D {
   /** How sure: "dimensioned", "scaled from the elevation (±100 mm)", "assumed: …". */
   basis: string;
   shapes: Shape3D[];
+  /** The model's own 4D plan (see Scene3D.schedule): the activity that puts it up or applies it. */
+  activity?: string;
+  /** …and the one that takes it away again (scaffolding, hoarding, temporary works). */
+  until?: string;
+}
+
+/** An activity of a model's own 4D plan, in calendar days from its start (day 0). */
+export interface PlanActivity3D {
+  id: string;
+  name: string;
+  /** The kind of work, as the 4D sequence names it ('mobilize', 'envelope', 'openings', 'finishes', …). */
+  phase: string;
+  s: number;
+  e: number;
+  milestone?: boolean;
 }
 
 export interface Scene3D {
@@ -47,6 +64,12 @@ export interface Scene3D {
   builtBy: string;
   updated: string;
   elements: Element3D[];
+  /**
+   * A construction plan of its own, for work the usual new-build order doesn't fit (a renovation:
+   * scaffolding up, elevations repainted, windows on a long lead time). Elements name their
+   * activity; those without one are there throughout (the existing building).
+   */
+  schedule?: { start: string; activities: PlanActivity3D[] };
 }
 
 /** The layers, in the order Build It lists them. */
@@ -62,7 +85,7 @@ export const CATEGORIES: [string, string][] = [
 export const MATERIALS: Record<string, { color: string; rough?: number; metal?: number; opacity?: number; pattern?: string }> = {
   block: { color: '#8c8984', rough: 0.9, pattern: 'block' }, brick: { color: '#9a5a44', rough: 0.9, pattern: 'brick' }, stone: { color: '#8f8a80', rough: 0.95 },
   concrete: { color: '#b9b7b0', rough: 0.9, pattern: 'noise' }, metal_panel: { color: '#cdbf9f', rough: 0.45, metal: 0.35, pattern: 'ribs' },
-  siding: { color: '#c9c3b6', rough: 0.7, pattern: 'ribs' }, stucco: { color: '#e4ddcf', rough: 0.95 }, wood: { color: '#a37a4f', rough: 0.7 },
+  siding: { color: '#c9c3b6', rough: 0.7, pattern: 'ribs' }, lap_siding: { color: '#b9c0c4', rough: 0.75, pattern: 'lap' }, stucco: { color: '#e4ddcf', rough: 0.95 }, wood: { color: '#a37a4f', rough: 0.7 },
   timber: { color: '#cfa06a', rough: 0.7 }, gypsum: { color: '#efebe3', rough: 0.9 },
   roof_metal: { color: '#4b3c34', rough: 0.4, metal: 0.5, pattern: 'seam' }, roof_membrane: { color: '#55595b', rough: 0.85 }, roof_shingle: { color: '#3d3d3f', rough: 0.95 },
   glass: { color: '#9cc4d6', rough: 0.05, metal: 0.1, opacity: 0.38 }, frame: { color: '#3a3f42', rough: 0.4, metal: 0.6 },
@@ -226,6 +249,8 @@ export function meshOf(s: Shape3D): Mesh3D {
         }
       return { positions, indices };
     }
+    case 'mesh':
+      return { positions: s.v, indices: s.f };
   }
 }
 
@@ -262,8 +287,13 @@ export function shapeProblem(s: unknown): string | null {
       return !pt(o.from, 3) || !pt(o.to, 3) || !num(o.radius) ? 'tube needs from, to ([x, y, z]) and radius' : null;
     case 'sphere':
       return !pt(o.at, 3) || !num(o.radius) ? 'sphere needs at ([x, y, z]) and radius' : null;
+    case 'mesh': {
+      const v = o.v as unknown[], f = o.f as unknown[];
+      if (!Array.isArray(v) || !Array.isArray(f) || v.length % 3 || f.length % 3 || !v.every(num) || !f.every((i) => Number.isInteger(i) && (i as number) >= 0 && (i as number) < v.length / 3)) return 'mesh needs v ([x, y, z, …]) and f (triangle vertex indices)';
+      return far(v) ? 'mesh is over 2 km from the origin: use metres' : null;
+    }
     default:
-      return `unknown shape type ${String(o.type)} (box, wall, slab, cylinder, tube, cone, sphere)`;
+      return `unknown shape type ${String(o.type)} (box, wall, slab, cylinder, tube, cone, sphere, mesh)`;
   }
 }
 
@@ -290,4 +320,69 @@ export function tradeOf(e: Pick<Element3D, 'category' | 'material'>): string {
     ({ envelope: 'envelope', roof: 'envelope', doors: 'doors', structure: 'structure', floor: 'structure', foundation: 'structure', interior: 'partitions', stairs: 'structure',
       mechanical: 'mech-rough', plumbing: 'mech-rough', fixtures: 'mech-trim', furniture: 'specialties', ceiling: 'ceilings', civil: 'site', paving: 'site', site: 'site', context: 'site' } as Record<string, string>)[e.category] ?? 'other'
   );
+}
+
+/**
+ * Walls drawn straight through their doors and windows (common in quick models and takeoffs):
+ * the openings each wall needs where a door or a window sits in it, so rooms aren't sealed
+ * shut and the glass shows. Returns replacement shapes by element id, for drawing only; the
+ * model itself is left as it is.
+ */
+export function cutOpenings(elements: Element3D[]): Map<string, Shape3D[]> {
+  type Box = { x0: number; y0: number; x1: number; y1: number; z0: number; z1: number };
+  const boxOf = (s: Shape3D): Box | null => {
+    if (s.type === 'box') return { x0: Math.min(s.min[0], s.max[0]), y0: Math.min(s.min[1], s.max[1]), x1: Math.max(s.min[0], s.max[0]), y1: Math.max(s.min[1], s.max[1]), z0: Math.min(s.min[2], s.max[2]), z1: Math.max(s.min[2], s.max[2]) };
+    if (s.type === 'wall') {
+      const h = s.thickness / 2;
+      return { x0: Math.min(s.from[0], s.to[0]) - h, y0: Math.min(s.from[1], s.to[1]) - h, x1: Math.max(s.from[0], s.to[0]) + h, y1: Math.max(s.from[1], s.to[1]) + h, z0: s.z0, z1: s.z1 };
+    }
+    return null;
+  };
+  const join = (a: Box | null, b: Box | null): Box | null => (!a ? b : !b ? a : { x0: Math.min(a.x0, b.x0), y0: Math.min(a.y0, b.y0), x1: Math.max(a.x1, b.x1), y1: Math.max(a.y1, b.y1), z0: Math.min(a.z0, b.z0), z1: Math.max(a.z1, b.z1) });
+  // Doors: the whole door (leaf and frame) as one; windows: each pane.
+  const holes: Box[] = [];
+  for (const e of elements) {
+    if (e.category === 'doors') {
+      const b = e.shapes.map(boxOf).reduce(join, null);
+      if (b && b.z1 - b.z0 >= 1.5) holes.push(b);
+    } else if (e.category === 'glazing') for (const s of e.shapes) {
+      const b = boxOf(s);
+      if (b && b.z1 - b.z0 >= 0.3) holes.push(b);
+    }
+  }
+  const out = new Map<string, Shape3D[]>();
+  if (!holes.length) return out;
+  for (const e of elements) {
+    if (e.category === 'doors' || e.category === 'glazing' || !['envelope', 'interior', 'structure'].includes(e.category)) continue;
+    let changed = false;
+    const shapes = e.shapes.map((s) => {
+      if (s.type !== 'wall') return s;
+      const L = Math.hypot(s.to[0] - s.from[0], s.to[1] - s.from[1]);
+      if (L < 0.3) return s;
+      const u: Pt2 = [(s.to[0] - s.from[0]) / L, (s.to[1] - s.from[1]) / L];
+      const n: Pt2 = [-u[1], u[0]];
+      // A door set on the face of a thick wall counts too.
+      const mid = s.offset ?? 0, half = s.thickness / 2 + 0.2;
+      const add: { start: number; end: number; sill: number; head: number }[] = [];
+      for (const h of holes) {
+        if (h.z1 <= s.z0 + 0.05 || h.z0 >= s.z1 - 0.05) continue;
+        const corners: Pt2[] = [[h.x0, h.y0], [h.x1, h.y0], [h.x1, h.y1], [h.x0, h.y1]];
+        const along = corners.map((c) => (c[0] - s.from[0]) * u[0] + (c[1] - s.from[1]) * u[1]);
+        const across = corners.map((c) => (c[0] - s.from[0]) * n[0] + (c[1] - s.from[1]) * n[1]);
+        const [a0, a1, c0, c1] = [Math.min(...along), Math.max(...along), Math.min(...across), Math.max(...across)];
+        // In this wall: across its thickness, and lying along it (not a wall meeting it end on).
+        if (c1 < mid - half || c0 > mid + half || c1 - c0 > s.thickness + 0.45) continue;
+        const [start, end] = [Math.max(0, a0), Math.min(L, a1)];
+        if (end - start < 0.3) continue;
+        // Already drawn with this opening: leave it.
+        if ((s.openings ?? []).some((o) => Math.min(o.end, end) - Math.max(o.start, start) > 0.6 * (end - start))) continue;
+        add.push({ start, end, sill: h.z0 <= s.z0 + 0.05 ? s.z0 : h.z0, head: Math.min(s.z1, h.z1) });
+      }
+      if (!add.length) return s;
+      changed = true;
+      return { ...s, openings: [...(s.openings ?? []), ...add] };
+    });
+    if (changed) out.set(e.id, shapes);
+  }
+  return out;
 }
