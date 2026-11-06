@@ -6950,3 +6950,10 @@ button.link-button:hover {
   background: #7c5cff;
   color: #fff;
 }
+
+
+/* Sheet group headings (filed by add_drawings group=...) */
+.sheet-group { margin-top: 10px; }
+.sheet-group-head { font-size: 11px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--accent, #0071e3); padding: 5px 6px 3px; border-bottom: 1px solid var(--border, #e0e0e0); margin-bottom: 2px; }
+.sheet-group-head:hover { background: var(--fill-accent, rgba(0,113,227,0.06)); }
+.sheet-group-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
