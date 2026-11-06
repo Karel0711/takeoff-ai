@@ -14,7 +14,7 @@ const agent = require('./agent.cjs');
 const DIST = path.join(__dirname, '..', 'dist');
 // Tests run two copies side by side, as two computers, each with its own profile.
 if (process.env.TAKEOFF_USER_DATA) app.setPath('userData', process.env.TAKEOFF_USER_DATA);
-const FOLDER_NAME = 'Takeoff AI';
+const FOLDER_NAME = 'KARA Takeoff';
 
 // One copy at a time: a second launch (an AI app opening Takeoff AI, a double-click) brings
 // the open window forward instead of starting another, so there is one MCP server.
@@ -82,7 +82,7 @@ function registerIpc() {
     const win = BrowserWindow.fromWebContents(event.sender);
     const result = await dialog.showOpenDialog(win, {
       title: 'Choose where to keep your projects',
-      message: 'Pick iCloud Drive (or another synced folder). Projects go in a "Takeoff AI" folder inside it.',
+      message: 'Pick iCloud Drive (or another synced folder). Projects go in a "KARA Takeoff" folder inside it.',
       defaultPath: iCloudDrive() ?? app.getPath('documents'),
       properties: ['openDirectory', 'createDirectory'],
     });
@@ -224,7 +224,7 @@ function createWindow() {
     height: 900,
     minWidth: 1000,
     minHeight: 640,
-    title: 'Takeoff AI',
+    title: 'KARA Takeoff',
     backgroundColor: '#f5f5f7',
     // Not throttled behind other windows: an AI drives long takeoffs while the estimator works elsewhere.
     webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, sandbox: true, backgroundThrottling: false },
