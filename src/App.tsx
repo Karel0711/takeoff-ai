@@ -3145,45 +3145,78 @@ export function App() {
           )}
           <ul className="source-list">
             {project.docs.length > 1
-              ? project.docs.map((d) => {
-                  const own = filteredSheets.filter((x) => x.docId === d.id);
-                  if (!own.length && query) return null;
-                  const all = project.sheets.filter((x) => x.docId === d.id);
-                  const done = all.filter((x) => x.done).length;
-                  const open = !collapsedDocs.has(d.id) || !!query;
+              ? (() => {
+                  const sheetGroups = project.sheetGroups ?? [];
+                  const renderDoc = (d: (typeof project.docs)[0]) => {
+                    const own = filteredSheets.filter((x) => x.docId === d.id);
+                    if (!own.length && query) return null;
+                    const all = project.sheets.filter((x) => x.docId === d.id);
+                    const done = all.filter((x) => x.done).length;
+                    const open = !collapsedDocs.has(d.id) || !!query;
+                    return (
+                      <Fragment key={d.id}>
+                        <li className="doc-group">
+                          <button
+                            className="doc-head"
+                            onClick={() => setCollapsedDocs((c) => (c.has(d.id) ? new Set([...c].filter((x) => x !== d.id)) : new Set(c).add(d.id)))}
+                            onDoubleClick={async () => {
+                              const name = await askText('Rename drawing file', { initial: d.name.replace(/\.pdf$/i, ''), hint: 'e.g. Architectural, Structural, Mechanical' });
+                              if (name?.trim()) commit((p) => ({ ...p, docs: p.docs.map((x) => (x.id === d.id ? { ...x, name: name.trim() } : x)) }), 'Rename drawing file');
+                            }}
+                            aria-expanded={open}
+                            title={`${d.name} Â· click to fold, double-click to rename`}
+                          >
+                            <span className={`doc-chevron ${open ? 'open' : ''}`}>
+                              <Icon name="chevron" size={12} />
+                            </span>
+                            <span className="doc-name">{d.name.replace(/\.pdf$/i, '')}</span>
+                            <span className="doc-building" title="Label these sheets are grouped under">
+                              {buildingOfDoc(d)}
+                            </span>
+                            <span className="doc-count">{done ? `${done}/${all.length}` : all.length}</span>
+                          </button>
+                          <button className="icon-button small doc-building-edit" title="Rename the label this file is grouped under" aria-label={`Label ${d.name}`} onClick={() => void setDocBuilding(d.id)}>
+                            <Icon name="edit" size={13} />
+                          </button>
+                          <button className="icon-button small danger doc-remove" title={`Remove ${d.name} and its takeoffs`} aria-label={`Remove ${d.name}`} onClick={() => void removeDrawings(d.id)}>
+                            <Icon name="trash" size={13} />
+                          </button>
+                        </li>
+                        {open && own.map(renderSheet)}
+                      </Fragment>
+                    );
+                  };
+                  if (!sheetGroups.length) return project.docs.map(renderDoc);
+                  const ungrouped = project.docs.filter((d) => !d.sheetGroupId);
                   return (
-                    <Fragment key={d.id}>
-                      <li className="doc-group">
-                        <button
-                          className="doc-head"
-                          onClick={() => setCollapsedDocs((c) => (c.has(d.id) ? new Set([...c].filter((x) => x !== d.id)) : new Set(c).add(d.id)))}
-                          onDoubleClick={async () => {
-                            const name = await askText('Rename drawing file', { initial: d.name.replace(/\.pdf$/i, ''), hint: 'e.g. Architectural, Structural, Mechanical' });
-                            if (name?.trim()) commit((p) => ({ ...p, docs: p.docs.map((x) => (x.id === d.id ? { ...x, name: name.trim() } : x)) }), 'Rename drawing file');
-                          }}
-                          aria-expanded={open}
-                          title={`${d.name} · click to fold, double-click to rename`}
-                        >
-                          <span className={`doc-chevron ${open ? 'open' : ''}`}>
-                            <Icon name="chevron" size={12} />
-                          </span>
-                          <span className="doc-name">{d.name.replace(/\.pdf$/i, '')}</span>
-                          <span className="doc-building" title="Label these sheets are grouped under">
-                            {buildingOfDoc(d)}
-                          </span>
-                          <span className="doc-count">{done ? `${done}/${all.length}` : all.length}</span>
-                        </button>
-                        <button className="icon-button small doc-building-edit" title="Rename the label this file is grouped under" aria-label={`Label ${d.name}`} onClick={() => void setDocBuilding(d.id)}>
-                          <Icon name="edit" size={13} />
-                        </button>
-                        <button className="icon-button small danger doc-remove" title={`Remove ${d.name} and its takeoffs`} aria-label={`Remove ${d.name}`} onClick={() => void removeDrawings(d.id)}>
-                          <Icon name="trash" size={13} />
-                        </button>
-                      </li>
-                      {open && own.map(renderSheet)}
-                    </Fragment>
+                    <>
+                      {sheetGroups.map((g) => {
+                        const gDocs = project.docs.filter((d) => d.sheetGroupId === g.id);
+                        if (!gDocs.length) return null;
+                        const gOpen = !collapsedDocs.has(`sg:${g.id}`) || !!query;
+                        return (
+                          <Fragment key={g.id}>
+                            <li className="doc-group sheet-group">
+                              <button
+                                className="doc-head sheet-group-head"
+                                onClick={() => setCollapsedDocs((c) => (c.has(`sg:${g.id}`) ? new Set([...c].filter((x) => x !== `sg:${g.id}`)) : new Set(c).add(`sg:${g.id}`)))}
+                                aria-expanded={gOpen}
+                                title={`${g.name} Â· click to fold`}
+                              >
+                                <span className={`doc-chevron ${gOpen ? 'open' : ''}`}>
+                                  <Icon name="chevron" size={12} />
+                                </span>
+                                <span className="doc-name sheet-group-name">{g.name}</span>
+                              </button>
+                            </li>
+                            {gOpen && gDocs.map(renderDoc)}
+                          </Fragment>
+                        );
+                      })}
+                      {ungrouped.map(renderDoc)}
+                    </>
                   );
-                })
+                })()
               : filteredSheets.map(renderSheet)}
           </ul>
           {project.sheets.length === 0 && <p className="source-empty">Drawings you add appear here, one row per sheet.</p>}
